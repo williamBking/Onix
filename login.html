@@ -247,12 +247,15 @@ async function doLogin(e) {
       return;
     }
  
-    // 3. Redirect based on role
-    if (profile.role === 'admin') {
-      window.location.href = 'admin-portal.html';
-    } else {
-      window.location.href = 'client-portal.html';
-    }
+  // 3. Redirect based on role
+console.log('Profile found:', profile)
+console.log('Role:', profile.role)
+console.log('Status:', profile.status)
+if (profile.role === 'admin') {
+  window.location.href = 'admin-portal.html'
+} else {
+  window.location.href = 'client-portal.html'
+}
  
   } catch (err2) {
     console.error(err2);
