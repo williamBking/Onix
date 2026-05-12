@@ -284,55 +284,74 @@
   }
 
   // ---------- bootstrap ----------
-  // ---------- inject live data into the static demo's "Loan Applications" tab ----------
-  function findStaticAppsContainer() {
-    return document.getElementById('view-applications') ||
-           document.getElementById('view-loans-app') ||
-           null;
+  // ---------- inject real applications into the EXISTING static demo table ----------
+  // Strategy: leave the demo rows intact, just prepend live rows at the top of
+  // the table's <tbody>, formatted to match the demo's column count.
+  function findStaticAppsTable() {
+    const views = [
+      document.getElementById('view-applications'),
+      document.getElementById('view-loans-app')
+    ];
+    for (const v of views) {
+      if (v) {
+        const t = v.querySelector('table');
+        if (t && t.querySelector('tbody')) return t;
+      }
+    }
+    return null;
+  }
+
+  function buildLiveRow(app, columnCount) {
+    // Best-effort column mapping. The demo table varies, so produce a single
+    // labelled cell that summarises the application, and pad to columnCount.
+    const tr = document.createElement('tr');
+    tr.setAttribute('data-onix-live-app', app.id);
+    tr.style.background = '#FDF0EE';
+    const submitted = fmt.date(app.submitted_at);
+    const client    = (app.profiles && (app.profiles.full_name || app.profiles.email)) || app.user_id;
+    const amount    = fmt.money(app.amount_requested);
+    const purpose   = app.purpose || '—';
+    const applicantType = app.applicant_type || '—';
+    const status    = app.status || 'pending';
+    // Cells laid out left-to-right; if the demo has more columns, pad with empties.
+    const cells = [
+      `<span style="display:inline-block;background:#C0392B;color:#fff;padding:2px 6px;font-size:.55rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:2px;margin-right:6px">Live</span>${esc(submitted)}`,
+      esc(client),
+      esc(amount),
+      esc(purpose),
+      esc(applicantType),
+      `<span style="display:inline-block;padding:2px 8px;font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:2px;background:#FDF5E6;color:#A07818">${esc(status)}</span>`
+    ];
+    while (cells.length < columnCount) cells.push('');
+    cells.length = columnCount;
+    tr.innerHTML = cells.map(c => `<td>${c}</td>`).join('');
+    return tr;
   }
 
   function paintStaticApplicationsView(applications) {
-    const container = findStaticAppsContainer();
-    if (!container) return false;
-    if (container.dataset.onixLive === '1') {
-      // Already wired — just refresh the tbody
-      const body = container.querySelector('[data-onix-apps-body]');
-      if (body) body.innerHTML = applicationsRows(applications);
-      return true;
+    const table = findStaticAppsTable();
+    if (!table) return false;
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return false;
+    // Remove any rows we previously inserted
+    tbody.querySelectorAll('tr[data-onix-live-app]').forEach(r => r.remove());
+    if (!applications || !applications.length) return true;
+    // Determine column count from the first existing row (or thead)
+    let columnCount = 0;
+    const firstRow = tbody.querySelector('tr:not([data-onix-live-app])');
+    if (firstRow) columnCount = firstRow.children.length;
+    else {
+      const headRow = table.querySelector('thead tr');
+      if (headRow) columnCount = headRow.children.length;
     }
-    container.dataset.onixLive = '1';
-    container.innerHTML = `
-      <div style="padding:32px 40px;font-family:'DM Sans',sans-serif;color:#1A1A1A">
-        <div style="font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:#C0392B;font-weight:600">Live · Supabase</div>
-        <h1 style="font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:2rem;margin:6px 0 18px">Loan Applications</h1>
-        <div style="background:#fff;border:1px solid #E8E8E8;border-top:3px solid #C0392B;padding:18px">
-          <table class="oac-table" style="width:100%;border-collapse:collapse;font-size:.85rem">
-            <thead><tr>
-              <th>Submitted</th><th>Client</th><th>Amount</th><th>Type</th><th>Purpose</th><th>Status</th>
-            </tr></thead>
-            <tbody data-onix-apps-body>${applicationsRows(applications)}</tbody>
-          </table>
-        </div>
-      </div>`;
+    if (columnCount < 1) columnCount = 6;
+    // Prepend live rows, newest first
+    applications.forEach(app => {
+      tbody.insertBefore(buildLiveRow(app, columnCount), tbody.firstChild);
+    });
     return true;
   }
 
-  function applicationsRows(apps) {
-    if (!apps || !apps.length) {
-      return '<tr><td colspan="6" class="oac-empty">No applications submitted yet.</td></tr>';
-    }
-    return apps.map(a => `
-      <tr>
-        <td>${fmt.date(a.submitted_at)}</td>
-        <td>${esc((a.profiles && (a.profiles.full_name || a.profiles.email)) || a.user_id)}</td>
-        <td>${fmt.money(a.amount_requested)}</td>
-        <td>${esc(a.applicant_type || '—')}</td>
-        <td>${esc(a.purpose || '—')}</td>
-        <td><span class="oac-badge ${esc(a.status || '')}">${esc(a.status || '—')}</span></td>
-      </tr>`).join('');
-  }
-
-  // Watch for the static view to appear (the admin design renders async)
   function wireStaticApplicationsView(applications) {
     if (paintStaticApplicationsView(applications)) return;
     let attempts = 0;
