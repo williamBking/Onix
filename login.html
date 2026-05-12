@@ -188,21 +188,8 @@ async function getProfile(userId) {
   return data
 }
  
-function _dbg(msg) {
-  let box = document.getElementById('dbg-log');
-  if (!box) {
-    box = document.createElement('pre');
-    box.id = 'dbg-log';
-    box.style.cssText = 'position:fixed;bottom:0;left:0;right:0;max-height:40vh;overflow:auto;margin:0;padding:8px;background:#111;color:#0f0;font:11px/1.4 monospace;z-index:9999;white-space:pre-wrap;';
-    document.body.appendChild(box);
-  }
-  box.textContent += msg + '\n';
-  console.log('[onix-login]', msg);
-}
-
 async function doLogin(e) {
   e.preventDefault();
-  _dbg('---- attempt ' + new Date().toLocaleTimeString() + ' ----');
   const email = document.getElementById('email').value.trim().toLowerCase();
   const pw = document.getElementById('password').value;
   const err = document.getElementById('login-error');
@@ -211,12 +198,10 @@ async function doLogin(e) {
   err.classList.remove('show');
   btn.disabled = true;
   btn.querySelector('span').textContent = OnixLang.getLang() === 'es' ? 'Iniciando…' : 'Signing in…';
-  _dbg('1. calling signInWithPassword for ' + email);
  
   try {
     // 1. Sign in with Supabase Auth
     const { data, error } = await _supabase.auth.signInWithPassword({ email, password: pw });
-    _dbg('2. signIn result: ' + (error ? 'error=' + error.message : 'ok user=' + data.user.id));
 
     if (error) {
       err.textContent = OnixLang.getLang() === 'es'
@@ -230,7 +215,6 @@ async function doLogin(e) {
  
     // 2. Get their profile to check role + status
     const profile = await getProfile(data.user.id);
-    _dbg('3. profile: ' + JSON.stringify(profile));
 
     if (!profile) {
       err.textContent = 'Account not found. Please contact Onix Finance.';
@@ -272,18 +256,12 @@ async function doLogin(e) {
     id: profile.id
   }));
 
-  // 4. Confirm Supabase session was persisted before redirecting
-  const { data: sessCheck } = await _supabase.auth.getSession();
-  _dbg('4. supabase session after sign-in: ' + (sessCheck.session ? 'PERSISTED (user=' + sessCheck.session.user.id + ')' : 'MISSING'));
-  _dbg('5. localStorage.onix-user set; redirecting in 2.5s to ' + (profile.role === 'admin' ? 'admin-portal.html' : 'client-portal.html'));
-
-  setTimeout(() => {
-    if (profile.role === 'admin') {
-      window.location.href = 'admin-portal.html';
-    } else {
-      window.location.href = 'client-portal.html';
-    }
-  }, 2500);
+  // 4. Redirect based on role
+  if (profile.role === 'admin') {
+    window.location.href = 'admin-portal.html';
+  } else {
+    window.location.href = 'client-portal.html';
+  }
  
   } catch (err2) {
     console.error(err2);
