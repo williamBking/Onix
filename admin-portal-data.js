@@ -284,6 +284,64 @@
   }
 
   // ---------- bootstrap ----------
+  // ---------- inject live data into the static demo's "Loan Applications" tab ----------
+  function findStaticAppsContainer() {
+    return document.getElementById('view-applications') ||
+           document.getElementById('view-loans-app') ||
+           null;
+  }
+
+  function paintStaticApplicationsView(applications) {
+    const container = findStaticAppsContainer();
+    if (!container) return false;
+    if (container.dataset.onixLive === '1') {
+      // Already wired — just refresh the tbody
+      const body = container.querySelector('[data-onix-apps-body]');
+      if (body) body.innerHTML = applicationsRows(applications);
+      return true;
+    }
+    container.dataset.onixLive = '1';
+    container.innerHTML = `
+      <div style="padding:32px 40px;font-family:'DM Sans',sans-serif;color:#1A1A1A">
+        <div style="font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:#C0392B;font-weight:600">Live · Supabase</div>
+        <h1 style="font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:2rem;margin:6px 0 18px">Loan Applications</h1>
+        <div style="background:#fff;border:1px solid #E8E8E8;border-top:3px solid #C0392B;padding:18px">
+          <table class="oac-table" style="width:100%;border-collapse:collapse;font-size:.85rem">
+            <thead><tr>
+              <th>Submitted</th><th>Client</th><th>Amount</th><th>Type</th><th>Purpose</th><th>Status</th>
+            </tr></thead>
+            <tbody data-onix-apps-body>${applicationsRows(applications)}</tbody>
+          </table>
+        </div>
+      </div>`;
+    return true;
+  }
+
+  function applicationsRows(apps) {
+    if (!apps || !apps.length) {
+      return '<tr><td colspan="6" class="oac-empty">No applications submitted yet.</td></tr>';
+    }
+    return apps.map(a => `
+      <tr>
+        <td>${fmt.date(a.submitted_at)}</td>
+        <td>${esc((a.profiles && (a.profiles.full_name || a.profiles.email)) || a.user_id)}</td>
+        <td>${fmt.money(a.amount_requested)}</td>
+        <td>${esc(a.applicant_type || '—')}</td>
+        <td>${esc(a.purpose || '—')}</td>
+        <td><span class="oac-badge ${esc(a.status || '')}">${esc(a.status || '—')}</span></td>
+      </tr>`).join('');
+  }
+
+  // Watch for the static view to appear (the admin design renders async)
+  function wireStaticApplicationsView(applications) {
+    if (paintStaticApplicationsView(applications)) return;
+    let attempts = 0;
+    const iv = setInterval(() => {
+      attempts++;
+      if (paintStaticApplicationsView(applications) || attempts > 60) clearInterval(iv);
+    }, 500);
+  }
+
   async function refreshAll() {
     const greeting = document.getElementById('oac-greeting');
     if (greeting) greeting.textContent = 'Loading data…';
@@ -303,6 +361,7 @@
       renderLoans(loans);
       renderInvestments(investments);
       renderRaises(raises);
+      wireStaticApplicationsView(applications);
       if (greeting) greeting.textContent = `Loaded · ${clients.length} clients · ${pending.length} pending · ${loans.length} loans · ${applications.length} applications`;
     } catch (ex) {
       console.error('[onix-admin]', ex);
@@ -316,7 +375,9 @@
     injectStyles();
     buildPanel();
     document.getElementById('oac-greeting').textContent = 'Signed in as ' + (gate.profile.full_name || gate.profile.email);
-    // Keep the panel closed until the admin clicks the toggle.
+    // Load data eagerly so the static "Loan Applications" tab is populated
+    // even before the admin opens the Live Admin Console.
+    refreshAll();
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootstrap);
