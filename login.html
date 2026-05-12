@@ -24,10 +24,10 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
 .lang-toggle{display:flex;gap:4px}
 .lang-toggle button{padding:4px 10px;border-radius:2px;font-size:.68rem;font-weight:700;letter-spacing:.08em;color:var(--light);transition:all .14s;border:1px solid var(--border)}
 .lang-toggle button.active{background:var(--red);color:#fff;border-color:var(--red)}
-
+ 
 /* Layout */
 .login-page{min-height:100vh;display:grid;grid-template-columns:1fr 1fr}
-
+ 
 /* Left panel */
 .login-left{background:var(--dark);color:#fff;position:relative;overflow:hidden;padding:56px 64px;display:flex;flex-direction:column;justify-content:space-between}
 .login-left-glow{position:absolute;top:-180px;left:-160px;width:520px;height:520px;background:radial-gradient(circle,rgba(192,57,43,.22) 0%,transparent 65%);border-radius:50%;pointer-events:none}
@@ -36,23 +36,23 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
 .login-left-dots{position:absolute;bottom:64px;right:64px;display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
 .login-left-dots span{width:5px;height:5px;border-radius:50%;background:var(--red);opacity:.5;display:block}
 .login-left-dots span:nth-child(odd){opacity:.25}
-
+ 
 .login-brand{position:relative;z-index:1}
 .login-brand-wordmark{font-size:1.5rem;font-weight:900;letter-spacing:6px;color:#fff;text-transform:uppercase;margin-bottom:36px;display:block}
 .login-brand-wordmark span{color:var(--red)}
 .login-brand-rule{width:40px;height:2px;background:var(--red);margin-bottom:28px}
 .login-brand-tagline{font-family:var(--serif);font-style:italic;font-size:1.75rem;font-weight:500;color:rgba(255,255,255,.9);line-height:1.35;max-width:360px;letter-spacing:-.005em}
 .login-brand-sub{margin-top:20px;font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.35);font-weight:600}
-
+ 
 .login-left-footer{position:relative;z-index:1}
 .login-left-footer p{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.22);font-style:italic}
-
+ 
 /* Right panel */
 .login-right{background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:56px 80px;position:relative}
 .login-top-bar{position:absolute;top:24px;right:32px;left:32px;display:flex;justify-content:space-between;align-items:center}
 .login-top-back{font-size:.72rem;letter-spacing:.08em;color:var(--light);font-weight:500;display:flex;align-items:center;gap:8px;transition:color .15s}
 .login-top-back:hover{color:var(--red)}
-
+ 
 .login-form{width:100%;max-width:400px}
 .login-eyebrow{font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:var(--red);font-weight:600;margin-bottom:14px}
 .login-title{font-family:var(--serif);font-style:italic;font-weight:500;font-size:2.8rem;line-height:1;margin-bottom:10px;letter-spacing:-.01em}
@@ -62,19 +62,16 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
 .link-btn:hover{text-decoration:underline}
 .login-error{display:none;color:var(--red);font-size:.85rem;padding:12px 14px;background:var(--red-light);border-left:3px solid var(--red);margin-bottom:18px}
 .login-error.show{display:block}
-
-.login-demo{margin-top:30px;padding:18px 20px;background:var(--bg);border-left:3px solid rgba(192,57,43,.4)}
-.login-demo p{font-size:.74rem;color:var(--muted);line-height:1.8}
-.login-demo p.ttl{font-weight:700;color:var(--dark);margin-bottom:6px;font-size:.65rem;letter-spacing:.14em;text-transform:uppercase}
-.login-demo code{font-family:'SFMono-Regular','Consolas',monospace;font-size:.72rem;color:var(--red);background:#fff;padding:1px 6px;border-radius:2px}
-
+ 
+ 
+ 
 .login-request{margin-top:28px;text-align:center;font-size:.82rem;color:var(--light)}
 .login-request a{color:var(--red);font-weight:500}
 .login-request a:hover{text-decoration:underline}
 .login-security{display:flex;align-items:center;gap:10px;justify-content:center;margin-top:32px;font-size:.72rem;color:#bbb;letter-spacing:.03em}
 .login-security svg{color:var(--success)}
 .login-footer-right{position:absolute;bottom:28px;font-size:.7rem;color:#bbb;font-style:italic;letter-spacing:.04em}
-
+ 
 @media(max-width:900px){
   .login-page{grid-template-columns:1fr}
   .login-left{display:none}
@@ -84,7 +81,7 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
 </head>
 <body>
 <div class="login-page">
-
+ 
   <!-- Left panel -->
   <div class="login-left">
     <div class="login-left-glow"></div>
@@ -95,7 +92,7 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
       <span></span><span></span><span></span><span></span><span></span>
       <span></span><span></span><span></span><span></span><span></span>
     </div>
-
+ 
     <div class="login-brand">
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:32px">
         <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Onix Finance">
@@ -109,12 +106,12 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
       <p class="login-brand-tagline" data-en="Private lending and investment solutions for discerning clients." data-es="Soluciones de préstamos privados e inversión para clientes exigentes.">Private lending and investment solutions for discerning clients.</p>
       <p class="login-brand-sub">Houston, TX &nbsp;·&nbsp; Est. 2018</p>
     </div>
-
+ 
     <div class="login-left-footer">
       <p>Private &amp; Confidential — Onix Finance, LLC</p>
     </div>
   </div>
-
+ 
   <!-- Right panel -->
   <div class="login-right">
     <div class="login-top-bar">
@@ -127,46 +124,40 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
         <button data-lang-set="es">ES</button>
       </div>
     </div>
-
+ 
     <div class="login-form">
       <p class="login-eyebrow" data-en="Secure Access" data-es="Acceso Seguro">Secure Access</p>
       <h1 class="login-title" data-en="Client Portal" data-es="Portal del Cliente">Client Portal</h1>
       <p class="login-sub" data-en="Sign in to manage your loans and investments." data-es="Inicie sesión para administrar sus préstamos e inversiones.">Sign in to manage your loans and investments.</p>
-
+ 
       <div id="login-error" class="login-error"></div>
-
+ 
       <form onsubmit="doLogin(event)">
         <label class="field-label" data-en="Email Address" data-es="Correo Electrónico">Email Address</label>
         <input id="email" type="email" class="field-input" data-ph-en="you@example.com" data-ph-es="usted@ejemplo.com" placeholder="you@example.com" style="margin-bottom:18px" required>
-
+ 
         <label class="field-label" data-en="Password" data-es="Contraseña">Password</label>
         <input id="password" type="password" class="field-input" placeholder="••••••••" style="margin-bottom:18px" required>
-
+ 
         <div class="login-extras">
-          <a href="#" class="link-btn" onclick="alert(OnixLang.getLang()==='es'?'Enlace enviado.':'Reset link sent.');return false">
+          <a href="#" class="link-btn" onclick="forgotPassword(event)">
             <span data-en="Forgot password?" data-es="¿Olvidó su contraseña?">Forgot password?</span>
           </a>
         </div>
-
+ 
         <button type="submit" class="btn btn-red" style="width:100%;padding:16px">
           <span data-en="Sign In" data-es="Iniciar Sesión">Sign In</span>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
         </button>
       </form>
-
-      <div class="login-demo">
-        <p class="ttl" data-en="Demo credentials" data-es="Credenciales de demostración">Demo credentials</p>
-        <p data-en="Client: " data-es="Cliente: ">Client: </p>
-        <p style="margin-top:-18px;padding-left:52px"><code>client@onixfinance.com</code> / <code>client123</code></p>
-        <p style="margin-top:4px" data-en="Admin: " data-es="Admin: ">Admin: </p>
-        <p style="margin-top:-18px;padding-left:52px"><code>admin@onixfinance.com</code> / <code>admin123</code></p>
-      </div>
-
+ 
+ 
+ 
       <div class="login-security">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1l9 4v6c0 5.5-3.8 10.7-9 12-5.2-1.3-9-6.5-9-12V5l9-4z"/></svg>
         <span data-en="256-bit encryption · SOC 2 compliant" data-es="Cifrado 256-bit · Cumple SOC 2">256-bit encryption · SOC 2 compliant</span>
       </div>
-
+ 
       <div class="login-request">
         <span data-en="New client?" data-es="¿Nuevo cliente?">New client?</span>
         <a href="#" data-en="Request access →" data-es="Solicitar acceso →">Request access →</a>
@@ -175,27 +166,118 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
     <p class="login-footer-right">Private &amp; Confidential — Onix Finance, LLC</p>
   </div>
 </div>
-
+ 
+<!-- Supabase CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// Initialize Supabase immediately after CDN loads
+const SUPABASE_URL = 'https://ckayfqplkpplgojdhjlu.supabase.co'
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNrYXlmcXBsa3BwbGdvamRoamx1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwOTUzNDUsImV4cCI6MjA5MzY3MTM0NX0.E5lmNud0ERUqaxy829d1dB3AqGw9EEFjHFSB7zDJdFE'
+const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+</script>
 <script src="i18n.js"></script>
 <script>
-function doLogin(e){
+// Get user profile from Supabase
+async function getProfile(userId) {
+  const { data, error } = await _supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single()
+  if (error) console.error('Profile error:', error)
+  return data
+}
+ 
+async function doLogin(e) {
   e.preventDefault();
   const email = document.getElementById('email').value.trim().toLowerCase();
   const pw = document.getElementById('password').value;
   const err = document.getElementById('login-error');
+  const btn = e.target.querySelector('[type="submit"]');
+ 
   err.classList.remove('show');
-  if(email==='client@onixfinance.com' && pw==='client123'){
-    localStorage.setItem('onix-user',JSON.stringify({role:'client',name:'Carlos Mendoza',email}));
-    window.location.href='client-portal.html'; return;
+  btn.disabled = true;
+  btn.querySelector('span').textContent = OnixLang.getLang() === 'es' ? 'Iniciando…' : 'Signing in…';
+ 
+  try {
+    // 1. Sign in with Supabase Auth
+    const { data, error } = await _supabase.auth.signInWithPassword({ email, password: pw });
+ 
+    if (error) {
+      err.textContent = OnixLang.getLang() === 'es'
+        ? 'Correo o contraseña inválidos.'
+        : 'Invalid email or password.';
+      err.classList.add('show');
+      btn.disabled = false;
+      btn.querySelector('span').textContent = OnixLang.getLang() === 'es' ? 'Iniciar Sesión' : 'Sign In';
+      return;
+    }
+ 
+    // 2. Get their profile to check role + status
+    const profile = await getProfile(data.user.id);
+ 
+    if (!profile) {
+      err.textContent = 'Account not found. Please contact Onix Finance.';
+      err.classList.add('show');
+      await _supabase.auth.signOut();
+      btn.disabled = false;
+      btn.querySelector('span').textContent = 'Sign In';
+      return;
+    }
+ 
+    if (profile.status === 'pending') {
+      err.textContent = OnixLang.getLang() === 'es'
+        ? 'Su cuenta está pendiente de aprobación. El equipo de Onix Finance lo contactará pronto.'
+        : 'Your account is pending approval. The Onix Finance team will contact you shortly.';
+      err.classList.add('show');
+      await _supabase.auth.signOut();
+      btn.disabled = false;
+      btn.querySelector('span').textContent = OnixLang.getLang() === 'es' ? 'Iniciar Sesión' : 'Sign In';
+      return;
+    }
+ 
+    if (profile.status === 'rejected') {
+      err.textContent = OnixLang.getLang() === 'es'
+        ? 'Su cuenta ha sido rechazada. Contacte a Onix Finance para más información.'
+        : 'Your account has been rejected. Please contact Onix Finance.';
+      err.classList.add('show');
+      await _supabase.auth.signOut();
+      btn.disabled = false;
+      btn.querySelector('span').textContent = OnixLang.getLang() === 'es' ? 'Iniciar Sesión' : 'Sign In';
+      return;
+    }
+ 
+    // 3. Redirect based on role
+    if (profile.role === 'admin') {
+      window.location.href = 'admin-portal.html';
+    } else {
+      window.location.href = 'client-portal.html';
+    }
+ 
+  } catch (err2) {
+    console.error(err2);
+    err.textContent = 'Something went wrong. Please try again.';
+    err.classList.add('show');
+    btn.disabled = false;
+    btn.querySelector('span').textContent = 'Sign In';
   }
-  if(email==='admin@onixfinance.com' && pw==='admin123'){
-    localStorage.setItem('onix-user',JSON.stringify({role:'admin',name:'Elena Vargas',email}));
-    window.location.href='admin-portal.html'; return;
+}
+ 
+// Forgot password — real Supabase reset
+async function forgotPassword(e) {
+  e.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  if (!email) { alert('Please enter your email address first.'); return; }
+  const { error } = await _supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin + '/login.html'
+  });
+  if (error) {
+    alert('Could not send reset email. Please try again.');
+  } else {
+    alert(OnixLang.getLang() === 'es'
+      ? 'Enlace de recuperación enviado. Revise su correo.'
+      : 'Password reset link sent. Check your email.');
   }
-  err.textContent = OnixLang.getLang()==='es'
-    ? 'Correo o contraseña inválidos. Use las credenciales de demostración.'
-    : 'Invalid email or password. Try the demo credentials below.';
-  err.classList.add('show');
 }
 </script>
 </body>
