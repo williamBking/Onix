@@ -64,8 +64,125 @@
       .oac-tab.active{color:#C0392B;border-bottom-color:#C0392B}
       .oac-section{display:none}
       .oac-section.active{display:block}
+      .oac-modal-backdrop{position:fixed;inset:0;background:rgba(26,26,26,.55);z-index:100000;display:none;align-items:center;justify-content:center;padding:24px}
+      .oac-modal-backdrop.open{display:flex}
+      .oac-modal{background:#fff;max-width:720px;width:100%;max-height:88vh;overflow-y:auto;border:1px solid #E8E8E8;border-top:3px solid #C0392B;padding:28px 32px}
+      .oac-modal h2{font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:1.6rem;margin:0 0 4px}
+      .oac-modal .sub{font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.12em;margin-bottom:18px}
+      .oac-modal-row{display:grid;grid-template-columns:1fr 1fr;gap:14px 24px;margin-bottom:18px}
+      .oac-modal-row .k{font-size:.62rem;color:#888;letter-spacing:.1em;text-transform:uppercase;font-weight:700;margin-bottom:2px}
+      .oac-modal-row .v{font-size:.92rem;color:#1A1A1A;font-weight:500}
+      .oac-modal-docs h3{font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;color:#1A1A1A;font-weight:700;margin:8px 0 10px;padding-top:14px;border-top:1px solid #E8E8E8}
+      .oac-modal-docs .row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f4f4f4}
+      .oac-modal-docs a{color:#C0392B;font-weight:600;font-size:.85rem;text-decoration:none}
+      .oac-modal-foot{margin-top:20px;display:flex;justify-content:flex-end;gap:8px;padding-top:14px;border-top:1px solid #E8E8E8}
     `;
     document.head.appendChild(s);
+  }
+
+  // ---------- detail modal ----------
+  function ensureModal() {
+    let m = document.getElementById('oac-modal');
+    if (m) return m;
+    m = document.createElement('div');
+    m.id = 'oac-modal';
+    m.className = 'oac-modal-backdrop';
+    m.innerHTML = `<div class="oac-modal" role="dialog" aria-modal="true">
+      <div data-modal-body></div>
+      <div class="oac-modal-foot">
+        <button class="oac-btn outline" data-modal-close>Close</button>
+      </div>
+    </div>`;
+    document.body.appendChild(m);
+    m.addEventListener('click', (e) => {
+      if (e.target === m || e.target.hasAttribute('data-modal-close')) m.classList.remove('open');
+    });
+    return m;
+  }
+
+  function openModal(html) {
+    const m = ensureModal();
+    m.querySelector('[data-modal-body]').innerHTML = html;
+    m.classList.add('open');
+  }
+
+  function detailRow(k, v) {
+    return `<div><div class="k">${esc(k)}</div><div class="v">${v == null || v === '' ? '—' : esc(v)}</div></div>`;
+  }
+
+  function docsBlock(title, docs) {
+    if (!docs || !docs.length) return '';
+    return `<div class="oac-modal-docs"><h3>${esc(title)}</h3>${docs.map(d => `
+      <div class="row">
+        <div>${esc(d.name)}</div>
+        ${d.dropbox_url ? `<a href="${esc(d.dropbox_url)}" target="_blank" rel="noopener">Open ↗</a>` : '<span style="color:#888;font-size:.8rem">—</span>'}
+      </div>`).join('')}</div>`;
+  }
+
+  function viewLoan(loan) {
+    const c = loan.profiles || {};
+    openModal(`
+      <h2>Loan ${esc(loan.loan_id_display || loan.id.slice(0,8))}</h2>
+      <div class="sub">${esc(c.full_name || c.email || 'Unknown client')}</div>
+      <div class="oac-modal-row">
+        ${detailRow('Balance', fmt.money(loan.balance))}
+        ${detailRow('Interest Rate', fmt.pct(loan.interest_rate))}
+        ${detailRow('Monthly Payment', fmt.money(loan.monthly_payment))}
+        ${detailRow('Next Due', fmt.date(loan.next_due_date))}
+        ${detailRow('Origination Date', fmt.date(loan.origination_date))}
+        ${detailRow('Maturity Date', fmt.date(loan.maturity_date))}
+        ${detailRow('Term (months)', loan.term_months)}
+        ${detailRow('Origination Fee', loan.origination_fee != null ? loan.origination_fee + '%' : null)}
+        ${detailRow('Status', loan.status)}
+        ${detailRow('Created', fmt.date(loan.created_at))}
+      </div>
+      <div class="oac-modal-row" style="grid-template-columns:1fr">
+        ${detailRow('Collateral Address', loan.collateral_address)}
+      </div>
+      ${docsBlock('Loan Documents', loan.loan_documents)}
+    `);
+  }
+
+  function viewInvestment(inv) {
+    const c = inv.profiles || {};
+    openModal(`
+      <h2>${esc(inv.venture_name)}</h2>
+      <div class="sub">${esc(c.full_name || c.email || 'Unknown client')}</div>
+      <div class="oac-modal-row">
+        ${detailRow('Type', inv.venture_type)}
+        ${detailRow('Amount Invested', fmt.money(inv.amount_invested))}
+        ${detailRow('Ownership', inv.ownership_pct != null ? fmt.pct(inv.ownership_pct) : null)}
+        ${detailRow('Expected Return', inv.expected_return != null ? fmt.pct(inv.expected_return) : null)}
+        ${detailRow('Start Date', fmt.date(inv.start_date))}
+        ${detailRow('Status', inv.status)}
+        ${detailRow('Created', fmt.date(inv.created_at))}
+      </div>
+      ${docsBlock('Investment Documents', inv.investment_documents)}
+    `);
+  }
+
+  function viewRaise(r) {
+    openModal(`
+      <h2>${esc(r.venture_name)}</h2>
+      <div class="sub">${esc(r.venture_type || '—')}${r.investment_horizon ? ' · ' + esc(r.investment_horizon) : ''}</div>
+      <div style="font-size:.9rem;line-height:1.55;color:#1A1A1A;margin-bottom:18px">${esc(r.description || 'No description provided.')}</div>
+      <div class="oac-modal-row">
+        ${detailRow('Total Raise', fmt.money(r.total_raise_target))}
+        ${detailRow('Amount Raised', fmt.money(r.amount_raised))}
+        ${detailRow('Minimum', fmt.money(r.minimum_investment))}
+        ${detailRow('Projected Return', (r.projected_return_min != null && r.projected_return_max != null) ? r.projected_return_min + '–' + r.projected_return_max + '%' : null)}
+        ${detailRow('Investment Horizon', r.investment_horizon)}
+        ${detailRow('Structure', r.structure)}
+        ${detailRow('Status', r.status)}
+        ${detailRow('Created', fmt.date(r.created_at))}
+      </div>
+      ${docsBlock('Raise Documents', r.raise_documents)}
+    `);
+  }
+
+  function contactBtn(email, label) {
+    if (!email) return '<button class="oac-btn outline" disabled>No email</button>';
+    return `<a class="oac-btn outline" href="mailto:${esc(email)}${label ? '?subject=' + encodeURIComponent(label) : ''}">Contact</a>`;
   }
 
   // ---------- panel scaffold ----------
@@ -233,8 +350,8 @@
     if (!loans.length) { el.innerHTML = '<div class="oac-empty">No loans yet.</div>'; return; }
     el.innerHTML = `
       <table class="oac-table"><thead><tr>
-        <th>Loan ID</th><th>Client</th><th>Balance</th><th>Rate</th><th>Payment</th><th>Next Due</th><th>Status</th>
-      </tr></thead><tbody>${loans.map(l => `
+        <th>Loan ID</th><th>Client</th><th>Balance</th><th>Rate</th><th>Payment</th><th>Next Due</th><th>Status</th><th style="text-align:right">Actions</th>
+      </tr></thead><tbody>${loans.map((l, i) => `
         <tr>
           <td>${esc(l.loan_id_display || l.id.slice(0,8))}</td>
           <td>${esc((l.profiles && (l.profiles.full_name || l.profiles.email)) || l.user_id)}</td>
@@ -243,7 +360,14 @@
           <td>${fmt.money(l.monthly_payment)}</td>
           <td>${fmt.date(l.next_due_date)}</td>
           <td><span class="oac-badge ${esc(l.status || '')}">${esc(l.status || '—')}</span></td>
+          <td style="text-align:right;white-space:nowrap">
+            <button class="oac-btn red" data-view-loan="${i}">View</button>
+            ${contactBtn(l.profiles && l.profiles.email, 'Onix Finance · Loan ' + (l.loan_id_display || ''))}
+          </td>
         </tr>`).join('')}</tbody></table>`;
+    el.querySelectorAll('[data-view-loan]').forEach(b => {
+      b.addEventListener('click', () => viewLoan(loans[Number(b.dataset.viewLoan)]));
+    });
   }
 
   function renderInvestments(invs) {
@@ -251,8 +375,8 @@
     if (!invs.length) { el.innerHTML = '<div class="oac-empty">No investments yet.</div>'; return; }
     el.innerHTML = `
       <table class="oac-table"><thead><tr>
-        <th>Client</th><th>Venture</th><th>Type</th><th>Invested</th><th>Ownership</th><th>Return</th><th>Status</th>
-      </tr></thead><tbody>${invs.map(i => `
+        <th>Client</th><th>Venture</th><th>Type</th><th>Invested</th><th>Ownership</th><th>Return</th><th>Status</th><th style="text-align:right">Actions</th>
+      </tr></thead><tbody>${invs.map((i, idx) => `
         <tr>
           <td>${esc((i.profiles && (i.profiles.full_name || i.profiles.email)) || i.user_id)}</td>
           <td>${esc(i.venture_name)}</td>
@@ -261,7 +385,14 @@
           <td>${i.ownership_pct != null ? fmt.pct(i.ownership_pct) : '—'}</td>
           <td>${i.expected_return != null ? fmt.pct(i.expected_return) : '—'}</td>
           <td><span class="oac-badge ${esc(i.status || '')}">${esc(i.status || '—')}</span></td>
+          <td style="text-align:right;white-space:nowrap">
+            <button class="oac-btn red" data-view-inv="${idx}">View</button>
+            ${contactBtn(i.profiles && i.profiles.email, 'Onix Finance · ' + (i.venture_name || ''))}
+          </td>
         </tr>`).join('')}</tbody></table>`;
+    el.querySelectorAll('[data-view-inv]').forEach(b => {
+      b.addEventListener('click', () => viewInvestment(invs[Number(b.dataset.viewInv)]));
+    });
   }
 
   function renderRaises(raises) {
@@ -269,8 +400,8 @@
     if (!raises.length) { el.innerHTML = '<div class="oac-empty">No raises yet.</div>'; return; }
     el.innerHTML = `
       <table class="oac-table"><thead><tr>
-        <th>Venture</th><th>Type</th><th>Goal</th><th>Raised</th><th>Min</th><th>IRR</th><th>Horizon</th><th>Status</th>
-      </tr></thead><tbody>${raises.map(r => `
+        <th>Venture</th><th>Type</th><th>Goal</th><th>Raised</th><th>Min</th><th>IRR</th><th>Horizon</th><th>Status</th><th style="text-align:right">Actions</th>
+      </tr></thead><tbody>${raises.map((r, idx) => `
         <tr>
           <td>${esc(r.venture_name)}</td>
           <td>${esc(r.venture_type || '—')}</td>
@@ -280,7 +411,14 @@
           <td>${r.projected_return_min != null && r.projected_return_max != null ? r.projected_return_min + '–' + r.projected_return_max + '%' : '—'}</td>
           <td>${esc(r.investment_horizon || '—')}</td>
           <td><span class="oac-badge ${esc(r.status || '')}">${esc(r.status || '—')}</span></td>
+          <td style="text-align:right;white-space:nowrap">
+            <button class="oac-btn red" data-view-raise="${idx}">View</button>
+            <a class="oac-btn outline" href="mailto:info@onixfinance.com?subject=${encodeURIComponent('Onix Finance · ' + r.venture_name)}">Contact</a>
+          </td>
         </tr>`).join('')}</tbody></table>`;
+    el.querySelectorAll('[data-view-raise]').forEach(b => {
+      b.addEventListener('click', () => viewRaise(raises[Number(b.dataset.viewRaise)]));
+    });
   }
 
   // ---------- bootstrap ----------
