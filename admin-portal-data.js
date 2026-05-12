@@ -474,11 +474,13 @@
     const applicantType = app.applicant_type || '—';
     const status    = app.status || 'pending';
 
+    const viewBtnStyle = "display:inline-block;background:#C0392B;color:#fff;padding:6px 12px;font:600 .68rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;cursor:pointer;margin-right:4px;text-decoration:none";
+    const contactBtnStyle = "display:inline-block;background:#fff;color:#1A1A1A;padding:6px 12px;font:600 .68rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #E8E8E8;border-radius:2px;cursor:pointer;text-decoration:none";
     const actionsHtml =
-      `<button class="oac-btn red" data-view-live-app="${esc(app.id)}" style="margin-right:4px">View</button>` +
+      `<a href="#" role="button" data-view-live-app="${esc(app.id)}" style="${viewBtnStyle}">View</a>` +
       (email
-        ? `<a class="oac-btn outline" href="mailto:${esc(email)}?subject=${encodeURIComponent('Onix Finance · Loan Application')}">Contact</a>`
-        : `<button class="oac-btn outline" disabled>No email</button>`);
+        ? `<a href="mailto:${esc(email)}?subject=${encodeURIComponent('Onix Finance · Loan Application')}" style="${contactBtnStyle}">Contact</a>`
+        : `<span style="${contactBtnStyle};opacity:.5">No email</span>`);
 
     // Data cells in display order; actions occupy the last column.
     const data = [
@@ -530,7 +532,9 @@
     });
     // Wire View buttons (Contact uses a native mailto: anchor, no JS needed)
     tbody.querySelectorAll('[data-view-live-app]').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         const id = btn.getAttribute('data-view-live-app');
         const app = applications.find(a => a.id === id);
         if (app) viewApplication(app);
