@@ -161,6 +161,29 @@
     `);
   }
 
+  function viewApplication(app) {
+    const c = app.profiles || {};
+    openModal(`
+      <h2>Loan Application</h2>
+      <div class="sub">${esc(c.full_name || c.email || 'Unknown client')} · ${fmt.date(app.submitted_at)}</div>
+      <div class="oac-modal-row">
+        ${detailRow('Amount Requested', fmt.money(app.amount_requested))}
+        ${detailRow('Applicant Type', app.applicant_type)}
+        ${detailRow('Status', app.status)}
+        ${detailRow('Submitted', fmt.date(app.submitted_at))}
+      </div>
+      <div class="oac-modal-row" style="grid-template-columns:1fr">
+        ${detailRow('Purpose', app.purpose)}
+      </div>
+      <div class="oac-modal-row" style="grid-template-columns:1fr">
+        ${detailRow('Notes', app.notes)}
+      </div>
+      <div class="oac-modal-row" style="grid-template-columns:1fr">
+        ${detailRow('Client Email', c.email)}
+      </div>
+    `);
+  }
+
   function viewRaise(r) {
     openModal(`
       <h2>${esc(r.venture_name)}</h2>
@@ -440,19 +463,25 @@
   }
 
   function buildLiveRow(app, columnCount) {
-    // Best-effort column mapping. The demo table varies, so produce a single
-    // labelled cell that summarises the application, and pad to columnCount.
     const tr = document.createElement('tr');
     tr.setAttribute('data-onix-live-app', app.id);
     tr.style.background = '#FDF0EE';
     const submitted = fmt.date(app.submitted_at);
     const client    = (app.profiles && (app.profiles.full_name || app.profiles.email)) || app.user_id;
+    const email     = app.profiles && app.profiles.email;
     const amount    = fmt.money(app.amount_requested);
     const purpose   = app.purpose || '—';
     const applicantType = app.applicant_type || '—';
     const status    = app.status || 'pending';
-    // Cells laid out left-to-right; if the demo has more columns, pad with empties.
-    const cells = [
+
+    const actionsHtml =
+      `<button class="oac-btn red" data-view-live-app="${esc(app.id)}" style="margin-right:4px">View</button>` +
+      (email
+        ? `<a class="oac-btn outline" href="mailto:${esc(email)}?subject=${encodeURIComponent('Onix Finance · Loan Application')}">Contact</a>`
+        : `<button class="oac-btn outline" disabled>No email</button>`);
+
+    // Data cells in display order; actions occupy the last column.
+    const data = [
       `<span style="display:inline-block;background:#C0392B;color:#fff;padding:2px 6px;font-size:.55rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:2px;margin-right:6px">Live</span>${esc(submitted)}`,
       esc(client),
       esc(amount),
@@ -460,9 +489,21 @@
       esc(applicantType),
       `<span style="display:inline-block;padding:2px 8px;font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:2px;background:#FDF5E6;color:#A07818">${esc(status)}</span>`
     ];
-    while (cells.length < columnCount) cells.push('');
-    cells.length = columnCount;
-    tr.innerHTML = cells.map(c => `<td>${c}</td>`).join('');
+
+    let cells;
+    if (columnCount >= 2) {
+      // Reserve last column for actions, fit data in the first (columnCount-1)
+      const dataLen = Math.min(data.length, columnCount - 1);
+      cells = data.slice(0, dataLen);
+      while (cells.length < columnCount - 1) cells.push('');
+      cells.push(actionsHtml);
+    } else {
+      cells = [data.join(' · ') + ' ' + actionsHtml];
+    }
+    tr.innerHTML = cells.map((c, idx) => {
+      const style = (idx === cells.length - 1) ? ' style="text-align:right;white-space:nowrap"' : '';
+      return `<td${style}>${c}</td>`;
+    }).join('');
     return tr;
   }
 
@@ -486,6 +527,14 @@
     // Prepend live rows, newest first
     applications.forEach(app => {
       tbody.insertBefore(buildLiveRow(app, columnCount), tbody.firstChild);
+    });
+    // Wire View buttons (Contact uses a native mailto: anchor, no JS needed)
+    tbody.querySelectorAll('[data-view-live-app]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-view-live-app');
+        const app = applications.find(a => a.id === id);
+        if (app) viewApplication(app);
+      });
     });
     return true;
   }
