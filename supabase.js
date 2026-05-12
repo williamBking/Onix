@@ -67,13 +67,27 @@ async function requireAdmin() {
 /* ── Data fetching — Client ───────────────────────────────── */
 
 async function getMyLoan(userId) {
+  // A user can technically have more than one loan in the DB. Pick the most
+  // recently created ACTIVE one for the dashboard summary. Falls back to the
+  // most recent of any status if none are active.
   const { data, error } = await _supabase
     .from('loans')
     .select('*, loan_documents(*)')
     .eq('user_id', userId)
-    .single()
-  if (error && error.code !== 'PGRST116') console.error('Loan fetch error:', error)
-  return data || null
+    .order('created_at', { ascending: false })
+  if (error) { console.error('Loan fetch error:', error); return null }
+  if (!data || !data.length) return null
+  return data.find(l => l.status === 'active') || data[0]
+}
+
+async function getMyLoans(userId) {
+  const { data, error } = await _supabase
+    .from('loans')
+    .select('*, loan_documents(*)')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+  if (error) { console.error('Loans fetch error:', error); return [] }
+  return data || []
 }
 
 async function getMyInvestments(userId) {
@@ -193,6 +207,7 @@ window.OnixDB = {
   requireClient,
   requireAdmin,
   getMyLoan,
+  getMyLoans,
   getMyInvestments,
   getOpenRaises,
   submitLoanApplication,
