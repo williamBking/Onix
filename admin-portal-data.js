@@ -449,13 +449,20 @@
   // Strategy: for each known view container, wipe its inner HTML and render
   // a clean Onix-styled table populated from Supabase.
 
+  // The admin design uses these real view IDs (confirmed by grepping the source):
+  //   view-dashboard, view-clients, view-investors, view-loans, view-raises,
+  //   view-applications, view-review, view-documents, view-reports, view-users
   const STATIC_VIEWS = {
-    clients:     ['view-clients'],
-    loans:       ['view-loans', 'view-portfolio-loans'],
-    investments: ['view-investments', 'view-portfolio'],
+    clients:     ['view-clients', 'view-users'],
+    loans:       ['view-loans'],
+    investments: ['view-investors'],
     raises:      ['view-raises'],
-    applications:['view-applications', 'view-loans-app']
+    applications:['view-applications']
   };
+
+  // Marker so we know we've already painted a view (and to detect when the
+  // admin's own code has re-rendered it back to demo content).
+  const LIVE_MARKER = 'oac-live-painted';
 
   function findView(idList) {
     for (const id of idList) {
@@ -467,7 +474,7 @@
 
   function viewShell(title, subtitle, innerHtml) {
     return `
-      <div style="padding:32px 40px;font-family:'DM Sans',sans-serif;color:#1A1A1A">
+      <div class="${LIVE_MARKER}" style="padding:32px 40px;font-family:'DM Sans',sans-serif;color:#1A1A1A">
         <div style="font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:#C0392B;font-weight:600">Live · Supabase</div>
         <h1 style="font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:2rem;margin:6px 0 6px">${esc(title)}</h1>
         <div style="width:40px;height:2px;background:#C0392B;margin-bottom:18px"></div>
@@ -478,8 +485,13 @@
       </div>`;
   }
 
+  function alreadyPainted(viewEl) {
+    return !!(viewEl && viewEl.querySelector('.' + LIVE_MARKER));
+  }
+
   function paintClientsView(clients) {
     const v = findView(STATIC_VIEWS.clients); if (!v) return false;
+    if (alreadyPainted(v)) return true;
     const rows = clients.length ? clients.map(c => `
       <tr>
         <td>${esc(c.full_name || '—')}</td>
@@ -497,6 +509,7 @@
 
   function paintLoansView(loans) {
     const v = findView(STATIC_VIEWS.loans); if (!v) return false;
+    if (alreadyPainted(v)) return true;
     const rows = loans.length ? loans.map((l, i) => `
       <tr>
         <td>${esc(l.loan_id_display || l.id.slice(0,8))}</td>
@@ -523,6 +536,7 @@
 
   function paintInvestmentsView(invs) {
     const v = findView(STATIC_VIEWS.investments); if (!v) return false;
+    if (alreadyPainted(v)) return true;
     const rows = invs.length ? invs.map((it, i) => `
       <tr>
         <td>${esc((it.profiles && (it.profiles.full_name || it.profiles.email)) || it.user_id)}</td>
@@ -549,6 +563,7 @@
 
   function paintRaisesView(raises) {
     const v = findView(STATIC_VIEWS.raises); if (!v) return false;
+    if (alreadyPainted(v)) return true;
     const rows = raises.length ? raises.map((r, i) => `
       <tr>
         <td>${esc(r.venture_name)}</td>
@@ -575,6 +590,7 @@
 
   function paintApplicationsView(applications) {
     const v = findView(STATIC_VIEWS.applications); if (!v) return false;
+    if (alreadyPainted(v)) return true;
     const rows = applications.length ? applications.map((a, i) => `
       <tr>
         <td>${fmt.date(a.submitted_at)}</td>
@@ -604,26 +620,23 @@
     return `<a href="mailto:${esc(email)}?subject=${encodeURIComponent('Onix Finance · ' + (label || ''))}" style="${baseStyle}">Contact</a>`;
   }
 
-  // Polling wrapper: the static admin renders async. Try to paint, retry every
-  // 500ms up to 30s. Also rerun whenever something visibly changes (the admin
-  // bundle's MutationObserver mutates classes when switching tabs).
+  // Persistent painter: the admin design renders async AND may re-render
+  // when the user switches tabs. We poll every 600ms for the lifetime of the
+  // session — paint functions are no-ops once a view is already painted, so
+  // the cost is one querySelector per tab per tick.
   function paintStaticAdmin(data) {
-    const attempts = { clients: 0, loans: 0, investments: 0, raises: 0, applications: 0 };
-    const max = 60; // 30s
     function tryAll() {
-      if (paintClientsView(data.clients))         attempts.clients = max;     else attempts.clients++;
-      if (paintLoansView(data.loans))             attempts.loans = max;       else attempts.loans++;
-      if (paintInvestmentsView(data.investments)) attempts.investments = max; else attempts.investments++;
-      if (paintRaisesView(data.raises))           attempts.raises = max;      else attempts.raises++;
-      if (paintApplicationsView(data.applications)) attempts.applications = max; else attempts.applications++;
+      paintClientsView(data.clients);
+      paintLoansView(data.loans);
+      paintInvestmentsView(data.investments);
+      paintRaisesView(data.raises);
+      paintApplicationsView(data.applications);
     }
     tryAll();
-    const iv = setInterval(() => {
-      const done = Object.values(attempts).every(n => n >= max);
-      if (done) { clearInterval(iv); return; }
-      tryAll();
-    }, 500);
-    setTimeout(() => clearInterval(iv), 30000);
+    // Stash latest data on window so manual refresh works
+    window.__onixAdminData = data;
+    if (window.__onixAdminPainter) clearInterval(window.__onixAdminPainter);
+    window.__onixAdminPainter = setInterval(tryAll, 600);
   }
 
   // (legacy helper kept for backwards compat — no longer used)
