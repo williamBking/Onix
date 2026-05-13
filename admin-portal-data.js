@@ -445,9 +445,188 @@
   }
 
   // ---------- bootstrap ----------
-  // ---------- inject real applications into the EXISTING static demo table ----------
-  // Strategy: leave the demo rows intact, just prepend live rows at the top of
-  // the table's <tbody>, formatted to match the demo's column count.
+  // ---------- replace demo content in static admin tabs with live data ----------
+  // Strategy: for each known view container, wipe its inner HTML and render
+  // a clean Onix-styled table populated from Supabase.
+
+  const STATIC_VIEWS = {
+    clients:     ['view-clients'],
+    loans:       ['view-loans', 'view-portfolio-loans'],
+    investments: ['view-investments', 'view-portfolio'],
+    raises:      ['view-raises'],
+    applications:['view-applications', 'view-loans-app']
+  };
+
+  function findView(idList) {
+    for (const id of idList) {
+      const el = document.getElementById(id);
+      if (el) return el;
+    }
+    return null;
+  }
+
+  function viewShell(title, subtitle, innerHtml) {
+    return `
+      <div style="padding:32px 40px;font-family:'DM Sans',sans-serif;color:#1A1A1A">
+        <div style="font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:#C0392B;font-weight:600">Live · Supabase</div>
+        <h1 style="font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:2rem;margin:6px 0 6px">${esc(title)}</h1>
+        <div style="width:40px;height:2px;background:#C0392B;margin-bottom:18px"></div>
+        ${subtitle ? `<div style="font-size:.85rem;color:#888;margin-bottom:18px">${esc(subtitle)}</div>` : ''}
+        <div style="background:#fff;border:1px solid #E8E8E8;border-top:3px solid #C0392B;padding:18px">
+          ${innerHtml}
+        </div>
+      </div>`;
+  }
+
+  function paintClientsView(clients) {
+    const v = findView(STATIC_VIEWS.clients); if (!v) return false;
+    const rows = clients.length ? clients.map(c => `
+      <tr>
+        <td>${esc(c.full_name || '—')}</td>
+        <td>${esc(c.email)}</td>
+        <td>${esc(c.role)}</td>
+        <td><span class="oac-badge ${esc(c.status || '')}">${esc(c.status || '—')}</span></td>
+        <td>${fmt.date(c.created_at)}</td>
+      </tr>`).join('') : '<tr><td colspan="5" class="oac-empty">No clients yet.</td></tr>';
+    v.innerHTML = viewShell('Clients', 'All accounts in the system', `
+      <table class="oac-table" style="width:100%"><thead><tr>
+        <th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Joined</th>
+      </tr></thead><tbody>${rows}</tbody></table>`);
+    return true;
+  }
+
+  function paintLoansView(loans) {
+    const v = findView(STATIC_VIEWS.loans); if (!v) return false;
+    const rows = loans.length ? loans.map((l, i) => `
+      <tr>
+        <td>${esc(l.loan_id_display || l.id.slice(0,8))}</td>
+        <td>${esc((l.profiles && (l.profiles.full_name || l.profiles.email)) || l.user_id)}</td>
+        <td>${fmt.money(l.balance)}</td>
+        <td>${fmt.pct(l.interest_rate)}</td>
+        <td>${fmt.money(l.monthly_payment)}</td>
+        <td>${fmt.date(l.next_due_date)}</td>
+        <td><span class="oac-badge ${esc(l.status || '')}">${esc(l.status || '—')}</span></td>
+        <td style="text-align:right;white-space:nowrap">
+          <a href="#" data-view-static-loan="${i}" style="display:inline-block;background:#C0392B;color:#fff;padding:6px 12px;font:600 .68rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;margin-right:4px;text-decoration:none">View</a>
+          ${contactAnchor(l.profiles && l.profiles.email, 'Loan ' + (l.loan_id_display || ''))}
+        </td>
+      </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No loans yet.</td></tr>';
+    v.innerHTML = viewShell('Loans', 'Active and historical loans', `
+      <table class="oac-table" style="width:100%"><thead><tr>
+        <th>Loan ID</th><th>Client</th><th>Balance</th><th>Rate</th><th>Payment</th><th>Next Due</th><th>Status</th><th style="text-align:right">Actions</th>
+      </tr></thead><tbody>${rows}</tbody></table>`);
+    v.querySelectorAll('[data-view-static-loan]').forEach(b => {
+      b.addEventListener('click', (e) => { e.preventDefault(); viewLoan(loans[Number(b.dataset.viewStaticLoan)]); });
+    });
+    return true;
+  }
+
+  function paintInvestmentsView(invs) {
+    const v = findView(STATIC_VIEWS.investments); if (!v) return false;
+    const rows = invs.length ? invs.map((it, i) => `
+      <tr>
+        <td>${esc((it.profiles && (it.profiles.full_name || it.profiles.email)) || it.user_id)}</td>
+        <td>${esc(it.venture_name)}</td>
+        <td>${esc(it.venture_type || '—')}</td>
+        <td>${fmt.money(it.amount_invested)}</td>
+        <td>${it.ownership_pct != null ? fmt.pct(it.ownership_pct) : '—'}</td>
+        <td>${it.expected_return != null ? fmt.pct(it.expected_return) : '—'}</td>
+        <td><span class="oac-badge ${esc(it.status || '')}">${esc(it.status || '—')}</span></td>
+        <td style="text-align:right;white-space:nowrap">
+          <a href="#" data-view-static-inv="${i}" style="display:inline-block;background:#C0392B;color:#fff;padding:6px 12px;font:600 .68rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;margin-right:4px;text-decoration:none">View</a>
+          ${contactAnchor(it.profiles && it.profiles.email, it.venture_name)}
+        </td>
+      </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No investments yet.</td></tr>';
+    v.innerHTML = viewShell('Investments', 'Client positions across every venture', `
+      <table class="oac-table" style="width:100%"><thead><tr>
+        <th>Client</th><th>Venture</th><th>Type</th><th>Invested</th><th>Ownership</th><th>Return</th><th>Status</th><th style="text-align:right">Actions</th>
+      </tr></thead><tbody>${rows}</tbody></table>`);
+    v.querySelectorAll('[data-view-static-inv]').forEach(b => {
+      b.addEventListener('click', (e) => { e.preventDefault(); viewInvestment(invs[Number(b.dataset.viewStaticInv)]); });
+    });
+    return true;
+  }
+
+  function paintRaisesView(raises) {
+    const v = findView(STATIC_VIEWS.raises); if (!v) return false;
+    const rows = raises.length ? raises.map((r, i) => `
+      <tr>
+        <td>${esc(r.venture_name)}</td>
+        <td>${esc(r.venture_type || '—')}</td>
+        <td>${fmt.money(r.total_raise_target)}</td>
+        <td>${fmt.money(r.amount_raised)}</td>
+        <td>${fmt.money(r.minimum_investment)}</td>
+        <td>${(r.projected_return_min != null && r.projected_return_max != null) ? r.projected_return_min + '–' + r.projected_return_max + '%' : '—'}</td>
+        <td><span class="oac-badge ${esc(r.status || '')}">${esc(r.status || '—')}</span></td>
+        <td style="text-align:right;white-space:nowrap">
+          <a href="#" data-view-static-raise="${i}" style="display:inline-block;background:#C0392B;color:#fff;padding:6px 12px;font:600 .68rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;margin-right:4px;text-decoration:none">View</a>
+          <a href="mailto:info@onixfinance.com?subject=${encodeURIComponent('Onix Finance · ' + r.venture_name)}" style="display:inline-block;background:#fff;color:#1A1A1A;padding:6px 12px;font:600 .68rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none">Contact</a>
+        </td>
+      </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No raises yet.</td></tr>';
+    v.innerHTML = viewShell('Raises', 'Active and historical investment opportunities', `
+      <table class="oac-table" style="width:100%"><thead><tr>
+        <th>Venture</th><th>Type</th><th>Goal</th><th>Raised</th><th>Min</th><th>IRR</th><th>Status</th><th style="text-align:right">Actions</th>
+      </tr></thead><tbody>${rows}</tbody></table>`);
+    v.querySelectorAll('[data-view-static-raise]').forEach(b => {
+      b.addEventListener('click', (e) => { e.preventDefault(); viewRaise(raises[Number(b.dataset.viewStaticRaise)]); });
+    });
+    return true;
+  }
+
+  function paintApplicationsView(applications) {
+    const v = findView(STATIC_VIEWS.applications); if (!v) return false;
+    const rows = applications.length ? applications.map((a, i) => `
+      <tr>
+        <td>${fmt.date(a.submitted_at)}</td>
+        <td>${esc((a.profiles && (a.profiles.full_name || a.profiles.email)) || a.user_id)}</td>
+        <td>${fmt.money(a.amount_requested)}</td>
+        <td>${esc(a.applicant_type || '—')}</td>
+        <td>${esc(a.purpose || '—')}</td>
+        <td><span class="oac-badge ${esc(a.status || '')}">${esc(a.status || '—')}</span></td>
+        <td style="text-align:right;white-space:nowrap">
+          <a href="#" data-view-static-app="${i}" style="display:inline-block;background:#C0392B;color:#fff;padding:6px 12px;font:600 .68rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;margin-right:4px;text-decoration:none">View</a>
+          ${contactAnchor(a.profiles && a.profiles.email, 'Loan Application')}
+        </td>
+      </tr>`).join('') : '<tr><td colspan="7" class="oac-empty">No applications submitted yet.</td></tr>';
+    v.innerHTML = viewShell('Loan Applications', 'Submitted via the client portal', `
+      <table class="oac-table" style="width:100%"><thead><tr>
+        <th>Submitted</th><th>Client</th><th>Amount</th><th>Type</th><th>Purpose</th><th>Status</th><th style="text-align:right">Actions</th>
+      </tr></thead><tbody>${rows}</tbody></table>`);
+    v.querySelectorAll('[data-view-static-app]').forEach(b => {
+      b.addEventListener('click', (e) => { e.preventDefault(); viewApplication(applications[Number(b.dataset.viewStaticApp)]); });
+    });
+    return true;
+  }
+
+  function contactAnchor(email, label) {
+    const baseStyle = "display:inline-block;background:#fff;color:#1A1A1A;padding:6px 12px;font:600 .68rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none";
+    if (!email) return `<span style="${baseStyle};opacity:.5">No email</span>`;
+    return `<a href="mailto:${esc(email)}?subject=${encodeURIComponent('Onix Finance · ' + (label || ''))}" style="${baseStyle}">Contact</a>`;
+  }
+
+  // Polling wrapper: the static admin renders async. Try to paint, retry every
+  // 500ms up to 30s. Also rerun whenever something visibly changes (the admin
+  // bundle's MutationObserver mutates classes when switching tabs).
+  function paintStaticAdmin(data) {
+    const attempts = { clients: 0, loans: 0, investments: 0, raises: 0, applications: 0 };
+    const max = 60; // 30s
+    function tryAll() {
+      if (paintClientsView(data.clients))         attempts.clients = max;     else attempts.clients++;
+      if (paintLoansView(data.loans))             attempts.loans = max;       else attempts.loans++;
+      if (paintInvestmentsView(data.investments)) attempts.investments = max; else attempts.investments++;
+      if (paintRaisesView(data.raises))           attempts.raises = max;      else attempts.raises++;
+      if (paintApplicationsView(data.applications)) attempts.applications = max; else attempts.applications++;
+    }
+    tryAll();
+    const iv = setInterval(() => {
+      const done = Object.values(attempts).every(n => n >= max);
+      if (done) { clearInterval(iv); return; }
+      tryAll();
+    }, 500);
+    setTimeout(() => clearInterval(iv), 30000);
+  }
+
+  // (legacy helper kept for backwards compat — no longer used)
   function findStaticAppsTable() {
     const views = [
       document.getElementById('view-applications'),
@@ -571,7 +750,7 @@
       renderLoans(loans);
       renderInvestments(investments);
       renderRaises(raises);
-      wireStaticApplicationsView(applications);
+      paintStaticAdmin({ clients, loans, investments, raises, applications });
       if (greeting) greeting.textContent = `Loaded · ${clients.length} clients · ${pending.length} pending · ${loans.length} loans · ${applications.length} applications`;
     } catch (ex) {
       console.error('[onix-admin]', ex);
