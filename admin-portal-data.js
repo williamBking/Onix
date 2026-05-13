@@ -500,11 +500,88 @@
         <td><span class="oac-badge ${esc(c.status || '')}">${esc(c.status || '—')}</span></td>
         <td>${fmt.date(c.created_at)}</td>
       </tr>`).join('') : '<tr><td colspan="5" class="oac-empty">No clients yet.</td></tr>';
-    v.innerHTML = viewShell('Clients', 'All accounts in the system', `
-      <table class="oac-table" style="width:100%"><thead><tr>
+    const newClientBtn = `
+      <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+        <a href="#" id="oac-new-client-btn" style="display:inline-block;background:#C0392B;color:#fff;padding:10px 18px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">+ New Client</a>
+      </div>`;
+    v.innerHTML = viewShell('Clients', 'All accounts in the system',
+      newClientBtn +
+      `<table class="oac-table" style="width:100%"><thead><tr>
         <th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Joined</th>
       </tr></thead><tbody>${rows}</tbody></table>`);
+    const btn = v.querySelector('#oac-new-client-btn');
+    if (btn) btn.addEventListener('click', (e) => { e.preventDefault(); openNewClientModal(); });
     return true;
+  }
+
+  // ---------- New Client modal ----------
+  function openNewClientModal() {
+    openModal(`
+      <h2>Add New Client</h2>
+      <div class="sub">Creates an Onix Finance account immediately</div>
+      <form id="oac-new-client-form">
+        <div class="oac-modal-row">
+          <div>
+            <div class="k">Full Name</div>
+            <input name="full_name" required style="width:100%;padding:10px 12px;border:1px solid #E8E8E8;font-size:.9rem;font-family:inherit;outline:none" placeholder="Carlos Mendoza">
+          </div>
+          <div>
+            <div class="k">Email</div>
+            <input name="email" type="email" required style="width:100%;padding:10px 12px;border:1px solid #E8E8E8;font-size:.9rem;font-family:inherit;outline:none" placeholder="client@onixfinance.com">
+          </div>
+          <div>
+            <div class="k">Temporary Password</div>
+            <input name="password" type="text" required minlength="6" style="width:100%;padding:10px 12px;border:1px solid #E8E8E8;font-size:.9rem;font-family:inherit;outline:none" placeholder="At least 6 characters">
+          </div>
+          <div>
+            <div class="k">Role</div>
+            <select name="role" style="width:100%;padding:10px 12px;border:1px solid #E8E8E8;font-size:.9rem;font-family:inherit;outline:none;background:#fff">
+              <option value="client" selected>Client (default)</option>
+              <option value="client">Client · Investor</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div>
+            <div class="k">Status</div>
+            <select name="status" style="width:100%;padding:10px 12px;border:1px solid #E8E8E8;font-size:.9rem;font-family:inherit;outline:none;background:#fff">
+              <option value="active" selected>Active (can sign in immediately)</option>
+              <option value="pending">Pending (needs approval)</option>
+            </select>
+          </div>
+        </div>
+        <div id="oac-new-client-err" style="color:#C0392B;font-size:.85rem;margin-bottom:10px;display:none"></div>
+        <div class="oac-modal-foot" style="margin-top:0">
+          <button type="button" class="oac-btn outline" data-modal-close>Cancel</button>
+          <button type="submit" class="oac-btn red" id="oac-new-client-submit">Create Client</button>
+        </div>
+      </form>
+    `);
+    const form = document.getElementById('oac-new-client-form');
+    if (!form) return;
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const submitBtn = document.getElementById('oac-new-client-submit');
+      const errEl = document.getElementById('oac-new-client-err');
+      errEl.style.display = 'none';
+      submitBtn.disabled = true; submitBtn.textContent = 'Creating…';
+      const { data, error } = await OnixDB.client.rpc('admin_create_client', {
+        p_email:     String(fd.get('email')).trim().toLowerCase(),
+        p_password:  String(fd.get('password')),
+        p_full_name: String(fd.get('full_name')).trim(),
+        p_role:      String(fd.get('role')),
+        p_status:    String(fd.get('status'))
+      });
+      if (error) {
+        errEl.style.display = 'block';
+        errEl.textContent = error.message || 'Could not create client.';
+        submitBtn.disabled = false; submitBtn.textContent = 'Create Client';
+        return;
+      }
+      // Close modal and reload data
+      document.getElementById('oac-modal').classList.remove('open');
+      refreshAll();
+    });
   }
 
   function paintLoansView(loans) {
@@ -625,6 +702,8 @@
   // session — paint functions are no-ops once a view is already painted, so
   // the cost is one querySelector per tab per tick.
   function paintStaticAdmin(data) {
+    // Invalidate any previously-painted markers so we re-paint with fresh data
+    document.querySelectorAll('.' + LIVE_MARKER).forEach(el => el.classList.remove(LIVE_MARKER));
     function tryAll() {
       paintClientsView(data.clients);
       paintLoansView(data.loans);
@@ -633,7 +712,6 @@
       paintApplicationsView(data.applications);
     }
     tryAll();
-    // Stash latest data on window so manual refresh works
     window.__onixAdminData = data;
     if (window.__onixAdminPainter) clearInterval(window.__onixAdminPainter);
     window.__onixAdminPainter = setInterval(tryAll, 600);
