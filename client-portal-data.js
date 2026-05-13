@@ -25,16 +25,35 @@
     if (el && value != null) el.textContent = value;
   }
 
-  // Find a kpi cell by its English label text. Returns the .kpi-val inside it.
-  function kpiValueByLabel(labelText) {
+  // Find every kpi cell whose label matches. Returns an array (a label like
+  // "Total Invested" appears on both the Dashboard and the Investments view).
+  function kpiCellsByLabel(labelText) {
     const cells = document.querySelectorAll('.kpi-cell');
-    for (const c of cells) {
+    const out = [];
+    cells.forEach(c => {
       const label = c.querySelector('.kpi-label');
       if (label && label.textContent.trim().toLowerCase() === labelText.toLowerCase()) {
-        return { cell: c, val: c.querySelector('.kpi-val'), sub: c.querySelector('.kpi-sub') };
+        out.push({ cell: c, val: c.querySelector('.kpi-val'), sub: c.querySelector('.kpi-sub') });
       }
-    }
-    return { cell: null, val: null, sub: null };
+    });
+    return out;
+  }
+
+  // Convenience for callers that only need one cell.
+  function kpiValueByLabel(labelText) {
+    return kpiCellsByLabel(labelText)[0] || { cell: null, val: null, sub: null };
+  }
+
+  // Update every kpi cell with the given label.
+  function setKpi(labelText, value, subText) {
+    const cells = kpiCellsByLabel(labelText);
+    cells.forEach(({ val, sub }) => {
+      if (val && value != null) val.textContent = value;
+      if (sub && subText !== undefined) {
+        if (typeof subText === 'string') sub.textContent = subText;
+        else if (subText && subText.html) sub.innerHTML = subText.html;
+      }
+    });
   }
 
   function renderUserName(profile) {
@@ -46,57 +65,99 @@
   }
 
   function renderLoan(loan) {
-    // KPIs
-    const outstanding = kpiValueByLabel('Outstanding Loan');
-    setText(outstanding.val, loan ? fmt.money(loan.balance) : '—');
-    setText(outstanding.sub, loan ? (loan.loan_id_display || '') : '');
+    // KPIs — update EVERY matching cell on the page (Dashboard + Lending view both have these labels)
+    setKpi('Outstanding Loan',    loan ? fmt.money(loan.balance) : '—',
+                                  loan ? (loan.loan_id_display || '') : 'No active loan');
+    setKpi('Next Payment Due',    loan ? fmt.date(loan.next_due_date) : '—',
+                                  loan ? { html: fmt.money(loan.monthly_payment) + ' · <span>' + fmt.days(loan.next_due_date) + '</span>' } : 'No active loan');
+    setKpi('Next Due',            loan ? fmt.date(loan.next_due_date) : '—',
+                                  loan ? { html: fmt.money(loan.monthly_payment) + ' · <span>' + fmt.days(loan.next_due_date) + '</span>' } : 'No active loan');
+    setKpi('Outstanding Balance', loan ? fmt.money(loan.balance)          : '—');
+    setKpi('Interest Rate',       loan ? fmt.pct(loan.interest_rate)      : '—');
+    setKpi('Monthly Payment',     loan ? fmt.money(loan.monthly_payment)  : '—');
 
-    const nextDue = kpiValueByLabel('Next Payment Due');
-    setText(nextDue.val, loan ? fmt.date(loan.next_due_date) : '—');
-    if (nextDue.sub && loan) {
-      nextDue.sub.innerHTML = fmt.money(loan.monthly_payment) + ' · <span>' + fmt.days(loan.next_due_date) + '</span>';
-    }
-
-    const balance = kpiValueByLabel('Outstanding Balance');
-    setText(balance.val, loan ? fmt.money(loan.balance) : '—');
-
-    const rate = kpiValueByLabel('Interest Rate');
-    setText(rate.val, loan ? fmt.pct(loan.interest_rate) : '—');
-
-    const monthly = kpiValueByLabel('Monthly Payment');
-    setText(monthly.val, loan ? fmt.money(loan.monthly_payment) : '—');
-
-    // Replace loan document rows inside the lending view's docs panel.
-    // We identify the docs panel by being the first .doc-row container in the page.
+    // Replace loan document rows inside the LENDING view (#view-loans) specifically,
+    // and inside the Documents → "Loan" card if present.
     if (loan && loan.loan_documents && loan.loan_documents.length) {
-      const firstDoc = document.querySelector('.doc-row');
-      if (firstDoc) {
-        const docsContainer = firstDoc.parentElement;
-        // Wipe existing static rows, then re-add from data
-        docsContainer.querySelectorAll('.doc-row').forEach(r => r.remove());
-        const today = new Date();
-        loan.loan_documents.forEach(d => {
-          const row = document.createElement('div');
-          row.className = 'doc-row';
-          row.innerHTML =
-            '<div><div class="doc-name">' + escapeHtml(d.name) + '</div>' +
-            '<div class="doc-meta">PDF · ' + fmt.date(d.uploaded_at || today) + '</div></div>' +
-            (d.dropbox_url
-              ? '<a class="doc-link" href="' + escapeAttr(d.dropbox_url) + '" target="_blank" rel="noopener">View ↗</a>'
-              : '<button class="doc-link" disabled>—</button>');
-          docsContainer.appendChild(row);
-        });
-      }
+      renderDocRowsInto(document.querySelector('#view-loans'), loan.loan_documents);
+      // The "Loan · …" card in view-documents
+      renderDocRowsIntoCard(document.querySelector('#view-documents'), 'Loan', loan.loan_documents, loan.loan_id_display);
     }
   }
 
-  function renderNoLoan() {
-    // When the user has no active loan, dim all loan KPI values
-    ['Outstanding Loan', 'Next Payment Due', 'Outstanding Balance', 'Interest Rate', 'Monthly Payment'].forEach(label => {
-      const { val, sub } = kpiValueByLabel(label);
-      setText(val, '—');
-      if (sub) sub.textContent = 'No active loan';
+  // Find a docs container inside `scope` and refill it with these documents.
+  function renderDocRowsInto(scope, docs) {
+    if (!scope) return;
+    const firstDoc = scope.querySelector('.doc-row');
+    if (!firstDoc) return;
+    const container = firstDoc.parentElement;
+    container.querySelectorAll('.doc-row').forEach(r => r.remove());
+    const today = new Date();
+    docs.forEach(d => {
+      const row = document.createElement('div');
+      row.className = 'doc-row';
+      row.innerHTML =
+        '<div><div class="doc-name">' + escapeHtml(d.name) + '</div>' +
+        '<div class="doc-meta">PDF · ' + fmt.date(d.uploaded_at || today) + '</div></div>' +
+        (d.dropbox_url
+          ? '<a class="doc-link" href="' + escapeAttr(d.dropbox_url) + '" target="_blank" rel="noopener">View ↗</a>'
+          : '<button class="doc-link" disabled>—</button>');
+      container.appendChild(row);
     });
+  }
+
+  // Find the .card whose title starts with `titlePrefix` inside `scope`,
+  // and refill its .doc-row children.
+  function renderDocRowsIntoCard(scope, titlePrefix, docs, titleSuffix) {
+    if (!scope) return;
+    const cards = scope.querySelectorAll('.card');
+    let target = null;
+    cards.forEach(card => {
+      const title = card.querySelector('.card-title');
+      if (title && title.textContent.trim().toLowerCase().startsWith(titlePrefix.toLowerCase())) {
+        target = card;
+      }
+    });
+    if (!target) return;
+    // Update title
+    const title = target.querySelector('.card-title');
+    if (title) title.textContent = titlePrefix + (titleSuffix ? ' · ' + titleSuffix : '');
+    target.querySelectorAll('.doc-row').forEach(r => r.remove());
+    const today = new Date();
+    docs.forEach(d => {
+      const row = document.createElement('div');
+      row.className = 'doc-row';
+      row.innerHTML =
+        '<div><div class="doc-name">' + escapeHtml(d.name) + '</div>' +
+        '<div class="doc-meta">PDF · ' + fmt.date(d.uploaded_at || today) + '</div></div>' +
+        (d.dropbox_url
+          ? '<a class="doc-link" href="' + escapeAttr(d.dropbox_url) + '" target="_blank" rel="noopener">Download ↓</a>'
+          : '<button class="doc-link" disabled>—</button>');
+      target.appendChild(row);
+    });
+  }
+
+  function emptyDocsCard(scope, titlePrefix, emptyMessage) {
+    if (!scope) return;
+    const cards = scope.querySelectorAll('.card');
+    cards.forEach(card => {
+      const title = card.querySelector('.card-title');
+      if (title && title.textContent.trim().toLowerCase().startsWith(titlePrefix.toLowerCase())) {
+        card.querySelectorAll('.doc-row').forEach(r => r.remove());
+        const empty = document.createElement('div');
+        empty.style.cssText = 'padding:14px 16px;color:var(--muted);font-size:.85rem;font-style:italic';
+        empty.textContent = emptyMessage;
+        card.appendChild(empty);
+      }
+    });
+  }
+
+  function renderNoLoan() {
+    // When the user has no active loan, dim every loan KPI cell
+    ['Outstanding Loan', 'Next Payment Due', 'Next Due', 'Outstanding Balance', 'Interest Rate', 'Monthly Payment']
+      .forEach(label => setKpi(label, '—', 'No active loan'));
+    // Empty out the loan documents card on My Documents
+    emptyDocsCard(document.querySelector('#view-documents'), 'Loan', 'No loan documents on file.');
   }
 
   function escapeHtml(s) {
@@ -106,6 +167,11 @@
 
   // ---------- Investments ----------
   function renderInvestments(investments) {
+    // KPIs: Total Invested / ROI Earned / Across N companies
+    renderInvestmentKpis(investments);
+    // Documents card on the My Documents view
+    renderInvestmentDocs(investments);
+
     const grid = document.querySelector('#view-investments .inv-grid');
     if (!grid) return;
     // Clear demo cards
@@ -137,6 +203,48 @@
           : '');
       grid.appendChild(card);
     });
+  }
+
+  function renderInvestmentKpis(investments) {
+    const list = investments || [];
+    const totalInvested = list.filter(i => i.status !== 'exited').reduce((s, i) => s + Number(i.amount_invested || 0), 0);
+    const ventureCount  = list.filter(i => i.status !== 'exited').length;
+    // Weighted projected annual return (sum of amount * expected_return%) / total
+    const projectedDollars = list
+      .filter(i => i.status !== 'exited' && i.expected_return != null)
+      .reduce((s, i) => s + (Number(i.amount_invested || 0) * Number(i.expected_return) / 100), 0);
+    const blendedReturn = totalInvested > 0
+      ? list.filter(i => i.status !== 'exited' && i.expected_return != null)
+            .reduce((s, i) => s + Number(i.amount_invested || 0) * Number(i.expected_return), 0) / totalInvested
+      : null;
+
+    setKpi('Total Invested',
+      fmt.money(totalInvested),
+      ventureCount === 1 ? 'Across 1 company' : `Across ${ventureCount} companies`);
+
+    if (projectedDollars > 0) {
+      setKpi('ROI Earned',
+        fmt.money(projectedDollars),
+        { html: (blendedReturn != null ? fmt.pct(blendedReturn) : '—') + ' <span>blended IRR</span>' });
+    } else {
+      // No data to compute — show a neutral state instead of fake numbers
+      setKpi('ROI Earned', '—', 'No realized return yet');
+    }
+  }
+
+  function renderInvestmentDocs(investments) {
+    const docsView = document.querySelector('#view-documents');
+    if (!docsView) return;
+    const allDocs = (investments || []).flatMap(inv =>
+      (inv.investment_documents || []).map(d => ({ ...d, venture_name: inv.venture_name }))
+    );
+    if (allDocs.length) {
+      renderDocRowsIntoCard(docsView, 'Investments', allDocs);
+    } else {
+      emptyDocsCard(docsView, 'Investments', 'No investment documents yet.');
+    }
+    // No schema source for Tax & Statements yet — empty it instead of demo content
+    emptyDocsCard(docsView, 'Tax', 'No tax documents on file.');
   }
 
   // ---------- Open Raises ----------
