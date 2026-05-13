@@ -2908,15 +2908,6 @@
   });
 
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="supabase.js"></script>
-  <script>
-  document.addEventListener('DOMContentLoaded', async function() {
-    var auth = await OnixDB.requireAdmin();
-    if (!auth) return;
-    localStorage.setItem('onix-user', JSON.stringify({ id: auth.profile.id, role: auth.profile.role, name: auth.profile.full_name }));
-  });
-  </script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #1A1A1A; display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
