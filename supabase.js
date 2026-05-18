@@ -99,6 +99,28 @@ async function getMyInvestments(userId) {
   return data || []
 }
 
+async function getMyPayments(userId) {
+  // RLS filters to the user's own loans; we still ask for loan rows so we can
+  // show "Loan ONX-XXXX" alongside each payment.
+  const { data, error } = await _supabase
+    .from('loan_payments')
+    .select('*, loans!inner(id, loan_id_display, user_id)')
+    .eq('loans.user_id', userId)
+    .order('due_date', { ascending: false })
+  if (error) console.error('Payments fetch error:', error)
+  return data || []
+}
+
+async function getMyDistributions(userId) {
+  const { data, error } = await _supabase
+    .from('distributions')
+    .select('*, investments!inner(id, venture_name, user_id)')
+    .eq('investments.user_id', userId)
+    .order('paid_at', { ascending: false })
+  if (error) console.error('Distributions fetch error:', error)
+  return data || []
+}
+
 async function getOpenRaises() {
   const { data, error } = await _supabase
     .from('raises')
@@ -209,6 +231,8 @@ window.OnixDB = {
   getMyLoan,
   getMyLoans,
   getMyInvestments,
+  getMyPayments,
+  getMyDistributions,
   getOpenRaises,
   submitLoanApplication,
   submitRaiseInterest,
