@@ -543,6 +543,188 @@
     };
   }
 
+  // ---------- Payments History (Lending tab) ----------
+  function findCardByTitle(scope, titleMatcher) {
+    const cards = (scope || document).querySelectorAll('.card');
+    for (const c of cards) {
+      const t = c.querySelector('.card-title');
+      if (t && titleMatcher(t.textContent.trim())) return c;
+    }
+    return null;
+  }
+
+  function renderPayments(payments) {
+    // Lending tab: Payment History card
+    const histCard = findCardByTitle(document.querySelector('#view-loans'), txt => /Payment History/i.test(txt));
+    if (histCard) {
+      const tbody = histCard.querySelector('tbody');
+      if (tbody) {
+        const paid = (payments || []).filter(p => p.status === 'paid' || p.paid_at).slice(0, 12);
+        if (!paid.length) {
+          tbody.innerHTML = '<tr><td colspan="6" style="color:var(--light);font-style:italic;text-align:center;padding:18px">No payments recorded yet</td></tr>';
+        } else {
+          tbody.innerHTML = paid.map(p => `
+            <tr>
+              <td>${fmt.date(p.paid_at || p.due_date)}</td>
+              <td style="font-weight:600">${fmt.money(p.amount_due)}</td>
+              <td>${fmt.money(p.principal)}</td>
+              <td>${fmt.money(p.interest)}</td>
+              <td>${fmt.money(p.balance_after)}</td>
+              <td><span class="pay-status paid"></span><span>Paid</span></td>
+            </tr>`).join('');
+        }
+      }
+    }
+    // Payments view: Upcoming Payments table (#upcoming-rows)
+    const upTbody = document.getElementById('upcoming-rows');
+    if (upTbody) {
+      const upcoming = (payments || []).filter(p => p.status !== 'paid' && !p.paid_at)
+        .sort((a,b) => (a.due_date || '').localeCompare(b.due_date || ''))
+        .slice(0, 6);
+      upTbody.innerHTML = upcoming.length
+        ? upcoming.map(p => `
+            <tr>
+              <td>${fmt.date(p.due_date)}</td>
+              <td style="font-weight:600">${fmt.money(p.amount_due)}</td>
+              <td>${fmt.money(p.principal)}</td>
+              <td>${fmt.money(p.interest)}</td>
+            </tr>`).join('')
+        : '<tr><td colspan="4" style="color:var(--light);font-style:italic;text-align:center;padding:18px">No upcoming payments scheduled</td></tr>';
+    }
+  }
+
+  // ---------- Distribution History (Investments tab) ----------
+  function renderDistributions(distributions) {
+    const card = findCardByTitle(document.querySelector('#view-investments'), txt => /Distribution History/i.test(txt));
+    if (!card) return;
+    const tbody = card.querySelector('tbody');
+    if (!tbody) return;
+    const rows = (distributions || []).slice(0, 20);
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="color:var(--light);font-style:italic;text-align:center;padding:18px">No distributions yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(d => {
+      const venture = (d.investments && d.investments.venture_name) || 'Investment';
+      const kindLabel = d.kind === 'distribution' ? 'Distribution'
+                     : d.kind === 'interest' ? 'Interest'
+                     : d.kind === 'dividend' ? 'Dividend'
+                     : d.kind === 'return_of_capital' ? 'Return of Capital'
+                     : (d.kind || 'Payment');
+      return `
+        <tr>
+          <td>${fmt.date(d.paid_at)}</td>
+          <td>${escapeHtml(venture)}</td>
+          <td>${escapeHtml(kindLabel)}</td>
+          <td style="font-weight:600;color:var(--red)">+${fmt.money(d.amount)}</td>
+          <td><span class="pay-status paid"></span><span>Received</span></td>
+        </tr>`;
+    }).join('');
+  }
+
+  // ---------- Upcoming events sidebar (Dashboard) ----------
+  function renderUpcomingEvents(payments, distributions) {
+    const card = findCardByTitle(document.querySelector('#view-dashboard'), txt => /^Upcoming/i.test(txt));
+    if (!card) return;
+    const events = [];
+    (payments || []).forEach(p => {
+      if (p.status !== 'paid' && p.due_date) {
+        events.push({
+          date: new Date(p.due_date),
+          title: 'Loan Payment Due',
+          sub: fmt.money(p.amount_due) + (p.loans && p.loans.loan_id_display ? ' · ' + p.loans.loan_id_display : ''),
+          accent: 'var(--red)',
+          bg: 'var(--red-light)'
+        });
+      }
+    });
+    (distributions || []).slice(0, 3).forEach(d => {
+      events.push({
+        date: new Date(d.paid_at),
+        title: (d.kind === 'distribution' ? 'Distribution' : 'Interest') + ' Received',
+        sub: '+' + fmt.money(d.amount) + ((d.investments && d.investments.venture_name) ? ' · ' + d.investments.venture_name : ''),
+        accent: 'var(--success)',
+        bg: 'var(--bg)'
+      });
+    });
+    events.sort((a, b) => Math.abs(a.date - new Date()) - Math.abs(b.date - new Date()));
+    const top3 = events.slice(0, 3);
+    // Preserve the card title; replace everything below it.
+    const titleEl = card.querySelector('.card-title');
+    card.innerHTML = '';
+    if (titleEl) card.appendChild(titleEl);
+    if (!top3.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:18px 4px;color:var(--muted);font-size:.85rem;font-style:italic';
+      empty.textContent = 'No upcoming events.';
+      card.appendChild(empty);
+      return;
+    }
+    top3.forEach((e, idx) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:flex-start;gap:14px;padding:14px 0;' + (idx < top3.length - 1 ? 'border-bottom:1px solid #f4f4f4;' : '');
+      const day = e.date.getDate();
+      const mon = e.date.toLocaleString('en-US', { month: 'short' }).toUpperCase();
+      row.innerHTML = `
+        <div style="width:44px;height:44px;background:${e.bg};border-left:3px solid ${e.accent};display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0">
+          <div style="font-family:var(--serif);font-style:italic;font-size:1.1rem;color:${e.accent};font-weight:500">${day}</div>
+          <div style="font-size:.56rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700">${escapeHtml(mon)}</div>
+        </div>
+        <div>
+          <div style="font-weight:600;font-size:.88rem">${escapeHtml(e.title)}</div>
+          <div style="font-size:.75rem;color:var(--light);margin-top:2px">${escapeHtml(e.sub)}</div>
+        </div>`;
+      card.appendChild(row);
+    });
+  }
+
+  // ---------- 12-Month Performance chart (Dashboard) ----------
+  // Net portfolio = sum of investments active by month + cumulative distributions to that month.
+  function renderPerformanceChart(investments, distributions) {
+    const canvas = document.getElementById('perfChart');
+    if (!canvas || typeof Chart === 'undefined') return;
+    const today = new Date();
+    const months = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      months.push(d);
+    }
+    const values = months.map(m => {
+      // End-of-month cutoff
+      const cutoff = new Date(m.getFullYear(), m.getMonth() + 1, 0);
+      const activeInv = (investments || [])
+        .filter(i => i.status !== 'exited' && (!i.start_date || new Date(i.start_date) <= cutoff))
+        .reduce((s, i) => s + Number(i.amount_invested || 0), 0);
+      const distSum = (distributions || [])
+        .filter(d => d.paid_at && new Date(d.paid_at) <= cutoff)
+        .reduce((s, d) => s + Number(d.amount || 0), 0);
+      return Math.round((activeInv + distSum) / 1000); // $K
+    });
+    try { const ex = Chart.getChart(canvas); if (ex) ex.destroy(); } catch (e) {}
+    const ctx = canvas.getContext('2d');
+    const g = ctx.createLinearGradient(0, 0, 0, 200);
+    g.addColorStop(0, 'rgba(192,57,43,0.15)');
+    g.addColorStop(1, 'rgba(192,57,43,0)');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: months.map(m => m.toLocaleString('en-US', { month: 'short' })),
+        datasets: [{ data: values, borderColor: '#C0392B', backgroundColor: g, fill: true, tension: .35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: c => '$' + c.parsed.y + 'K' } }
+        },
+        scales: {
+          y: { grid: { color: '#f0f0f0' }, ticks: { color: '#888', font: { size: 10 }, callback: v => '$' + v + 'K' } },
+          x: { grid: { display: false }, ticks: { color: '#888', font: { size: 10 } } }
+        }
+      }
+    });
+  }
+
   // ---------- main ----------
   async function bootstrap() {
     if (!window.OnixDB) {
@@ -556,16 +738,22 @@
 
     renderUserName(profile);
 
-    // Fetch loan, investments, and open raises in parallel
-    const [loan, investments, raises] = await Promise.all([
+    // Fetch everything in parallel
+    const [loan, investments, raises, payments, distributions] = await Promise.all([
       OnixDB.getMyLoan(userId),
       OnixDB.getMyInvestments(userId),
-      OnixDB.getOpenRaises()
+      OnixDB.getOpenRaises(),
+      OnixDB.getMyPayments(userId),
+      OnixDB.getMyDistributions(userId)
     ]);
 
     if (loan) renderLoan(loan); else renderNoLoan();
     renderInvestments(investments);
     renderRaises(raises, userId);
+    renderPayments(payments);
+    renderDistributions(distributions);
+    renderUpcomingEvents(payments, distributions);
+    renderPerformanceChart(investments, distributions);
 
     wireLoanApplicationForm(userId, profile);
   }
