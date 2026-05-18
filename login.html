@@ -160,7 +160,7 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
  
       <div class="login-request">
         <span data-en="New client?" data-es="¿Nuevo cliente?">New client?</span>
-        <a href="#" data-en="Request access →" data-es="Solicitar acceso →">Request access →</a>
+        <a href="signup.html" data-en="Request access →" data-es="Solicitar acceso →">Request access →</a>
       </div>
     </div>
     <p class="login-footer-right">Private &amp; Confidential — Onix Finance, LLC</p>
@@ -278,7 +278,7 @@ async function forgotPassword(e) {
   const email = document.getElementById('email').value.trim();
   if (!email) { alert('Please enter your email address first.'); return; }
   const { error } = await _supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: window.location.origin + '/login.html'
+    redirectTo: new URL('reset-password.html', window.location.href).toString()
   });
   if (error) {
     alert('Could not send reset email. Please try again.');
