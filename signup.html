@@ -143,7 +143,15 @@ async function doSignup(e) {
         .eq('id', data.user.id);
     }
 
-    // 3. Sign them out — they cannot use the portal until an admin approves.
+    // 3. Notify Onix staff via Resend (fire-and-forget). Must run while the
+    //    new user is briefly signed in, since the function requires a JWT.
+    if (data && data.user) {
+      _supabase.functions.invoke('send-new-client-email', {
+        body: { full_name: fullName, email, user_id: data.user.id }
+      }).catch(err => console.error('[onix] send-new-client-email failed:', err));
+    }
+
+    // 4. Sign them out — they cannot use the portal until an admin approves.
     await _supabase.auth.signOut();
 
     // 4. Show success state
