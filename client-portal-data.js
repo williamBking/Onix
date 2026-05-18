@@ -56,10 +56,20 @@
     });
   }
 
+  function computeInitials(name) {
+    const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return '';
+    const first = parts[0][0] || '';
+    const last  = parts.length > 1 ? parts[parts.length - 1][0] : '';
+    return (first + last).toUpperCase();
+  }
+
   function renderUserName(profile) {
     const name = profile.full_name || profile.email || 'Client';
     const first = String(name).trim().split(/\s+/)[0];
+    const initials = computeInitials(profile.full_name || profile.email);
     document.querySelectorAll('.sidebar-user-name').forEach(el => el.textContent = name);
+    document.querySelectorAll('.sidebar-avatar').forEach(el => el.textContent = initials);
     // Also replace any input pre-filled with the old demo name
     document.querySelectorAll('input[value="Carlos Mendoza"]').forEach(el => el.value = name);
     document.querySelectorAll('input[value="carlos.mendoza@email.com"]').forEach(el => el.value = profile.email || '');
