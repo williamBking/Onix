@@ -329,16 +329,13 @@
   }
 
   // ---------- Loan Application Form ----------
-  function wireLoanApplicationForm(userId) {
+  function wireLoanApplicationForm(userId, profile) {
     // The portal already calls submitLoanApp(event) inline. Override that global
-    // so it inserts into Supabase instead of showing a fake success banner.
+    // so it inserts into Supabase and triggers the email notification.
     window.submitLoanApp = async function (e) {
       e.preventDefault();
       const form = e.target;
       const inputs = form.querySelectorAll('.field-input, .field-select, .field-textarea');
-      // Inputs by order in the markup (no name attrs in current design):
-      //   0: Loan Amount, 1: Applicant Type, 2: Term, 3: Purpose,
-      //   4: Collateral, 5: Notes
       const amountRaw = (inputs[0] && inputs[0].value || '').replace(/[^0-9.]/g, '');
       const amount    = amountRaw ? Number(amountRaw) : null;
       const applicantTypeText = (inputs[1] && inputs[1].value || '').toLowerCase();
@@ -357,12 +354,36 @@
       const orig = submitBtn ? submitBtn.innerHTML : '';
       if (submitBtn) { submitBtn.disabled = true; submitBtn.innerHTML = '<span>Submitting…</span>'; }
 
-      const ok = await OnixDB.submitLoanApplication(userId, {
-        amount_requested: amount,
-        purpose: purpose || null,
-        applicant_type: applicantType,
-        notes: notes || null
-      });
+      // Insert with .select() so we get the new row's id back for the email
+      const { data: inserted, error } = await OnixDB.client
+        .from('loan_applications')
+        .insert([{
+          user_id: userId,
+          amount_requested: amount,
+          purpose: purpose || null,
+          applicant_type: applicantType,
+          notes: notes || null
+        }])
+        .select('id, submitted_at')
+        .single();
+      const ok = !error && inserted;
+
+      if (ok) {
+        // Trigger the Resend email via Edge Function (fire-and-forget; UI doesn't block on it)
+        OnixDB.client.functions.invoke('send-loan-app-email', {
+          body: {
+            application_id:   inserted.id,
+            applicant_name:   (profile && (profile.full_name || profile.email)) || 'Unknown',
+            applicant_email:  (profile && profile.email) || 'Unknown',
+            amount_requested: amount,
+            purpose,
+            applicant_type:   applicantType,
+            notes
+          }
+        }).catch(err => console.error('[onix] send-loan-app-email failed:', err));
+      } else if (error) {
+        console.error('[onix] loan_applications insert failed:', error);
+      }
 
       if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = orig; }
       const banner = document.getElementById('loan-ok');
@@ -399,7 +420,7 @@
     renderInvestments(investments);
     renderRaises(raises, userId);
 
-    wireLoanApplicationForm(userId);
+    wireLoanApplicationForm(userId, profile);
   }
 
   if (document.readyState === 'loading') {
