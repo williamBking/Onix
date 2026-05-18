@@ -514,6 +514,200 @@
     return true;
   }
 
+  // ---------- shared form helpers ----------
+  const INPUT_STYLE = "width:100%;padding:10px 12px;border:1px solid #E8E8E8;font-size:.9rem;font-family:inherit;outline:none;background:#fff";
+
+  function field(label, name, opts) {
+    opts = opts || {};
+    const type = opts.type || 'text';
+    const required = opts.required ? 'required' : '';
+    const placeholder = opts.placeholder ? `placeholder="${esc(opts.placeholder)}"` : '';
+    const step = opts.step ? `step="${esc(opts.step)}"` : '';
+    const value = opts.value != null ? `value="${esc(opts.value)}"` : '';
+    if (opts.textarea) {
+      return `<div><div class="k">${esc(label)}</div><textarea name="${esc(name)}" ${required} ${placeholder} rows="3" style="${INPUT_STYLE};resize:vertical;min-height:60px"></textarea></div>`;
+    }
+    if (opts.select) {
+      const options = opts.select.map(o =>
+        typeof o === 'string'
+          ? `<option value="${esc(o)}">${esc(o)}</option>`
+          : `<option value="${esc(o.value)}"${o.selected ? ' selected' : ''}>${esc(o.label)}</option>`
+      ).join('');
+      return `<div><div class="k">${esc(label)}</div><select name="${esc(name)}" ${required} style="${INPUT_STYLE}">${options}</select></div>`;
+    }
+    return `<div><div class="k">${esc(label)}</div><input name="${esc(name)}" type="${type}" ${required} ${placeholder} ${step} ${value} style="${INPUT_STYLE}"></div>`;
+  }
+
+  function clientOptions(clients) {
+    return [{ value: '', label: '— Select client —' }]
+      .concat((clients || [])
+        .filter(c => c.role === 'client')
+        .map(c => ({ value: c.id, label: (c.full_name || c.email) + ' · ' + c.email })));
+  }
+
+  function submitBar(submitLabel) {
+    return `<div id="oac-form-err" style="color:#C0392B;font-size:.85rem;margin-bottom:10px;display:none"></div>
+      <div class="oac-modal-foot" style="margin-top:0">
+        <button type="button" class="oac-btn outline" data-modal-close>Cancel</button>
+        <button type="submit" class="oac-btn red" data-form-submit>${esc(submitLabel)}</button>
+      </div>`;
+  }
+
+  async function handleFormSubmit(form, payloadFn, table) {
+    const submitBtn = form.querySelector('[data-form-submit]');
+    const errEl = form.querySelector('#oac-form-err');
+    errEl.style.display = 'none';
+    const origLabel = submitBtn.textContent;
+    submitBtn.disabled = true; submitBtn.textContent = 'Saving…';
+    try {
+      const payload = payloadFn();
+      const { error } = await OnixDB.client.from(table).insert(payload);
+      if (error) throw error;
+      document.getElementById('oac-modal').classList.remove('open');
+      refreshAll();
+    } catch (ex) {
+      errEl.style.display = 'block';
+      errEl.textContent = ex.message || 'Could not save.';
+      submitBtn.disabled = false;
+      submitBtn.textContent = origLabel;
+    }
+  }
+
+  function numOrNull(v) {
+    const n = Number(String(v || '').replace(/[^0-9.\-]/g, ''));
+    return isFinite(n) && String(v || '').trim() !== '' ? n : null;
+  }
+  function strOrNull(v) { const s = String(v || '').trim(); return s.length ? s : null; }
+
+  // ---------- Add Loan modal ----------
+  function openAddLoanModal() {
+    const clients = (window.__onixAdminData && window.__onixAdminData.clients) || [];
+    openModal(`
+      <h2>Add Loan</h2>
+      <div class="sub">Attach a loan to an existing client</div>
+      <form id="oac-add-loan-form">
+        <div class="oac-modal-row" style="grid-template-columns:1fr">
+          ${field('Client', 'user_id', { required: true, select: clientOptions(clients) })}
+        </div>
+        <div class="oac-modal-row">
+          ${field('Loan ID',           'loan_id_display',  { placeholder: 'ONX-2026-0123' })}
+          ${field('Status',            'status',           { required: true, select: [{value:'active',label:'Active',selected:true},'paid','review'] })}
+          ${field('Outstanding Balance ($)', 'balance',    { type: 'number', step: '0.01', placeholder: '142500' })}
+          ${field('Interest Rate (%)', 'interest_rate',    { type: 'number', step: '0.01', placeholder: '13.0' })}
+          ${field('Monthly Payment ($)','monthly_payment', { type: 'number', step: '0.01', placeholder: '4218' })}
+          ${field('Term (months)',     'term_months',      { type: 'number', placeholder: '24' })}
+          ${field('Origination Date',  'origination_date', { type: 'date' })}
+          ${field('Maturity Date',     'maturity_date',    { type: 'date' })}
+          ${field('Next Due',          'next_due_date',    { type: 'date' })}
+          ${field('Origination Fee (%)', 'origination_fee',{ type: 'number', step: '0.01', placeholder: '1.5' })}
+        </div>
+        <div class="oac-modal-row" style="grid-template-columns:1fr">
+          ${field('Collateral Address', 'collateral_address', { placeholder: '1842 Montrose Blvd, Houston, TX 77006' })}
+        </div>
+        ${submitBar('Create Loan')}
+      </form>`);
+    const form = document.getElementById('oac-add-loan-form');
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      handleFormSubmit(form, () => ({
+        user_id:            String(fd.get('user_id')),
+        loan_id_display:    strOrNull(fd.get('loan_id_display')),
+        balance:            numOrNull(fd.get('balance')),
+        interest_rate:      numOrNull(fd.get('interest_rate')),
+        monthly_payment:    numOrNull(fd.get('monthly_payment')),
+        term_months:        numOrNull(fd.get('term_months')),
+        origination_date:   strOrNull(fd.get('origination_date')),
+        maturity_date:      strOrNull(fd.get('maturity_date')),
+        next_due_date:      strOrNull(fd.get('next_due_date')),
+        origination_fee:    numOrNull(fd.get('origination_fee')),
+        collateral_address: strOrNull(fd.get('collateral_address')),
+        status:             String(fd.get('status'))
+      }), 'loans');
+    });
+  }
+
+  // ---------- Add Investment modal ----------
+  function openAddInvestmentModal() {
+    const clients = (window.__onixAdminData && window.__onixAdminData.clients) || [];
+    openModal(`
+      <h2>Add Investment</h2>
+      <div class="sub">Record a client position in a venture</div>
+      <form id="oac-add-inv-form">
+        <div class="oac-modal-row" style="grid-template-columns:1fr">
+          ${field('Client', 'user_id', { required: true, select: clientOptions(clients) })}
+        </div>
+        <div class="oac-modal-row">
+          ${field('Venture Name',      'venture_name',      { required: true, placeholder: 'Bari Caffè Houston' })}
+          ${field('Type',              'venture_type',      { required: true, select: [{value:'equity',label:'Equity'},{value:'deposit',label:'Deposit'}] })}
+          ${field('Amount Invested ($)','amount_invested',  { type: 'number', step: '0.01', required: true, placeholder: '50000' })}
+          ${field('Ownership (%)',     'ownership_pct',     { type: 'number', step: '0.01', placeholder: 'Optional' })}
+          ${field('Expected Return (%)','expected_return',  { type: 'number', step: '0.01', placeholder: '9.5' })}
+          ${field('Start Date',        'start_date',        { type: 'date' })}
+          ${field('Status',            'status',            { required: true, select: [{value:'active',label:'Active',selected:true},'pending','exited'] })}
+        </div>
+        ${submitBar('Create Investment')}
+      </form>`);
+    const form = document.getElementById('oac-add-inv-form');
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      handleFormSubmit(form, () => ({
+        user_id:         String(fd.get('user_id')),
+        venture_name:    strOrNull(fd.get('venture_name')),
+        venture_type:    strOrNull(fd.get('venture_type')),
+        amount_invested: numOrNull(fd.get('amount_invested')),
+        ownership_pct:   numOrNull(fd.get('ownership_pct')),
+        expected_return: numOrNull(fd.get('expected_return')),
+        start_date:      strOrNull(fd.get('start_date')),
+        status:          String(fd.get('status'))
+      }), 'investments');
+    });
+  }
+
+  // ---------- Add Raise modal ----------
+  function openAddRaiseModal() {
+    openModal(`
+      <h2>Add Raise</h2>
+      <div class="sub">Open a new investment opportunity to clients</div>
+      <form id="oac-add-raise-form">
+        <div class="oac-modal-row">
+          ${field('Venture Name',           'venture_name',         { required: true, placeholder: 'Bari — Houston Heights' })}
+          ${field('Type',                   'venture_type',         { required: true, select: [{value:'equity',label:'Equity'},{value:'deposit',label:'Deposit'}] })}
+          ${field('Total Raise Target ($)', 'total_raise_target',   { type: 'number', step: '1', required: true, placeholder: '3500000' })}
+          ${field('Amount Raised ($)',      'amount_raised',        { type: 'number', step: '1', placeholder: '0' })}
+          ${field('Minimum Investment ($)', 'minimum_investment',   { type: 'number', step: '1', placeholder: '25000' })}
+          ${field('Investment Horizon',     'investment_horizon',   { placeholder: '24-36 months' })}
+          ${field('Projected Return Min (%)','projected_return_min',{ type: 'number', step: '0.01', placeholder: '14' })}
+          ${field('Projected Return Max (%)','projected_return_max',{ type: 'number', step: '0.01', placeholder: '18' })}
+          ${field('Status',                 'status',               { required: true, select: [{value:'open',label:'Open',selected:true},{value:'closed',label:'Closed'}] })}
+        </div>
+        <div class="oac-modal-row" style="grid-template-columns:1fr">
+          ${field('Structure', 'structure', { placeholder: 'Preferred equity with 9% pref + 70/30 split above' })}
+          ${field('Description', 'description', { textarea: true, placeholder: 'Short overview clients see on the opportunity card' })}
+        </div>
+        ${submitBar('Create Raise')}
+      </form>`);
+    const form = document.getElementById('oac-add-raise-form');
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      handleFormSubmit(form, () => ({
+        venture_name:         strOrNull(fd.get('venture_name')),
+        venture_type:         strOrNull(fd.get('venture_type')),
+        description:          strOrNull(fd.get('description')),
+        total_raise_target:   numOrNull(fd.get('total_raise_target')),
+        amount_raised:        numOrNull(fd.get('amount_raised')) ?? 0,
+        minimum_investment:   numOrNull(fd.get('minimum_investment')),
+        projected_return_min: numOrNull(fd.get('projected_return_min')),
+        projected_return_max: numOrNull(fd.get('projected_return_max')),
+        investment_horizon:   strOrNull(fd.get('investment_horizon')),
+        structure:            strOrNull(fd.get('structure')),
+        status:               String(fd.get('status'))
+      }), 'raises');
+    });
+  }
+
   // ---------- New Client modal ----------
   function openNewClientModal() {
     openModal(`
@@ -584,6 +778,12 @@
     });
   }
 
+  function actionBarBtn(label, id) {
+    return `<div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+      <a href="#" id="${esc(id)}" style="display:inline-block;background:#C0392B;color:#fff;padding:10px 18px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">${esc(label)}</a>
+    </div>`;
+  }
+
   function paintLoansView(loans) {
     const v = findView(STATIC_VIEWS.loans); if (!v) return false;
     if (alreadyPainted(v)) return true;
@@ -601,13 +801,16 @@
           ${contactAnchor(l.profiles && l.profiles.email, 'Loan ' + (l.loan_id_display || ''))}
         </td>
       </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No loans yet.</td></tr>';
-    v.innerHTML = viewShell('Loans', 'Active and historical loans', `
-      <table class="oac-table" style="width:100%"><thead><tr>
+    v.innerHTML = viewShell('Loans', 'Active and historical loans',
+      actionBarBtn('+ Add Loan', 'oac-add-loan-btn') +
+      `<table class="oac-table" style="width:100%"><thead><tr>
         <th>Loan ID</th><th>Client</th><th>Balance</th><th>Rate</th><th>Payment</th><th>Next Due</th><th>Status</th><th style="text-align:right">Actions</th>
       </tr></thead><tbody>${rows}</tbody></table>`);
     v.querySelectorAll('[data-view-static-loan]').forEach(b => {
       b.addEventListener('click', (e) => { e.preventDefault(); viewLoan(loans[Number(b.dataset.viewStaticLoan)]); });
     });
+    const addBtn = v.querySelector('#oac-add-loan-btn');
+    if (addBtn) addBtn.addEventListener('click', (e) => { e.preventDefault(); openAddLoanModal(); });
     return true;
   }
 
@@ -628,13 +831,16 @@
           ${contactAnchor(it.profiles && it.profiles.email, it.venture_name)}
         </td>
       </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No investments yet.</td></tr>';
-    v.innerHTML = viewShell('Investments', 'Client positions across every venture', `
-      <table class="oac-table" style="width:100%"><thead><tr>
+    v.innerHTML = viewShell('Investments', 'Client positions across every venture',
+      actionBarBtn('+ Add Investment', 'oac-add-inv-btn') +
+      `<table class="oac-table" style="width:100%"><thead><tr>
         <th>Client</th><th>Venture</th><th>Type</th><th>Invested</th><th>Ownership</th><th>Return</th><th>Status</th><th style="text-align:right">Actions</th>
       </tr></thead><tbody>${rows}</tbody></table>`);
     v.querySelectorAll('[data-view-static-inv]').forEach(b => {
       b.addEventListener('click', (e) => { e.preventDefault(); viewInvestment(invs[Number(b.dataset.viewStaticInv)]); });
     });
+    const addBtn = v.querySelector('#oac-add-inv-btn');
+    if (addBtn) addBtn.addEventListener('click', (e) => { e.preventDefault(); openAddInvestmentModal(); });
     return true;
   }
 
@@ -655,13 +861,16 @@
           <a href="mailto:info@onixfinance.com?subject=${encodeURIComponent('Onix Finance · ' + r.venture_name)}" style="display:inline-block;background:#fff;color:#1A1A1A;padding:6px 12px;font:600 .68rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none">Contact</a>
         </td>
       </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No raises yet.</td></tr>';
-    v.innerHTML = viewShell('Raises', 'Active and historical investment opportunities', `
-      <table class="oac-table" style="width:100%"><thead><tr>
+    v.innerHTML = viewShell('Raises', 'Active and historical investment opportunities',
+      actionBarBtn('+ Add Raise', 'oac-add-raise-btn') +
+      `<table class="oac-table" style="width:100%"><thead><tr>
         <th>Venture</th><th>Type</th><th>Goal</th><th>Raised</th><th>Min</th><th>IRR</th><th>Status</th><th style="text-align:right">Actions</th>
       </tr></thead><tbody>${rows}</tbody></table>`);
     v.querySelectorAll('[data-view-static-raise]').forEach(b => {
       b.addEventListener('click', (e) => { e.preventDefault(); viewRaise(raises[Number(b.dataset.viewStaticRaise)]); });
     });
+    const addBtn = v.querySelector('#oac-add-raise-btn');
+    if (addBtn) addBtn.addEventListener('click', (e) => { e.preventDefault(); openAddRaiseModal(); });
     return true;
   }
 
