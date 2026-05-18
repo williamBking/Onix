@@ -124,8 +124,9 @@
     openModal(`
       <h2>Loan ${esc(loan.loan_id_display || loan.id.slice(0,8))}</h2>
       <div class="sub">${esc(c.full_name || c.email || 'Unknown client')}</div>
-      <div style="display:flex;gap:8px;margin-bottom:14px">
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
         <a href="#" data-edit-loan style="display:inline-block;background:#C0392B;color:#fff;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">Edit Loan</a>
+        <a href="#" data-add-payment style="display:inline-block;background:#fff;color:#1A1A1A;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none">+ Add Payment</a>
       </div>
       <div class="oac-modal-row">
         ${detailRow('Balance', fmt.money(loan.balance))}
@@ -146,6 +147,7 @@
     `);
     const m = document.getElementById('oac-modal');
     m.querySelector('[data-edit-loan]').addEventListener('click', (e) => { e.preventDefault(); openEditLoanModal(loan); });
+    m.querySelector('[data-add-payment]').addEventListener('click', (e) => { e.preventDefault(); openAddPaymentModal(loan); });
     wireDocsManager(m, 'loan_documents', 'loan_id', loan.id);
   }
 
@@ -154,8 +156,9 @@
     openModal(`
       <h2>${esc(inv.venture_name)}</h2>
       <div class="sub">${esc(c.full_name || c.email || 'Unknown client')}</div>
-      <div style="display:flex;gap:8px;margin-bottom:14px">
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
         <a href="#" data-edit-inv style="display:inline-block;background:#C0392B;color:#fff;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">Edit Investment</a>
+        <a href="#" data-add-dist style="display:inline-block;background:#fff;color:#1A1A1A;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none">+ Add Distribution</a>
       </div>
       <div class="oac-modal-row">
         ${detailRow('Type', inv.venture_type)}
@@ -170,6 +173,7 @@
     `);
     const m = document.getElementById('oac-modal');
     m.querySelector('[data-edit-inv]').addEventListener('click', (e) => { e.preventDefault(); openEditInvestmentModal(inv); });
+    m.querySelector('[data-add-dist]').addEventListener('click', (e) => { e.preventDefault(); openAddDistributionModal(inv); });
     wireDocsManager(m, 'investment_documents', 'investment_id', inv.id);
   }
 
@@ -991,6 +995,81 @@
         structure:            strOrNull(fd.get('structure')),
         status:               String(fd.get('status'))
       }));
+    });
+  }
+
+  // ---------- Add Payment modal (scoped to a single loan) ----------
+  function openAddPaymentModal(loan) {
+    openModal(`
+      <h2>Add Payment</h2>
+      <div class="sub">Loan ${esc(loan.loan_id_display || loan.id.slice(0,8))}</div>
+      <form id="oac-add-payment-form">
+        <div class="oac-modal-row">
+          ${field('Due Date',        'due_date',      { type: 'date', required: true, value: new Date().toISOString().slice(0,10) })}
+          ${field('Status',          'status',        { required: true, select: [
+              { value: 'paid',      label: 'Paid',      selected: true },
+              { value: 'scheduled', label: 'Scheduled' },
+              { value: 'late',      label: 'Late' },
+              { value: 'missed',    label: 'Missed' }
+          ] })}
+          ${field('Amount Due ($)',   'amount_due',    { type: 'number', step: '0.01', placeholder: '4218' })}
+          ${field('Paid Date',        'paid_at',       { type: 'date' })}
+          ${field('Principal ($)',    'principal',     { type: 'number', step: '0.01' })}
+          ${field('Interest ($)',     'interest',      { type: 'number', step: '0.01' })}
+          ${field('Balance After ($)','balance_after', { type: 'number', step: '0.01' })}
+        </div>
+        ${submitBar('Record Payment')}
+      </form>`);
+    const form = document.getElementById('oac-add-payment-form');
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      handleFormSubmit(form, () => ({
+        loan_id:        loan.id,
+        due_date:       strOrNull(fd.get('due_date')),
+        status:         String(fd.get('status')),
+        amount_due:     numOrNull(fd.get('amount_due')),
+        paid_at:        strOrNull(fd.get('paid_at')),
+        principal:      numOrNull(fd.get('principal')),
+        interest:       numOrNull(fd.get('interest')),
+        balance_after:  numOrNull(fd.get('balance_after'))
+      }), 'loan_payments');
+    });
+  }
+
+  // ---------- Add Distribution modal (scoped to a single investment) ----------
+  function openAddDistributionModal(inv) {
+    openModal(`
+      <h2>Add Distribution</h2>
+      <div class="sub">${esc(inv.venture_name)}</div>
+      <form id="oac-add-dist-form">
+        <div class="oac-modal-row">
+          ${field('Paid Date', 'paid_at', { type: 'date', required: true, value: new Date().toISOString().slice(0,10) })}
+          ${field('Amount ($)','amount',  { type: 'number', step: '0.01', required: true })}
+          ${field('Kind',     'kind',    { required: true, select: [
+              { value: 'distribution',      label: 'Distribution', selected: true },
+              { value: 'interest',          label: 'Interest' },
+              { value: 'dividend',          label: 'Dividend' },
+              { value: 'return_of_capital', label: 'Return of Capital' },
+              { value: 'other',             label: 'Other' }
+          ] })}
+        </div>
+        <div class="oac-modal-row" style="grid-template-columns:1fr">
+          ${field('Notes', 'notes', { textarea: true, placeholder: 'Optional context for this distribution' })}
+        </div>
+        ${submitBar('Record Distribution')}
+      </form>`);
+    const form = document.getElementById('oac-add-dist-form');
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      handleFormSubmit(form, () => ({
+        investment_id: inv.id,
+        paid_at:       strOrNull(fd.get('paid_at')),
+        amount:        numOrNull(fd.get('amount')),
+        kind:          String(fd.get('kind')),
+        notes:         strOrNull(fd.get('notes'))
+      }), 'distributions');
     });
   }
 
