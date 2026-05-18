@@ -124,6 +124,9 @@
     openModal(`
       <h2>Loan ${esc(loan.loan_id_display || loan.id.slice(0,8))}</h2>
       <div class="sub">${esc(c.full_name || c.email || 'Unknown client')}</div>
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <a href="#" data-edit-loan style="display:inline-block;background:#C0392B;color:#fff;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">Edit Loan</a>
+      </div>
       <div class="oac-modal-row">
         ${detailRow('Balance', fmt.money(loan.balance))}
         ${detailRow('Interest Rate', fmt.pct(loan.interest_rate))}
@@ -139,8 +142,11 @@
       <div class="oac-modal-row" style="grid-template-columns:1fr">
         ${detailRow('Collateral Address', loan.collateral_address)}
       </div>
-      ${docsBlock('Loan Documents', loan.loan_documents)}
+      ${docsManagerHtml(loan.loan_documents)}
     `);
+    const m = document.getElementById('oac-modal');
+    m.querySelector('[data-edit-loan]').addEventListener('click', (e) => { e.preventDefault(); openEditLoanModal(loan); });
+    wireDocsManager(m, 'loan_documents', 'loan_id', loan.id);
   }
 
   function viewInvestment(inv) {
@@ -148,6 +154,9 @@
     openModal(`
       <h2>${esc(inv.venture_name)}</h2>
       <div class="sub">${esc(c.full_name || c.email || 'Unknown client')}</div>
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <a href="#" data-edit-inv style="display:inline-block;background:#C0392B;color:#fff;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">Edit Investment</a>
+      </div>
       <div class="oac-modal-row">
         ${detailRow('Type', inv.venture_type)}
         ${detailRow('Amount Invested', fmt.money(inv.amount_invested))}
@@ -157,15 +166,26 @@
         ${detailRow('Status', inv.status)}
         ${detailRow('Created', fmt.date(inv.created_at))}
       </div>
-      ${docsBlock('Investment Documents', inv.investment_documents)}
+      ${docsManagerHtml(inv.investment_documents)}
     `);
+    const m = document.getElementById('oac-modal');
+    m.querySelector('[data-edit-inv]').addEventListener('click', (e) => { e.preventDefault(); openEditInvestmentModal(inv); });
+    wireDocsManager(m, 'investment_documents', 'investment_id', inv.id);
   }
 
   function viewApplication(app) {
     const c = app.profiles || {};
+    const statusBtn = (label, status, color) => `
+      <a href="#" data-app-status="${esc(status)}" style="display:inline-block;background:${color === 'red' ? '#C0392B' : '#fff'};color:${color === 'red' ? '#fff' : '#1A1A1A'};padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid ${color === 'red' ? '#C0392B' : '#E8E8E8'};border-radius:2px;text-decoration:none">${esc(label)}</a>`;
     openModal(`
       <h2>Loan Application</h2>
       <div class="sub">${esc(c.full_name || c.email || 'Unknown client')} · ${fmt.date(app.submitted_at)}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+        ${statusBtn('Approve', 'approved', 'red')}
+        ${statusBtn('Mark Reviewed', 'reviewed')}
+        ${statusBtn('Reject', 'rejected')}
+        ${statusBtn('Reset to Pending', 'pending')}
+      </div>
       <div class="oac-modal-row">
         ${detailRow('Amount Requested', fmt.money(app.amount_requested))}
         ${detailRow('Applicant Type', app.applicant_type)}
@@ -182,12 +202,30 @@
         ${detailRow('Client Email', c.email)}
       </div>
     `);
+    const m = document.getElementById('oac-modal');
+    m.querySelectorAll('[data-app-status]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const newStatus = btn.dataset.appStatus;
+        btn.style.opacity = '.5';
+        const { error } = await OnixDB.client.from('loan_applications').update({ status: newStatus }).eq('id', app.id);
+        if (error) { alert(error.message); btn.style.opacity = '1'; return; }
+        m.classList.remove('open');
+        refreshAll();
+      });
+    });
   }
 
   function viewRaise(r) {
     openModal(`
       <h2>${esc(r.venture_name)}</h2>
       <div class="sub">${esc(r.venture_type || '—')}${r.investment_horizon ? ' · ' + esc(r.investment_horizon) : ''}</div>
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <a href="#" data-edit-raise style="display:inline-block;background:#C0392B;color:#fff;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">Edit Raise</a>
+        ${r.status === 'open'
+          ? `<a href="#" data-close-raise style="display:inline-block;background:#fff;color:#1A1A1A;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none">Close Raise</a>`
+          : `<a href="#" data-reopen-raise style="display:inline-block;background:#fff;color:#1A1A1A;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none">Reopen Raise</a>`}
+      </div>
       <div style="font-size:.9rem;line-height:1.55;color:#1A1A1A;margin-bottom:18px">${esc(r.description || 'No description provided.')}</div>
       <div class="oac-modal-row">
         ${detailRow('Total Raise', fmt.money(r.total_raise_target))}
@@ -199,8 +237,28 @@
         ${detailRow('Status', r.status)}
         ${detailRow('Created', fmt.date(r.created_at))}
       </div>
-      ${docsBlock('Raise Documents', r.raise_documents)}
+      ${docsManagerHtml(r.raise_documents)}
     `);
+    const m = document.getElementById('oac-modal');
+    m.querySelector('[data-edit-raise]').addEventListener('click', (e) => { e.preventDefault(); openEditRaiseModal(r); });
+    const close = m.querySelector('[data-close-raise]');
+    if (close) close.addEventListener('click', async (e) => {
+      e.preventDefault();
+      if (!confirm('Close this raise? Clients will no longer see it in Opportunities.')) return;
+      const { error } = await OnixDB.client.from('raises').update({ status: 'closed' }).eq('id', r.id);
+      if (error) return alert(error.message);
+      document.getElementById('oac-modal').classList.remove('open');
+      refreshAll();
+    });
+    const reopen = m.querySelector('[data-reopen-raise]');
+    if (reopen) reopen.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const { error } = await OnixDB.client.from('raises').update({ status: 'open' }).eq('id', r.id);
+      if (error) return alert(error.message);
+      document.getElementById('oac-modal').classList.remove('open');
+      refreshAll();
+    });
+    wireDocsManager(m, 'raise_documents', 'raise_id', r.id);
   }
 
   function contactBtn(email, label) {
@@ -578,6 +636,89 @@
     return isFinite(n) && String(v || '').trim() !== '' ? n : null;
   }
   function strOrNull(v) { const s = String(v || '').trim(); return s.length ? s : null; }
+  function dateInput(v) { return v ? String(v).slice(0,10) : ''; }
+
+  async function handleUpdateSubmit(form, table, id, payloadFn) {
+    const submitBtn = form.querySelector('[data-form-submit]');
+    const errEl = form.querySelector('#oac-form-err');
+    errEl.style.display = 'none';
+    const origLabel = submitBtn.textContent;
+    submitBtn.disabled = true; submitBtn.textContent = 'Saving…';
+    try {
+      const payload = payloadFn();
+      const { error } = await OnixDB.client.from(table).update(payload).eq('id', id);
+      if (error) throw error;
+      document.getElementById('oac-modal').classList.remove('open');
+      refreshAll();
+    } catch (ex) {
+      errEl.style.display = 'block';
+      errEl.textContent = ex.message || 'Could not save.';
+      submitBtn.disabled = false;
+      submitBtn.textContent = origLabel;
+    }
+  }
+
+  // ---------- Document management (loan_documents / investment_documents / raise_documents) ----------
+  // table: name of the docs table; parentCol: e.g. 'loan_id'; parentId: row id
+  function docsManagerHtml(docs) {
+    const list = (docs || []).map(d => `
+      <div class="row" data-doc-id="${esc(d.id)}">
+        <div style="flex:1">
+          <div class="doc-name" style="font-weight:600;font-size:.88rem">${esc(d.name)}</div>
+          ${d.dropbox_url ? `<a href="${esc(d.dropbox_url)}" target="_blank" rel="noopener" style="font-size:.78rem;color:#C0392B;text-decoration:none;word-break:break-all">${esc(d.dropbox_url)}</a>` : '<span style="color:#888;font-size:.78rem">No link</span>'}
+        </div>
+        <a href="#" data-doc-remove="${esc(d.id)}" style="color:#C0392B;font-size:.78rem;text-decoration:none;font-weight:600;margin-left:10px">Remove</a>
+      </div>`).join('');
+    return `
+      <div class="oac-modal-docs" data-docs-manager>
+        <h3>Documents</h3>
+        <div data-docs-list>${list || '<div style="color:#888;font-size:.85rem;font-style:italic;padding:6px 0">No documents yet.</div>'}</div>
+        <form data-doc-add-form style="margin-top:14px;display:grid;grid-template-columns:1.2fr 2fr auto;gap:8px;align-items:end">
+          <div>
+            <div class="k">Name</div>
+            <input name="name" required placeholder="Promissory Note" style="${INPUT_STYLE}">
+          </div>
+          <div>
+            <div class="k">Dropbox URL</div>
+            <input name="dropbox_url" type="url" required placeholder="https://www.dropbox.com/..." style="${INPUT_STYLE}">
+          </div>
+          <button type="submit" class="oac-btn red" style="padding:10px 14px">Add</button>
+        </form>
+      </div>`;
+  }
+
+  function wireDocsManager(scope, table, parentCol, parentId, onChange) {
+    const root = scope.querySelector('[data-docs-manager]');
+    if (!root) return;
+    // Remove
+    root.querySelectorAll('[data-doc-remove]').forEach(a => {
+      a.addEventListener('click', async (e) => {
+        e.preventDefault();
+        if (!confirm('Remove this document?')) return;
+        const id = a.dataset.docRemove;
+        const { error } = await OnixDB.client.from(table).delete().eq('id', id);
+        if (error) { alert(error.message); return; }
+        if (typeof onChange === 'function') onChange();
+        refreshAll();
+      });
+    });
+    // Add
+    const form = root.querySelector('[data-doc-add-form]');
+    if (form) {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(form);
+        const row = { name: strOrNull(fd.get('name')), dropbox_url: strOrNull(fd.get('dropbox_url')) };
+        row[parentCol] = parentId;
+        const submitBtn = form.querySelector('button[type="submit"]');
+        submitBtn.disabled = true; submitBtn.textContent = 'Adding…';
+        const { error } = await OnixDB.client.from(table).insert(row);
+        if (error) { alert(error.message); submitBtn.disabled = false; submitBtn.textContent = 'Add'; return; }
+        if (typeof onChange === 'function') onChange();
+        refreshAll();
+      });
+    }
+  }
 
   // ---------- Add Loan modal ----------
   function openAddLoanModal() {
@@ -705,6 +846,151 @@
         structure:            strOrNull(fd.get('structure')),
         status:               String(fd.get('status'))
       }), 'raises');
+    });
+  }
+
+  // ---------- Edit Loan modal ----------
+  function openEditLoanModal(loan) {
+    const clients = (window.__onixAdminData && window.__onixAdminData.clients) || [];
+    const clientOpts = clientOptions(clients).map(o => ({ ...o, selected: o.value === loan.user_id }));
+    openModal(`
+      <h2>Edit Loan</h2>
+      <div class="sub">${esc(loan.loan_id_display || loan.id.slice(0,8))}</div>
+      <form id="oac-edit-loan-form">
+        <div class="oac-modal-row" style="grid-template-columns:1fr">
+          ${field('Client', 'user_id', { required: true, select: clientOpts })}
+        </div>
+        <div class="oac-modal-row">
+          ${field('Loan ID',           'loan_id_display',  { value: loan.loan_id_display })}
+          ${field('Status',            'status',           { required: true, select: [
+              { value: 'active', label: 'Active', selected: loan.status === 'active' },
+              { value: 'paid',   label: 'Paid',   selected: loan.status === 'paid' },
+              { value: 'review', label: 'Review', selected: loan.status === 'review' }] })}
+          ${field('Outstanding Balance ($)', 'balance',    { type: 'number', step: '0.01', value: loan.balance })}
+          ${field('Interest Rate (%)', 'interest_rate',    { type: 'number', step: '0.01', value: loan.interest_rate })}
+          ${field('Monthly Payment ($)','monthly_payment', { type: 'number', step: '0.01', value: loan.monthly_payment })}
+          ${field('Term (months)',     'term_months',      { type: 'number', value: loan.term_months })}
+          ${field('Origination Date',  'origination_date', { type: 'date', value: dateInput(loan.origination_date) })}
+          ${field('Maturity Date',     'maturity_date',    { type: 'date', value: dateInput(loan.maturity_date) })}
+          ${field('Next Due',          'next_due_date',    { type: 'date', value: dateInput(loan.next_due_date) })}
+          ${field('Origination Fee (%)','origination_fee', { type: 'number', step: '0.01', value: loan.origination_fee })}
+        </div>
+        <div class="oac-modal-row" style="grid-template-columns:1fr">
+          ${field('Collateral Address', 'collateral_address', { value: loan.collateral_address })}
+        </div>
+        ${submitBar('Save Changes')}
+      </form>`);
+    const form = document.getElementById('oac-edit-loan-form');
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      handleUpdateSubmit(form, 'loans', loan.id, () => ({
+        user_id:            String(fd.get('user_id')),
+        loan_id_display:    strOrNull(fd.get('loan_id_display')),
+        balance:            numOrNull(fd.get('balance')),
+        interest_rate:      numOrNull(fd.get('interest_rate')),
+        monthly_payment:    numOrNull(fd.get('monthly_payment')),
+        term_months:        numOrNull(fd.get('term_months')),
+        origination_date:   strOrNull(fd.get('origination_date')),
+        maturity_date:      strOrNull(fd.get('maturity_date')),
+        next_due_date:      strOrNull(fd.get('next_due_date')),
+        origination_fee:    numOrNull(fd.get('origination_fee')),
+        collateral_address: strOrNull(fd.get('collateral_address')),
+        status:             String(fd.get('status'))
+      }));
+    });
+  }
+
+  // ---------- Edit Investment modal ----------
+  function openEditInvestmentModal(inv) {
+    const clients = (window.__onixAdminData && window.__onixAdminData.clients) || [];
+    const clientOpts = clientOptions(clients).map(o => ({ ...o, selected: o.value === inv.user_id }));
+    openModal(`
+      <h2>Edit Investment</h2>
+      <div class="sub">${esc(inv.venture_name)}</div>
+      <form id="oac-edit-inv-form">
+        <div class="oac-modal-row" style="grid-template-columns:1fr">
+          ${field('Client', 'user_id', { required: true, select: clientOpts })}
+        </div>
+        <div class="oac-modal-row">
+          ${field('Venture Name',      'venture_name',      { required: true, value: inv.venture_name })}
+          ${field('Type',              'venture_type',      { required: true, select: [
+              { value: 'equity',  label: 'Equity',  selected: inv.venture_type === 'equity' },
+              { value: 'deposit', label: 'Deposit', selected: inv.venture_type === 'deposit' }] })}
+          ${field('Amount Invested ($)','amount_invested',  { type: 'number', step: '0.01', required: true, value: inv.amount_invested })}
+          ${field('Ownership (%)',     'ownership_pct',     { type: 'number', step: '0.01', value: inv.ownership_pct })}
+          ${field('Expected Return (%)','expected_return',  { type: 'number', step: '0.01', value: inv.expected_return })}
+          ${field('Start Date',        'start_date',        { type: 'date', value: dateInput(inv.start_date) })}
+          ${field('Status',            'status',            { required: true, select: [
+              { value: 'active',  label: 'Active',  selected: inv.status === 'active' },
+              { value: 'pending', label: 'Pending', selected: inv.status === 'pending' },
+              { value: 'exited',  label: 'Exited',  selected: inv.status === 'exited' }] })}
+        </div>
+        ${submitBar('Save Changes')}
+      </form>`);
+    const form = document.getElementById('oac-edit-inv-form');
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      handleUpdateSubmit(form, 'investments', inv.id, () => ({
+        user_id:         String(fd.get('user_id')),
+        venture_name:    strOrNull(fd.get('venture_name')),
+        venture_type:    strOrNull(fd.get('venture_type')),
+        amount_invested: numOrNull(fd.get('amount_invested')),
+        ownership_pct:   numOrNull(fd.get('ownership_pct')),
+        expected_return: numOrNull(fd.get('expected_return')),
+        start_date:      strOrNull(fd.get('start_date')),
+        status:          String(fd.get('status'))
+      }));
+    });
+  }
+
+  // ---------- Edit Raise modal ----------
+  function openEditRaiseModal(r) {
+    openModal(`
+      <h2>Edit Raise</h2>
+      <div class="sub">${esc(r.venture_name)}</div>
+      <form id="oac-edit-raise-form">
+        <div class="oac-modal-row">
+          ${field('Venture Name',           'venture_name',         { required: true, value: r.venture_name })}
+          ${field('Type',                   'venture_type',         { required: true, select: [
+              { value: 'equity',  label: 'Equity',  selected: r.venture_type === 'equity' },
+              { value: 'deposit', label: 'Deposit', selected: r.venture_type === 'deposit' }] })}
+          ${field('Total Raise Target ($)', 'total_raise_target',   { type: 'number', step: '1', required: true, value: r.total_raise_target })}
+          ${field('Amount Raised ($)',      'amount_raised',        { type: 'number', step: '1', value: r.amount_raised })}
+          ${field('Minimum Investment ($)', 'minimum_investment',   { type: 'number', step: '1', value: r.minimum_investment })}
+          ${field('Investment Horizon',     'investment_horizon',   { value: r.investment_horizon })}
+          ${field('Projected Return Min (%)','projected_return_min',{ type: 'number', step: '0.01', value: r.projected_return_min })}
+          ${field('Projected Return Max (%)','projected_return_max',{ type: 'number', step: '0.01', value: r.projected_return_max })}
+          ${field('Status',                 'status',               { required: true, select: [
+              { value: 'open',   label: 'Open',   selected: r.status === 'open' },
+              { value: 'closed', label: 'Closed', selected: r.status === 'closed' }] })}
+        </div>
+        <div class="oac-modal-row" style="grid-template-columns:1fr">
+          ${field('Structure', 'structure', { value: r.structure })}
+        </div>
+        <div class="oac-modal-row" style="grid-template-columns:1fr">
+          <div><div class="k">Description</div><textarea name="description" rows="3" style="${INPUT_STYLE};resize:vertical;min-height:60px">${esc(r.description || '')}</textarea></div>
+        </div>
+        ${submitBar('Save Changes')}
+      </form>`);
+    const form = document.getElementById('oac-edit-raise-form');
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      handleUpdateSubmit(form, 'raises', r.id, () => ({
+        venture_name:         strOrNull(fd.get('venture_name')),
+        venture_type:         strOrNull(fd.get('venture_type')),
+        description:          strOrNull(fd.get('description')),
+        total_raise_target:   numOrNull(fd.get('total_raise_target')),
+        amount_raised:        numOrNull(fd.get('amount_raised')) ?? 0,
+        minimum_investment:   numOrNull(fd.get('minimum_investment')),
+        projected_return_min: numOrNull(fd.get('projected_return_min')),
+        projected_return_max: numOrNull(fd.get('projected_return_max')),
+        investment_horizon:   strOrNull(fd.get('investment_horizon')),
+        structure:            strOrNull(fd.get('structure')),
+        status:               String(fd.get('status'))
+      }));
     });
   }
 
