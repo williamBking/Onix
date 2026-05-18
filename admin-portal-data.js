@@ -1423,11 +1423,36 @@
     }
   }
 
+  function computeInitials(name) {
+    const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return '';
+    const first = parts[0][0] || '';
+    const last  = parts.length > 1 ? parts[parts.length - 1][0] : '';
+    return (first + last).toUpperCase();
+  }
+
+  function renderSidebarUser(profile) {
+    const name = (profile && (profile.full_name || profile.email)) || 'Admin';
+    const initials = computeInitials(profile && (profile.full_name || profile.email));
+    let attempts = 0;
+    (function apply() {
+      const nameEls   = document.querySelectorAll('.sidebar-user-name');
+      const avatarEls = document.querySelectorAll('.sidebar-avatar');
+      if (nameEls.length || avatarEls.length) {
+        nameEls.forEach(el => el.textContent = name);
+        avatarEls.forEach(el => el.textContent = initials);
+        return;
+      }
+      if (++attempts < 30) setTimeout(apply, 100);
+    })();
+  }
+
   async function bootstrap() {
     const gate = await OnixDB.requireAdmin();
     if (!gate) return;
     injectStyles();
     buildPanel();
+    renderSidebarUser(gate.profile);
     document.getElementById('oac-greeting').textContent = 'Signed in as ' + (gate.profile.full_name || gate.profile.email);
     // Load data eagerly so the static "Loan Applications" tab is populated
     // even before the admin opens the Live Admin Console.
