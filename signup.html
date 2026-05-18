@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Onix Finance — Request Access</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=DM+Sans:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{
+  --red:#C0392B;--dark:#1A1A1A;--bg:#F8F7F5;
+  --border:#E8E8E8;--muted:#6B6560;--light:#9B9590;
+  --red-light:#FDF0EE;--success:#3B8B3B;--success-bg:#EBF5EB;
+  --serif:'Cormorant Garamond',Georgia,serif;--sans:'DM Sans',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);color:var(--dark);min-height:100vh}
+a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-family:inherit;color:inherit}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 18px;font-size:.78rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;border-radius:2px;transition:all .15s;border:1px solid transparent}
+.btn-red{background:var(--red);color:#fff;border-color:var(--red)}
+.btn-red:hover{background:#a93226}
+.field-label{display:block;font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:8px}
+.field-input{width:100%;padding:13px 14px;border:1px solid var(--border);background:#fff;font-size:.9rem;font-family:var(--sans);color:var(--dark);outline:none;border-radius:2px;transition:border-color .15s}
+.field-input:focus{border-color:var(--red)}
+.signup-page{min-height:100vh;display:grid;grid-template-columns:1fr 1fr}
+.signup-left{background:var(--dark);color:#fff;position:relative;overflow:hidden;padding:56px 64px;display:flex;flex-direction:column;justify-content:space-between}
+.signup-left-glow{position:absolute;top:-180px;left:-160px;width:520px;height:520px;background:radial-gradient(circle,rgba(192,57,43,.22) 0%,transparent 65%);border-radius:50%;pointer-events:none}
+.signup-brand-rule{width:40px;height:2px;background:var(--red);margin-bottom:28px}
+.signup-brand-tagline{font-family:var(--serif);font-style:italic;font-size:1.75rem;font-weight:500;color:rgba(255,255,255,.9);line-height:1.35;max-width:360px;letter-spacing:-.005em}
+.signup-brand-sub{margin-top:20px;font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.35);font-weight:600}
+.signup-right{background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:56px 80px;position:relative}
+.signup-form{width:100%;max-width:420px}
+.signup-eyebrow{font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:var(--red);font-weight:600;margin-bottom:14px}
+.signup-title{font-family:var(--serif);font-style:italic;font-weight:500;font-size:2.6rem;line-height:1;margin-bottom:10px;letter-spacing:-.01em}
+.signup-sub{color:var(--light);font-size:.92rem;margin-bottom:36px;line-height:1.6}
+.signup-error{display:none;color:var(--red);font-size:.85rem;padding:12px 14px;background:var(--red-light);border-left:3px solid var(--red);margin-bottom:18px}
+.signup-error.show{display:block}
+.signup-success{display:none;color:var(--success);font-size:.95rem;padding:18px 20px;background:var(--success-bg);border-left:3px solid var(--success);margin-bottom:18px;line-height:1.55}
+.signup-success.show{display:block}
+.signup-back{font-size:.82rem;color:var(--light);text-align:center;margin-top:24px}
+.signup-back a{color:var(--red);font-weight:500}
+.signup-back a:hover{text-decoration:underline}
+@media(max-width:900px){.signup-page{grid-template-columns:1fr}.signup-left{display:none}.signup-right{padding:64px 24px}}
+</style>
+</head>
+<body>
+<div class="signup-page">
+  <div class="signup-left">
+    <div class="signup-left-glow"></div>
+    <div style="position:relative;z-index:1">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:32px">
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Onix Finance">
+          <rect x="3" y="3" width="42" height="42" rx="2" stroke="#fff" stroke-width="1.5"/>
+          <path d="M24 11 L37 24 L24 37 L11 24 Z" fill="#C0392B"/>
+          <path d="M24 17 L31 24 L24 31 L17 24 Z" fill="#1A1A1A"/>
+        </svg>
+        <span style="font-size:1.5rem;font-weight:900;letter-spacing:6px;color:#fff;text-transform:uppercase">ONIX<span style="color:#C0392B">.</span></span>
+      </div>
+      <div class="signup-brand-rule"></div>
+      <p class="signup-brand-tagline">Private lending and investment solutions for discerning clients.</p>
+      <p class="signup-brand-sub">Houston, TX &nbsp;·&nbsp; Est. 2018</p>
+    </div>
+    <div style="position:relative;z-index:1">
+      <p style="font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.22);font-style:italic">Private &amp; Confidential — Onix Finance, LLC</p>
+    </div>
+  </div>
+
+  <div class="signup-right">
+    <div class="signup-form">
+      <p class="signup-eyebrow">Request Access</p>
+      <h1 class="signup-title">Create your account</h1>
+      <p class="signup-sub">Tell us about yourself. A principal will review your request and activate your portal within 1–2 business days.</p>
+
+      <div id="signup-error" class="signup-error"></div>
+      <div id="signup-success" class="signup-success">
+        <strong style="display:block;font-size:1.05rem;font-family:var(--serif);font-style:italic;margin-bottom:6px">Request received.</strong>
+        Thank you. Your account is pending approval. We'll email <span id="success-email">you</span> once it is activated, usually within 1–2 business days.
+        <div style="margin-top:18px"><a href="login.html" style="color:var(--red);font-weight:600">← Back to sign in</a></div>
+      </div>
+
+      <form id="signup-form" onsubmit="doSignup(event)">
+        <label class="field-label">Full Name</label>
+        <input id="full_name" type="text" class="field-input" placeholder="Carlos Mendoza" style="margin-bottom:18px" required>
+
+        <label class="field-label">Email Address</label>
+        <input id="email" type="email" class="field-input" placeholder="you@example.com" style="margin-bottom:18px" required>
+
+        <label class="field-label">Password</label>
+        <input id="password" type="password" class="field-input" placeholder="At least 8 characters" minlength="8" style="margin-bottom:18px" required>
+
+        <label class="field-label">Confirm Password</label>
+        <input id="password2" type="password" class="field-input" placeholder="••••••••" minlength="8" style="margin-bottom:24px" required>
+
+        <button type="submit" class="btn btn-red" style="width:100%;padding:16px">
+          <span id="submit-text">Submit Request</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        </button>
+      </form>
+
+      <div class="signup-back">Already have an account? <a href="login.html">Sign in</a></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://ckayfqplkpplgojdhjlu.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNrYXlmcXBsa3BwbGdvamRoamx1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwOTUzNDUsImV4cCI6MjA5MzY3MTM0NX0.E5lmNud0ERUqaxy829d1dB3AqGw9EEFjHFSB7zDJdFE';
+const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+async function doSignup(e) {
+  e.preventDefault();
+  const fullName = document.getElementById('full_name').value.trim();
+  const email    = document.getElementById('email').value.trim().toLowerCase();
+  const pw       = document.getElementById('password').value;
+  const pw2      = document.getElementById('password2').value;
+  const errEl    = document.getElementById('signup-error');
+  const okEl     = document.getElementById('signup-success');
+  const submit   = document.getElementById('submit-text');
+  errEl.classList.remove('show');
+
+  if (pw !== pw2) {
+    errEl.textContent = 'Passwords do not match.';
+    errEl.classList.add('show');
+    return;
+  }
+
+  submit.textContent = 'Submitting…';
+
+  try {
+    // 1. Create the auth user. Trigger creates a profile row (defaults to status='pending').
+    const { data, error } = await _supabase.auth.signUp({
+      email,
+      password: pw,
+      options: { data: { full_name: fullName } }
+    });
+    if (error) throw error;
+
+    // 2. Save the supplied full_name on the profile row.
+    //    Available because the user is briefly signed-in after signUp.
+    if (data && data.user) {
+      await _supabase.from('profiles')
+        .update({ full_name: fullName })
+        .eq('id', data.user.id);
+    }
+
+    // 3. Sign them out — they cannot use the portal until an admin approves.
+    await _supabase.auth.signOut();
+
+    // 4. Show success state
+    document.getElementById('signup-form').style.display = 'none';
+    document.getElementById('success-email').textContent = email;
+    okEl.classList.add('show');
+  } catch (ex) {
+    errEl.textContent = ex.message || 'Something went wrong. Please try again.';
+    errEl.classList.add('show');
+    submit.textContent = 'Submit Request';
+  }
+}
+</script>
+</body>
+</html>
