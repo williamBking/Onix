@@ -515,6 +515,7 @@
   //   view-dashboard, view-clients, view-investors, view-loans, view-raises,
   //   view-applications, view-review, view-documents, view-reports, view-users
   const STATIC_VIEWS = {
+    dashboard:   ['view-dashboard'],
     clients:     ['view-clients', 'view-users'],
     loans:       ['view-loans'],
     investments: ['view-investors'],
@@ -549,6 +550,87 @@
 
   function alreadyPainted(viewEl) {
     return !!(viewEl && viewEl.querySelector('.' + LIVE_MARKER));
+  }
+
+  function paintDashboardView(data) {
+    const v = findView(STATIC_VIEWS.dashboard); if (!v) return false;
+    if (alreadyPainted(v)) return true;
+    const { clients, loans, investments, raises, applications, payments, distributions } = data;
+    const activeLoans       = loans.filter(l => l.status === 'active');
+    const activeInvestments = investments.filter(i => i.status === 'active');
+    const openRaises        = raises.filter(r => r.status === 'open');
+    const pendingClients    = clients.filter(c => c.status === 'pending');
+    const pendingApps       = applications.filter(a => !a.status || a.status === 'pending');
+
+    const loanPortfolio = activeLoans.reduce((s, l) => s + Number(l.balance || 0), 0);
+    const totalDeposits = activeInvestments
+      .filter(i => i.venture_type === 'deposit')
+      .reduce((s, i) => s + Number(i.amount_invested || 0), 0);
+    const totalEquity = activeInvestments
+      .filter(i => i.venture_type !== 'deposit')
+      .reduce((s, i) => s + Number(i.amount_invested || 0), 0);
+
+    // KPI grid
+    const kpi = (label, val, sub) => `
+      <div style="background:#fff;border:1px solid #E8E8E8;border-top:3px solid #C0392B;padding:24px 22px">
+        <div style="font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:#888;font-weight:600;margin-bottom:8px">${esc(label)}</div>
+        <div style="font-family:'Cormorant Garamond',serif;font-size:1.9rem;color:#C0392B;font-weight:500;line-height:1">${esc(val)}</div>
+        ${sub ? `<div style="font-size:.72rem;color:#888;margin-top:6px">${esc(sub)}</div>` : ''}
+      </div>`;
+
+    // Recent activity feed — pull from multiple sources, sort by timestamp desc
+    const events = [];
+    applications.slice(0, 10).forEach(a => events.push({
+      ts: new Date(a.submitted_at),
+      label: 'Loan application submitted',
+      detail: ((a.profiles && (a.profiles.full_name || a.profiles.email)) || 'Client') + ' · ' + fmt.money(a.amount_requested),
+      kind: 'application'
+    }));
+    clients.slice(0, 10).forEach(c => events.push({
+      ts: new Date(c.created_at),
+      label: c.status === 'pending' ? 'New client signed up (pending)' : 'Client added',
+      detail: (c.full_name || c.email),
+      kind: 'client'
+    }));
+    payments.filter(p => p.paid_at).slice(0, 10).forEach(p => events.push({
+      ts: new Date(p.paid_at),
+      label: 'Loan payment received',
+      detail: ((p.loans && p.loans.profiles && p.loans.profiles.full_name) || 'Client') + ' · ' + fmt.money(p.amount_due),
+      kind: 'payment'
+    }));
+    distributions.slice(0, 10).forEach(d => events.push({
+      ts: new Date(d.paid_at),
+      label: 'Distribution paid',
+      detail: ((d.investments && d.investments.profiles && d.investments.profiles.full_name) || 'Client') + ' · ' + fmt.money(d.amount) + ' · ' + ((d.investments && d.investments.venture_name) || ''),
+      kind: 'distribution'
+    }));
+    events.sort((a, b) => b.ts - a.ts);
+    const activityRows = events.slice(0, 12).map(e => `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid #f4f4f4">
+        <div>
+          <div style="font-size:.88rem;font-weight:600;color:#1A1A1A">${esc(e.label)}</div>
+          <div style="font-size:.78rem;color:#888;margin-top:2px">${esc(e.detail)}</div>
+        </div>
+        <div style="font-size:.72rem;color:#888;white-space:nowrap">${esc(fmt.date(e.ts))}</div>
+      </div>`).join('');
+
+    v.innerHTML = viewShell('Admin Dashboard', 'Portfolio snapshot, pending work, and recent activity',
+      `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px">
+        ${kpi('Loan Portfolio', fmt.money(loanPortfolio), activeLoans.length + ' active loan' + (activeLoans.length === 1 ? '' : 's'))}
+        ${kpi('Total Deposits', fmt.money(totalDeposits), 'Onix Finance deposit instrument')}
+        ${kpi('Equity Investments', fmt.money(totalEquity), activeInvestments.filter(i => i.venture_type !== 'deposit').length + ' position' + (activeInvestments.filter(i => i.venture_type !== 'deposit').length === 1 ? '' : 's'))}
+        ${kpi('Active Clients', String(clients.filter(c => c.role === 'client' && c.status === 'active').length), clients.length + ' total accounts')}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px">
+        ${kpi('Pending Approvals', String(pendingClients.length), pendingClients.length ? 'Review in Clients tab' : 'All caught up')}
+        ${kpi('Applications', String(applications.length), pendingApps.length + ' pending review')}
+        ${kpi('Open Raises', String(openRaises.length), fmt.money(openRaises.reduce((s, r) => s + Number(r.amount_raised || 0), 0)) + ' raised')}
+        ${kpi('Distributions Paid', String(distributions.length), 'All-time count')}
+      </div>
+      <h2 style="font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:1.4rem;margin:24px 0 4px">Recent Activity</h2>
+      <div style="width:40px;height:2px;background:#C0392B;margin-bottom:14px"></div>
+      <div>${activityRows || '<div style="padding:18px 0;color:#888;font-style:italic">No activity yet.</div>'}</div>`);
+    return true;
   }
 
   function paintClientsView(clients) {
@@ -1279,6 +1361,7 @@
     // Invalidate any previously-painted markers so we re-paint with fresh data
     document.querySelectorAll('.' + LIVE_MARKER).forEach(el => el.classList.remove(LIVE_MARKER));
     function tryAll() {
+      paintDashboardView(data);
       paintClientsView(data.clients);
       paintLoansView(data.loans);
       paintInvestmentsView(data.investments);
@@ -1400,13 +1483,15 @@
     const greeting = document.getElementById('oac-greeting');
     if (greeting) greeting.textContent = 'Loading data…';
     try {
-      const [clients, pending, loans, investments, raises, applications] = await Promise.all([
+      const [clients, pending, loans, investments, raises, applications, payments, distributions] = await Promise.all([
         OnixDB.getAllClients(),
         OnixDB.getPendingClients(),
         OnixDB.getAllLoans(),
         OnixDB.getAllInvestments(),
         OnixDB.getAllRaises(),
-        OnixDB.getAllApplications()
+        OnixDB.getAllApplications(),
+        OnixDB.getAllPayments    ? OnixDB.getAllPayments()    : Promise.resolve([]),
+        OnixDB.getAllDistributions ? OnixDB.getAllDistributions() : Promise.resolve([])
       ]);
       renderOverview({ clients, pending, loans, investments, raises, applications });
       renderApprovals(pending);
@@ -1415,7 +1500,7 @@
       renderLoans(loans);
       renderInvestments(investments);
       renderRaises(raises);
-      paintStaticAdmin({ clients, loans, investments, raises, applications });
+      paintStaticAdmin({ clients, loans, investments, raises, applications, payments, distributions });
       if (greeting) greeting.textContent = `Loaded · ${clients.length} clients · ${pending.length} pending · ${loans.length} loans · ${applications.length} applications`;
     } catch (ex) {
       console.error('[onix-admin]', ex);
