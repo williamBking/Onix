@@ -58,10 +58,149 @@
 
   function renderUserName(profile) {
     const name = profile.full_name || profile.email || 'Client';
+    const first = String(name).trim().split(/\s+/)[0];
     document.querySelectorAll('.sidebar-user-name').forEach(el => el.textContent = name);
     // Also replace any input pre-filled with the old demo name
     document.querySelectorAll('input[value="Carlos Mendoza"]').forEach(el => el.value = name);
     document.querySelectorAll('input[value="carlos.mendoza@email.com"]').forEach(el => el.value = profile.email || '');
+
+    // "Welcome back, …" eyebrow on the Dashboard
+    document.querySelectorAll('.page-hd .eyebrow').forEach(el => {
+      const txt = (el.textContent || '').trim();
+      if (/^Welcome back/i.test(txt) || /^Bienvenid/i.test(txt)) {
+        // Preserve EN/ES alternates so the language toggle still works
+        el.setAttribute('data-en', 'Welcome back, ' + first);
+        el.setAttribute('data-es', 'Bienvenido, ' + first);
+        el.textContent = 'Welcome back, ' + first;
+      }
+    });
+  }
+
+  // Update the Loan Details card on the Lending tab using real loan fields.
+  // Targets each `.detail-row` by its `.detail-key` label.
+  function renderLoanDetails(loan) {
+    const card = Array.from(document.querySelectorAll('#view-loans .card')).find(c => {
+      const t = c.querySelector('.card-title');
+      return t && /Loan Details/i.test(t.textContent || '');
+    });
+    if (!card) return;
+    const setDetail = (label, value) => {
+      const rows = card.querySelectorAll('.detail-row');
+      rows.forEach(r => {
+        const k = r.querySelector('.detail-key');
+        if (k && k.textContent.trim().toLowerCase() === label.toLowerCase()) {
+          const v = r.querySelector('.detail-val');
+          if (v && value != null) v.textContent = value;
+        }
+      });
+    };
+    if (!loan) {
+      ['Loan ID', 'Principal', 'Term', 'Origination', 'Maturity', 'Origination Fee', 'Collateral']
+        .forEach(l => setDetail(l, '—'));
+      // Also update the Active badge
+      const badge = card.querySelector('.badge');
+      if (badge) { badge.textContent = 'No loan'; badge.className = 'badge'; }
+      return;
+    }
+    setDetail('Loan ID', loan.loan_id_display || '—');
+    setDetail('Principal', fmt.money(loan.balance));
+    setDetail('Term', loan.term_months != null ? loan.term_months + ' months' : '—');
+    setDetail('Origination', fmt.date(loan.origination_date));
+    setDetail('Maturity', fmt.date(loan.maturity_date));
+    setDetail('Origination Fee', loan.origination_fee != null
+      ? loan.origination_fee + '%' + (loan.balance ? ' (' + fmt.money(Number(loan.balance) * Number(loan.origination_fee) / 100) + ')' : '')
+      : '—');
+    setDetail('Collateral', loan.collateral_address || '—');
+    const badge = card.querySelector('.badge');
+    if (badge) {
+      badge.textContent = loan.status === 'active' ? 'Active'
+                        : loan.status === 'paid'   ? 'Paid'
+                        : loan.status === 'review' ? 'Review'
+                        : loan.status || '—';
+      badge.className = 'badge ' + (loan.status === 'active' ? 'badge-green'
+                                  : loan.status === 'review' ? 'badge-warn'
+                                  : 'badge');
+    }
+  }
+
+  // Override the inline showInvestmentDetail() with one that reads real data.
+  function wireInvestmentDetailModal(investments) {
+    const map = new Map(investments.map(i => [i.id, i]));
+    window.showInvestmentDetail = function (id) {
+      const inv = map.get(id);
+      if (!inv) return;
+      const setT = (sel, val) => { const el = document.querySelector(sel); if (el && val != null) el.textContent = val; };
+      const typeLabel = (inv.venture_type === 'deposit') ? 'Deposit · Onix Finance'
+                       : (inv.venture_type === 'equity')  ? 'Equity · Private'
+                       : (inv.venture_type || 'Investment');
+      setT('#det-type', typeLabel);
+      setT('#det-name', inv.venture_name || 'Investment');
+      setT('#det-amount', fmt.money(inv.amount_invested));
+      setT('#det-ownership', inv.ownership_pct != null ? fmt.pct(inv.ownership_pct) : '—');
+      setT('#det-roi', inv.expected_return != null ? fmt.pct(inv.expected_return) : '—');
+      setT('#det-status', inv.status === 'active' ? 'Active'
+                       : inv.status === 'exited' ? 'Exited'
+                       : inv.status === 'pending' ? 'Pending' : (inv.status || '—'));
+      const details = document.getElementById('det-details');
+      if (details) {
+        const rows = [
+          ['Investment Date', fmt.date(inv.start_date)],
+          ['Type', typeLabel],
+          ['Venture', inv.venture_name],
+          ['Ownership', inv.ownership_pct != null ? fmt.pct(inv.ownership_pct) : '—'],
+          ['Expected Return', inv.expected_return != null ? fmt.pct(inv.expected_return) : '—'],
+          ['Status', inv.status || '—'],
+          ['Amount Invested', fmt.money(inv.amount_invested)]
+        ];
+        details.innerHTML = rows.map(r =>
+          `<div class="detail-row"><span class="detail-key">${escapeHtml(r[0])}</span><span class="detail-val">${escapeHtml(r[1] == null ? '—' : r[1])}</span></div>`
+        ).join('');
+      }
+      const docs = document.getElementById('det-docs');
+      if (docs) {
+        const list = inv.investment_documents || [];
+        docs.innerHTML = list.length ? list.map(d => `
+          <div class="doc-row">
+            <div><div class="doc-name">${escapeHtml(d.name)}</div>
+              <div class="doc-meta">${escapeHtml(fmt.date(d.uploaded_at))}</div></div>
+            ${d.dropbox_url ? `<a class="doc-link" href="${escapeAttr(d.dropbox_url)}" target="_blank" rel="noopener">View ↗</a>` : '<span class="doc-link" style="opacity:.5">—</span>'}
+          </div>`).join('') : '<div style="padding:14px 16px;color:var(--muted);font-size:.85rem;font-style:italic">No documents on file.</div>';
+      }
+      // Switch to the detail view
+      const all = document.querySelectorAll('.view');
+      all.forEach(v => v.classList.remove('active'));
+      const target = document.getElementById('view-investment-detail');
+      if (target) target.classList.add('active');
+    };
+  }
+
+  // Replace the Portfolio Allocation pie chart with real data.
+  function renderPortfolioChart(investments) {
+    const canvas = document.getElementById('allocChart');
+    if (!canvas || typeof Chart === 'undefined') return;
+    const active = (investments || []).filter(i => i.status !== 'exited');
+    const labels = active.map(i => i.venture_name || 'Investment');
+    const data   = active.map(i => Number(i.amount_invested || 0));
+    const palette = ['#C0392B','#a93226','#d56b5e','#e8a39a','#1A1A1A','#888','#bbb','#EDE8E0'];
+    const colors = labels.map((_, i) => palette[i % palette.length]);
+
+    // Destroy any existing Chart instance bound to this canvas before re-creating
+    try { const ex = Chart.getChart(canvas); if (ex) ex.destroy(); } catch (e) {}
+    if (!labels.length) {
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#9B9590';
+      ctx.font = "italic 14px 'Cormorant Garamond', serif";
+      ctx.textAlign = 'center';
+      ctx.fillText('No investments yet', canvas.width / 2, canvas.height / 2);
+      return;
+    }
+    new Chart(canvas.getContext('2d'), {
+      type: 'doughnut',
+      data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 0 }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: '66%',
+        plugins: { legend: { position: 'right', labels: { boxWidth: 10, font: { size: 11 }, color: '#555' } } } }
+    });
   }
 
   function renderLoan(loan) {
@@ -75,6 +214,9 @@
     setKpi('Outstanding Balance', loan ? fmt.money(loan.balance)          : '—');
     setKpi('Interest Rate',       loan ? fmt.pct(loan.interest_rate)      : '—');
     setKpi('Monthly Payment',     loan ? fmt.money(loan.monthly_payment)  : '—');
+
+    // Loan Details card (Lending tab) — real loan fields
+    renderLoanDetails(loan);
 
     // Replace loan document rows inside the LENDING view (#view-loans) specifically,
     // and inside the Documents → "Loan" card if present.
@@ -156,6 +298,7 @@
     // When the user has no active loan, dim every loan KPI cell
     ['Outstanding Loan', 'Next Payment Due', 'Next Due', 'Outstanding Balance', 'Interest Rate', 'Monthly Payment']
       .forEach(label => setKpi(label, '—', 'No active loan'));
+    renderLoanDetails(null);
     // Empty out the loan documents card on My Documents
     emptyDocsCard(document.querySelector('#view-documents'), 'Loan', 'No loan documents on file.');
   }
@@ -187,6 +330,7 @@
     investments.forEach(inv => {
       const card = document.createElement('div');
       card.className = 'inv-card';
+      card.setAttribute('onclick', "showInvestmentDetail('" + inv.id + "')");
       const typeLabel = (inv.venture_type === 'deposit') ? 'Deposit · Onix Finance'
                        : (inv.venture_type === 'equity')  ? 'Equity · Private'
                        : (inv.venture_type || 'Investment');
@@ -203,6 +347,9 @@
           : '');
       grid.appendChild(card);
     });
+    // Wire detail modal + portfolio chart with the same dataset
+    wireInvestmentDetailModal(investments);
+    renderPortfolioChart(investments);
   }
 
   function renderInvestmentKpis(investments) {
