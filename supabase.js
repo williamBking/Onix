@@ -220,6 +220,24 @@ async function getAllRaises() {
   return data || []
 }
 
+async function getAllPayments() {
+  const { data, error } = await _supabase
+    .from('loan_payments')
+    .select('*, loans(id, loan_id_display, user_id, profiles(full_name, email))')
+    .order('due_date', { ascending: false })
+  if (error) console.error('All payments error:', error)
+  return data || []
+}
+
+async function getAllDistributions() {
+  const { data, error } = await _supabase
+    .from('distributions')
+    .select('*, investments(id, venture_name, user_id, profiles(full_name, email))')
+    .order('paid_at', { ascending: false })
+  if (error) console.error('All distributions error:', error)
+  return data || []
+}
+
 /* ── Expose everything globally ───────────────────────────── */
 window.OnixDB = {
   client: _supabase,
@@ -244,4 +262,6 @@ window.OnixDB = {
   getAllInvestments,
   getAllApplications,
   getAllRaises,
+  getAllPayments,
+  getAllDistributions,
 }
