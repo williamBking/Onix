@@ -193,7 +193,7 @@
         '.role-col-borrower{background:rgba(192,57,43,.025)}',
         '.role-col-lp{background:rgba(26,26,26,.025)}',
         'th.role-col-borrower,th.role-col-lp{font-size:.6rem !important;letter-spacing:.14em !important;text-align:center !important;border-bottom:2px solid transparent !important}',
-        'th.role-col-borrower{border-bottom-color:#C0392B !important;color:#C0392B !important}',
+        'th.role-col-borrower{border-bottom-color:#C0392B !important;color:#1A1A1A !important}',
         'th.role-col-lp{border-bottom-color:#1A1A1A !important;color:#1A1A1A !important}'
       ].join('\n');
       document.head.appendChild(rs);
@@ -241,7 +241,13 @@
           tdB.querySelector('.role-chk').addEventListener('click', function() {
             this.classList.toggle('on');
             this.classList.toggle('off');
-            this.setAttribute('aria-label', 'Borrower ' + (this.classList.contains('on') ? 'yes' : 'no'));
+            var on = this.classList.contains('on');
+            this.setAttribute('aria-label', 'Borrower ' + (on ? 'yes' : 'no'));
+            var pid = tr.dataset.profileId;
+            if (pid && window.OnixDB) {
+              OnixDB.client.from('profiles').update({ is_borrower: on }).eq('id', pid)
+                .then(function(r){ if (r && r.error) console.error('[onix-clients] is_borrower update failed:', r.error); });
+            }
           });
           var tdL = document.createElement('td');
           tdL.className = 'role-cell role-col-lp';
@@ -249,7 +255,13 @@
           tdL.querySelector('.role-chk').addEventListener('click', function() {
             this.classList.toggle('on');
             this.classList.toggle('off');
-            this.setAttribute('aria-label', 'LP ' + (this.classList.contains('on') ? 'yes' : 'no'));
+            var on = this.classList.contains('on');
+            this.setAttribute('aria-label', 'LP ' + (on ? 'yes' : 'no'));
+            var pid = tr.dataset.profileId;
+            if (pid && window.OnixDB) {
+              OnixDB.client.from('profiles').update({ is_lp: on }).eq('id', pid)
+                .then(function(r){ if (r && r.error) console.error('[onix-clients] is_lp update failed:', r.error); });
+            }
           });
           origTd.replaceWith(tdB);
           tdB.after(tdL);
@@ -652,24 +664,298 @@
       modal.scrollTop = 0;
     }
 
-    // Click delegation — only triggers for View buttons in the Clients view
+    // Disabled — replaced by Supabase-backed View + Documents buttons below.
+    // (Old localStorage profile modal kept as dead code for reference.)
+  });
+
+  /* =====================================================================
+     CLIENTS TAB — Supabase-backed:
+       • renders the table from public.profiles (clients only)
+       • Borrower / LP toggles persist via splitRoleColumn handlers above
+       • per-row View button reuses the LP Profile modal from Investors
+       • per-row Documents button opens a new modal listing
+         public.client_documents for that profile
+     ===================================================================== */
+  window.addEventListener('load', function(){
+    if (!window.OnixDB) return;
+
+    function fmtMoney(n){ return n == null ? '—' : '$' + Number(n).toLocaleString('en-US',{maximumFractionDigits:0}); }
+    function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'})[c];
+    }); }
+    function initials(name){
+      var parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+      if (!parts.length) return '—';
+      var f = parts[0][0] || '';
+      var l = parts.length > 1 ? parts[parts.length-1][0] : '';
+      return (f + l).toUpperCase();
+    }
+    function roleText(p){
+      var b = !!p.is_borrower, l = !!p.is_lp;
+      if (b && l) return 'Borrower + LP';
+      if (b) return 'Borrower';
+      if (l) return 'LP';
+      return '—';
+    }
+    function yearOf(iso){ try { return new Date(iso).getFullYear(); } catch(_) { return '—'; } }
+
+    async function loadClientsAndPaint(){
+      var view = document.getElementById('view-clients');
+      if (!view) return;
+      var table = view.querySelector('table.tbl');
+      if (!table) return;
+      var tbody = table.querySelector('tbody');
+      if (!tbody) return;
+
+      // Fetch clients + their loan/investment counts in parallel
+      var c = OnixDB.client;
+      var pRes = await c.from('profiles').select('*').eq('role','client').order('created_at',{ascending:false});
+      if (pRes.error) { console.error('[onix-clients] profiles load failed:', pRes.error); return; }
+      var clients = pRes.data || [];
+      var ids = clients.map(function(p){ return p.id; });
+      var loanCounts = {}, invCounts = {};
+      if (ids.length){
+        var [lRes, iRes] = await Promise.all([
+          c.from('loans').select('user_id').in('user_id', ids),
+          c.from('investments').select('user_id').in('user_id', ids)
+        ]);
+        (lRes.data || []).forEach(function(r){ loanCounts[r.user_id] = (loanCounts[r.user_id] || 0) + 1; });
+        (iRes.data || []).forEach(function(r){ invCounts[r.user_id] = (invCounts[r.user_id] || 0) + 1; });
+      }
+
+      // Reset thead back to the bundler's original 8 columns if splitRoleColumn
+      // already split it. Otherwise splitRoleColumn won't find a "Role" header
+      // and won't process our freshly-painted rows.
+      var thead = table.querySelector('thead');
+      if (thead) {
+        var bTh = thead.querySelector('th.role-col-borrower');
+        var lTh = thead.querySelector('th.role-col-lp');
+        if (bTh && lTh) {
+          var roleTh = document.createElement('th');
+          roleTh.setAttribute('data-en', 'Role');
+          roleTh.setAttribute('data-es', 'Rol');
+          roleTh.textContent = 'Role';
+          bTh.replaceWith(roleTh);
+          lTh.remove();
+        }
+      }
+
+      // Repaint tbody with the bundler's 8 columns:
+      // Client | Role | Loans | Investments | Lang | RM | Since | actions
+      tbody.innerHTML = '';
+      clients.forEach(function(p){
+        var name = p.full_name || p.email || 'Client';
+        var tr = document.createElement('tr');
+        tr.dataset.profileId = p.id;
+        tr.innerHTML =
+          '<td><span class="mini-avatar">' + esc(initials(name)) + '</span>' + esc(name) + '</td>' +
+          '<td>' + esc(roleText(p)) + '</td>' +
+          '<td>' + (loanCounts[p.id] || '—') + '</td>' +
+          '<td>' + (invCounts[p.id] || '—') + '</td>' +
+          '<td>—</td>' +
+          '<td>—</td>' +
+          '<td>' + yearOf(p.created_at) + '</td>' +
+          '<td class="tbl-actions">' +
+            '<button class="tbl-btn" data-cl-view="1">View</button> ' +
+            '<button class="tbl-btn" data-cl-docs="1">Documents</button>' +
+          '</td>';
+        tbody.appendChild(tr);
+      });
+
+      // Let splitRoleColumn re-process: it'll split the restored Role
+      // header into Borrower + LP and wire the (now-persistent) chk handlers.
+      table.dataset.roleSplit = '';
+    }
+
+    // Paint on initial Clients view show + whenever the tab becomes active.
+    var painted = false;
+    function maybePaint(){
+      var view = document.getElementById('view-clients');
+      if (!view || !view.classList.contains('active')) return;
+      if (painted) return;
+      painted = true;
+      loadClientsAndPaint().catch(function(e){ console.error('[onix-clients] paint failed:', e); painted = false; });
+    }
+    setTimeout(function(){
+      maybePaint();
+      var mo = new MutationObserver(maybePaint);
+      var root = document.querySelector('.main') || document.body;
+      mo.observe(root, {subtree:true, childList:true, attributes:true, attributeFilter:['class']});
+    }, 1500);
+
+    // ---------- View button → reuse the Investors LP Profile modal ----------
+    function ivCell(label, val, full){
+      return '<div class="onix-info-cell' + (full ? ' full' : '') + '">' +
+             '<div class="ic-label">' + esc(label) + '</div>' +
+             '<div class="ic-val">' + (val == null || val === '' ? '—' : esc(val)) + '</div>' +
+             '</div>';
+    }
+
+    async function openClientInLPModal(profileId){
+      var overlay = document.getElementById('__onix_investor_overlay');
+      if (!overlay) return; // built lazily by the Investors block on load
+      var c = OnixDB.client;
+      var [pRes, lRes, iRes] = await Promise.all([
+        c.from('profiles').select('*').eq('id', profileId).single(),
+        c.from('loans').select('loan_id_display, balance, status').eq('user_id', profileId),
+        c.from('investments').select('venture_name, amount_invested, status').eq('user_id', profileId)
+      ]);
+      if (pRes.error) { console.error('[onix-clients] profile fetch failed:', pRes.error); return; }
+      var p = pRes.data || {};
+      var loans = lRes.data || [];
+      var invs  = iRes.data || [];
+      var committed = invs.reduce(function(s, x){ return s + Number(x.amount_invested || 0); }, 0);
+      var activeDeals = invs.filter(function(x){ return x.status !== 'exited'; }).length;
+      var name = p.full_name || p.email || 'Client';
+      var statusLabel = (p.status || '—').replace(/^./, function(ch){ return ch.toUpperCase(); });
+
+      document.getElementById('__onix_iv_name').textContent = name;
+      document.getElementById('__onix_iv_sub').textContent  = p.email || '';
+      document.getElementById('__onix_iv_body').innerHTML =
+        '<div class="onix-info-grid" style="margin-bottom:18px">' +
+          ivCell('Email', p.email) +
+          ivCell('Role', roleText(p)) +
+          ivCell('Status', statusLabel) +
+          ivCell('Client Since', yearOf(p.created_at)) +
+          ivCell('Active Loans', loans.length) +
+          ivCell('Active Investments', activeDeals) +
+          ivCell('Capital Committed', fmtMoney(committed), true) +
+        '</div>' +
+        (invs.length
+          ? '<div style="font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:#9B9590;font-weight:700;margin-bottom:10px">Active Investments</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px">' +
+              invs.map(function(x){
+                return '<div style="padding:10px 14px;background:#F8F7F5;border-left:3px solid #C0392B;font-size:.84rem;font-weight:600">' +
+                  esc(x.venture_name || 'Investment') + ' (' + fmtMoney(x.amount_invested) + ')' +
+                '</div>';
+              }).join('') +
+            '</div>'
+          : '');
+
+      // Wire the Contact button to use the client's email if a contact overlay exists.
+      var contactBtn = document.getElementById('__onix_iv_contact');
+      if (contactBtn) {
+        contactBtn.textContent = 'Contact Client';
+        contactBtn.onclick = function(){
+          window.__onix_closeOverlay(overlay);
+          var contactOv = document.getElementById('__onix_contact_overlay');
+          if (contactOv){
+            var nm = document.getElementById('__onix_ct_name');   if (nm) nm.value = name;
+            var em = document.getElementById('__onix_ct_email');  if (em) em.value = p.email || '';
+            var sb = document.getElementById('__onix_ct_sub');    if (sb) sb.textContent = 'Contacting ' + name;
+            contactOv.classList.add('show');
+          }
+        };
+      }
+      overlay.classList.add('show');
+    }
+
+    // ---------- Documents button → new Supabase-backed modal ----------
+    function ensureDocsModal(){
+      var overlay = document.getElementById('__onix_cl_docs_overlay');
+      if (overlay) return overlay;
+      overlay = window.__onix_createOverlay('__onix_cl_docs_overlay');
+      overlay.innerHTML =
+        '<div class="onix-sheet wide">' +
+          '<div class="onix-sheet-hd">' +
+            '<div><div class="o-eyebrow">Client Documents</div><h2 id="__onix_cd_name">Client</h2><div class="o-sub" id="__onix_cd_sub"></div></div>' +
+            '<button class="onix-sheet-close" id="__onix_cd_close" type="button">×</button>' +
+          '</div>' +
+          '<div class="onix-sheet-body" id="__onix_cd_body"></div>' +
+          '<div class="onix-actions">' +
+            '<button class="onix-btn onix-btn-ghost" id="__onix_cd_close2" type="button">Close</button>' +
+          '</div>' +
+        '</div>';
+      overlay.querySelector('#__onix_cd_close').addEventListener('click', function(){ window.__onix_closeOverlay(overlay); });
+      overlay.querySelector('#__onix_cd_close2').addEventListener('click', function(){ window.__onix_closeOverlay(overlay); });
+      return overlay;
+    }
+
+    var CATEGORY_LABEL = {
+      id: 'ID',
+      passport: 'Passport',
+      proof_of_address: 'Proof of Address',
+      promissory_note: 'Promissory Notes',
+      loan_doc: 'Loan Documents',
+      tax: 'Tax Documents',
+      other: 'Other'
+    };
+    var CATEGORY_ORDER = ['id','passport','proof_of_address','promissory_note','loan_doc','tax','other'];
+
+    async function openClientDocs(profileId){
+      var overlay = ensureDocsModal();
+      var c = OnixDB.client;
+      var [pRes, dRes] = await Promise.all([
+        c.from('profiles').select('full_name, email').eq('id', profileId).single(),
+        c.from('client_documents').select('*').eq('profile_id', profileId).order('uploaded_at',{ascending:false})
+      ]);
+      if (pRes.error)  console.error('[onix-clients] profile fetch failed:', pRes.error);
+      if (dRes.error)  console.error('[onix-clients] docs fetch failed:', dRes.error);
+      var p    = pRes.data || {};
+      var docs = dRes.data || [];
+      var name = p.full_name || p.email || 'Client';
+
+      document.getElementById('__onix_cd_name').textContent = name;
+      document.getElementById('__onix_cd_sub').textContent  = docs.length + ' document' + (docs.length === 1 ? '' : 's') + ' on file';
+
+      var body = document.getElementById('__onix_cd_body');
+      if (!docs.length) {
+        body.innerHTML = '<div style="padding:18px;color:#9B9590;font-style:italic;font-size:.86rem;text-align:center">No documents on file yet.</div>';
+      } else {
+        var grouped = {};
+        docs.forEach(function(d){
+          var cat = d.category || 'other';
+          (grouped[cat] = grouped[cat] || []).push(d);
+        });
+        var html = '';
+        CATEGORY_ORDER.forEach(function(cat){
+          var list = grouped[cat];
+          if (!list || !list.length) return;
+          html +=
+            '<div style="margin-bottom:18px">' +
+              '<div style="font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;color:#1A1A1A;font-weight:700;margin-bottom:8px">' +
+                esc(CATEGORY_LABEL[cat] || cat) + ' <span style="color:#9B9590;font-weight:600;margin-left:6px">(' + list.length + ')</span>' +
+              '</div>' +
+              '<div style="display:flex;flex-direction:column;gap:6px">' +
+                list.map(function(d){
+                  var meta = (function(){
+                    try { return new Date(d.uploaded_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
+                    catch(_) { return ''; }
+                  })();
+                  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:#F8F7F5;border-left:3px solid #C0392B">' +
+                    '<div style="min-width:0">' +
+                      '<div style="font-size:.84rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(d.name) + '</div>' +
+                      '<div style="font-size:.7rem;color:#9B9590;margin-top:2px">' + meta + '</div>' +
+                    '</div>' +
+                    (d.dropbox_url
+                      ? '<a href="' + esc(d.dropbox_url) + '" target="_blank" rel="noopener" style="font-size:.66rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#C0392B;text-decoration:none;border:1px solid #C0392B;padding:6px 12px;border-radius:2px">View ↗</a>'
+                      : '<span style="font-size:.66rem;color:#9B9590">No link</span>') +
+                  '</div>';
+                }).join('') +
+              '</div>' +
+            '</div>';
+        });
+        body.innerHTML = html;
+      }
+      overlay.classList.add('show');
+    }
+
+    // Click delegation for the new buttons. Use capture so we run before
+    // any other handler that might intercept generic "View" clicks.
     document.addEventListener('click', function(e){
       var btn = e.target && e.target.closest && e.target.closest('button');
       if (!btn) return;
-      if ((btn.textContent || '').trim().toLowerCase() !== 'view') return;
       var tr = btn.closest('tr');
-      if (!tr) return;
-      // Only intercept rows in the Clients view, not other tables
-      if (!tr.closest('#view-clients')) return;
-      // First cell holds the client name (with leading initial-avatar text)
-      var cell = tr.children[0];
-      if (!cell) return;
-      var rawName = (cell.textContent || '').trim();
-      // Strip leading 2-letter avatar prefix when it duplicates the initials
-      var clean = rawName.replace(/^[A-Z]{2}(?=[A-Z][a-z])/, '');
-      e.preventDefault();
-      e.stopPropagation();
-      open(clean);
+      if (!tr || !tr.closest('#view-clients')) return;
+      var pid = tr.dataset.profileId;
+      if (!pid) return;
+      if (btn.hasAttribute('data-cl-view')) {
+        e.preventDefault(); e.stopPropagation();
+        openClientInLPModal(pid);
+      } else if (btn.hasAttribute('data-cl-docs')) {
+        e.preventDefault(); e.stopPropagation();
+        openClientDocs(pid);
+      }
     }, true);
   });
 
