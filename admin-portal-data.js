@@ -212,12 +212,69 @@
         e.preventDefault();
         const newStatus = btn.dataset.appStatus;
         btn.style.opacity = '.5';
+
+        // Approving an application should also create an active loan record,
+        // unless one was already created previously for this application.
+        if (newStatus === 'approved') {
+          const created = await ensureLoanFromApplication(app);
+          if (created === false) { btn.style.opacity = '1'; return; }
+        }
+
         const { error } = await OnixDB.client.from('loan_applications').update({ status: newStatus }).eq('id', app.id);
         if (error) { alert(error.message); btn.style.opacity = '1'; return; }
         m.classList.remove('open');
         refreshAll();
       });
     });
+  }
+
+  // Create an Active Loan row from an approved application, if one doesn't
+  // already exist. Returns true on success (or skipped because a loan already
+  // exists), false on hard failure so the caller can stop.
+  async function ensureLoanFromApplication(app) {
+    try {
+      const { data: existing, error: lookupErr } = await OnixDB.client
+        .from('loans')
+        .select('id')
+        .eq('application_id', app.id)
+        .limit(1);
+      if (lookupErr) { alert('Loan lookup failed: ' + lookupErr.message); return false; }
+      if (existing && existing.length) return true; // already created on a previous approve — no-op
+
+      // Generate a human-friendly loan id like ONX-YYYY-NNNN.
+      const year = new Date().getFullYear();
+      const { count: yearCount, error: countErr } = await OnixDB.client
+        .from('loans')
+        .select('id', { count: 'exact', head: true })
+        .gte('created_at', year + '-01-01T00:00:00Z')
+        .lt('created_at',  (year + 1) + '-01-01T00:00:00Z');
+      if (countErr) { /* non-fatal — fall back to a uuid-based id */ }
+      const seq = String((yearCount || 0) + 1).padStart(4, '0');
+      const loan_id_display = 'ONX-' + year + '-' + seq;
+
+      const today = new Date().toISOString().slice(0, 10);
+      const insertRow = {
+        application_id:   app.id,
+        user_id:          app.user_id,
+        loan_id_display,
+        principal_amount: app.amount_requested,
+        balance:          app.amount_requested,
+        status:           'active',
+        origination_date: today
+      };
+
+      const { error: insertErr } = await OnixDB.client.from('loans').insert(insertRow);
+      if (insertErr) {
+        alert('Loan creation failed: ' + insertErr.message + '\n\nApplication was not approved.');
+        return false;
+      }
+      // Soft confirmation so the admin knows the loan exists and where to finish it
+      console.log('[onix] Created loan ' + loan_id_display + ' from approved application ' + app.id);
+      return true;
+    } catch (err) {
+      alert('Unexpected error creating loan: ' + (err && err.message ? err.message : err));
+      return false;
+    }
   }
 
   function viewRaise(r) {
