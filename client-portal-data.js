@@ -216,7 +216,7 @@
     });
   }
 
-  function renderLoan(loan) {
+  function renderLoan(loan, payments) {
     // KPIs — update EVERY matching cell on the page (Dashboard + Lending view both have these labels)
     setKpi('Outstanding Loan',    loan ? fmt.money(loan.balance) : '—',
                                   loan ? (loan.loan_id_display || '') : 'No active loan');
@@ -231,9 +231,9 @@
     // Loan Details card (Lending tab) — real loan fields
     renderLoanDetails(loan);
 
-    // Repayment progress bar — derived from principal_amount vs current balance.
-    // progress = (principal - balance) / principal
-    renderRepaymentProgress(loan);
+    // Repayment progress card — bar width, percent label, paid X-of-Y, dates,
+    // and the Paid-to-Date / Remaining / Total Interest summary boxes all from real data.
+    renderRepaymentProgress(loan, payments || []);
 
     // Replace loan document rows inside the LENDING view (#view-loans) specifically,
     // and inside the Documents → "Loan" card if present.
@@ -244,9 +244,11 @@
     }
   }
 
-  // Drive the #loanProgress fill bar AND the surrounding card title
-  // (e.g. "Repayment Progress · ONX-2025-0042 · 24-month term") from real loan data.
-  function renderRepaymentProgress(loan) {
+  // Drive the Repayment Progress card on the Lending tab from real loan + payment data.
+  // Updates: card title, "Paid — X of Y months" text, percent badge, progress bar fill,
+  // origination/maturity date range, and the three summary boxes (Paid to Date,
+  // Remaining, Total Interest).
+  function renderRepaymentProgress(loan, payments) {
     const bar = document.getElementById('loanProgress');
     if (!bar) return;
 
@@ -256,32 +258,78 @@
       return;
     }
 
+    // Filter payments to this loan only (getMyPayments returns all of the user's payments)
+    const myPayments = (payments || []).filter(p => p.loan_id === loan.id);
+    const paidRows   = myPayments.filter(p => p.status === 'paid');
+
     const principal = Number(loan.principal_amount != null ? loan.principal_amount : loan.balance) || 0;
     const balance   = Number(loan.balance) || 0;
-    const paid      = Math.max(0, principal - balance);
-    const pct       = principal > 0 ? Math.max(0, Math.min(100, (paid / principal) * 100)) : 0;
+    const paidPrincipal = Math.max(0, principal - balance);
+    const pct       = principal > 0 ? Math.max(0, Math.min(100, (paidPrincipal / principal) * 100)) : 0;
 
     bar.style.width = pct.toFixed(2) + '%';
     bar.setAttribute('aria-valuenow', pct.toFixed(1));
 
-    // Update the "Repayment Progress · LOAN_ID · 24-month term" card title to match real loan
     const wrap = bar.closest('.card') || document.querySelector('#view-loans');
-    if (wrap) {
-      const title = wrap.querySelector('.card-title');
-      if (title) {
-        const idPart   = loan.loan_id_display ? ' · ' + loan.loan_id_display : '';
-        const termPart = loan.term_months != null ? ' · ' + loan.term_months + '-month term' : '';
-        title.textContent = 'Repayment Progress' + idPart + termPart;
-        if (title.hasAttribute('data-en')) title.setAttribute('data-en', title.textContent);
-      }
+    if (!wrap) return;
 
-      // Update the optional "X% paid · $Y of $Z" caption next to the bar, if present
-      const caption = wrap.querySelector('[data-progress-caption], .progress-caption');
-      if (caption) {
-        caption.textContent =
-          pct.toFixed(1) + '% paid · ' + fmt.money(paid) + ' of ' + fmt.money(principal);
+    // 1. Card title — "Repayment Progress · ONX-2025-0042 · 24-month term"
+    const title = wrap.querySelector('.card-title');
+    if (title) {
+      const idPart   = loan.loan_id_display ? ' · ' + loan.loan_id_display : '';
+      const termPart = loan.term_months != null ? ' · ' + loan.term_months + '-month term' : '';
+      title.textContent = 'Repayment Progress' + idPart + termPart;
+      if (title.hasAttribute('data-en')) title.setAttribute('data-en', title.textContent);
+    }
+
+    // 2. "Paid — X of Y months" muted span (left) + percent badge (right) above the bar.
+    //    The HTML has this as the first non-title flex row inside the card.
+    const progressWrap = wrap.querySelector('.progress-wrap');
+    const headerRow = progressWrap ? progressWrap.previousElementSibling : null;
+    if (headerRow) {
+      const spans = headerRow.querySelectorAll('span');
+      if (spans.length >= 2) {
+        const paidMonths = paidRows.length;
+        const totalMonths = loan.term_months != null ? loan.term_months : '—';
+        spans[0].textContent = 'Paid — ' + paidMonths + ' of ' + totalMonths +
+          (totalMonths === 1 ? ' month' : ' months');
+        if (spans[0].hasAttribute('data-en')) spans[0].setAttribute('data-en', spans[0].textContent);
+        spans[1].textContent = pct.toFixed(1) + '%';
       }
     }
+
+    // 3. Origination / Maturity date range below the bar (next sibling of progress-wrap)
+    const dateRow = progressWrap ? progressWrap.nextElementSibling : null;
+    if (dateRow) {
+      const dateSpans = dateRow.querySelectorAll('span');
+      const formatMonthYear = (d) => {
+        if (!d) return '—';
+        const dt = new Date(d);
+        if (isNaN(dt)) return '—';
+        return dt.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+      };
+      if (dateSpans[0]) dateSpans[0].textContent = formatMonthYear(loan.origination_date);
+      if (dateSpans[1]) dateSpans[1].textContent = formatMonthYear(loan.maturity_date);
+    }
+
+    // 4. The three summary boxes: Paid to Date / Remaining / Total Interest.
+    //    Find them by their label text (more resilient than positional indexing).
+    const totalPaid     = paidRows.reduce((s, p) => s + Number(p.amount_due || 0), 0);
+    const totalInterest = paidRows.reduce((s, p) => s + Number(p.interest   || 0), 0);
+    const summaryValues = {
+      'paid to date':   fmt.money(totalPaid),
+      'remaining':      fmt.money(balance),
+      'total interest': fmt.money(totalInterest)
+    };
+
+    const boxes = wrap.querySelectorAll('div[style*="display:grid"] > div, div[style*="display: grid"] > div');
+    boxes.forEach(box => {
+      const children = box.children;
+      if (children.length < 2) return;
+      const label = (children[0].textContent || '').trim().toLowerCase();
+      const value = summaryValues[label];
+      if (value != null) children[1].textContent = value;
+    });
   }
 
   // Find a docs container inside `scope` and refill it with these documents.
@@ -804,7 +852,7 @@
       OnixDB.getMyDistributions(userId)
     ]);
 
-    if (loan) renderLoan(loan); else renderNoLoan();
+    if (loan) renderLoan(loan, payments); else renderNoLoan();
     renderInvestments(investments);
     renderRaises(raises, userId);
     renderPayments(payments);
