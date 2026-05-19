@@ -112,13 +112,16 @@
       if (badge) { badge.textContent = 'No loan'; badge.className = 'badge'; }
       return;
     }
+    // "Principal" is the ORIGINAL loan amount (does not change as payments are made).
+    // Fall back to current balance for legacy loans without principal_amount.
+    const principal = loan.principal_amount != null ? loan.principal_amount : loan.balance;
     setDetail('Loan ID', loan.loan_id_display || '—');
-    setDetail('Principal', fmt.money(loan.balance));
+    setDetail('Principal', fmt.money(principal));
     setDetail('Term', loan.term_months != null ? loan.term_months + ' months' : '—');
     setDetail('Origination', fmt.date(loan.origination_date));
     setDetail('Maturity', fmt.date(loan.maturity_date));
     setDetail('Origination Fee', loan.origination_fee != null
-      ? loan.origination_fee + '%' + (loan.balance ? ' (' + fmt.money(Number(loan.balance) * Number(loan.origination_fee) / 100) + ')' : '')
+      ? loan.origination_fee + '%' + (principal ? ' (' + fmt.money(Number(principal) * Number(loan.origination_fee) / 100) + ')' : '')
       : '—');
     setDetail('Collateral', loan.collateral_address || '—');
     const badge = card.querySelector('.badge');
@@ -228,12 +231,56 @@
     // Loan Details card (Lending tab) — real loan fields
     renderLoanDetails(loan);
 
+    // Repayment progress bar — derived from principal_amount vs current balance.
+    // progress = (principal - balance) / principal
+    renderRepaymentProgress(loan);
+
     // Replace loan document rows inside the LENDING view (#view-loans) specifically,
     // and inside the Documents → "Loan" card if present.
     if (loan && loan.loan_documents && loan.loan_documents.length) {
       renderDocRowsInto(document.querySelector('#view-loans'), loan.loan_documents);
       // The "Loan · …" card in view-documents
       renderDocRowsIntoCard(document.querySelector('#view-documents'), 'Loan', loan.loan_documents, loan.loan_id_display);
+    }
+  }
+
+  // Drive the #loanProgress fill bar AND the surrounding card title
+  // (e.g. "Repayment Progress · ONX-2025-0042 · 24-month term") from real loan data.
+  function renderRepaymentProgress(loan) {
+    const bar = document.getElementById('loanProgress');
+    if (!bar) return;
+
+    if (!loan) {
+      bar.style.width = '0%';
+      bar.setAttribute('aria-valuenow', '0');
+      return;
+    }
+
+    const principal = Number(loan.principal_amount != null ? loan.principal_amount : loan.balance) || 0;
+    const balance   = Number(loan.balance) || 0;
+    const paid      = Math.max(0, principal - balance);
+    const pct       = principal > 0 ? Math.max(0, Math.min(100, (paid / principal) * 100)) : 0;
+
+    bar.style.width = pct.toFixed(2) + '%';
+    bar.setAttribute('aria-valuenow', pct.toFixed(1));
+
+    // Update the "Repayment Progress · LOAN_ID · 24-month term" card title to match real loan
+    const wrap = bar.closest('.card') || document.querySelector('#view-loans');
+    if (wrap) {
+      const title = wrap.querySelector('.card-title');
+      if (title) {
+        const idPart   = loan.loan_id_display ? ' · ' + loan.loan_id_display : '';
+        const termPart = loan.term_months != null ? ' · ' + loan.term_months + '-month term' : '';
+        title.textContent = 'Repayment Progress' + idPart + termPart;
+        if (title.hasAttribute('data-en')) title.setAttribute('data-en', title.textContent);
+      }
+
+      // Update the optional "X% paid · $Y of $Z" caption next to the bar, if present
+      const caption = wrap.querySelector('[data-progress-caption], .progress-caption');
+      if (caption) {
+        caption.textContent =
+          pct.toFixed(1) + '% paid · ' + fmt.money(paid) + ' of ' + fmt.money(principal);
+      }
     }
   }
 
