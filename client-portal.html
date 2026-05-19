@@ -18,7 +18,7 @@
 <!-- Supabase + Onix data layer -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase.js?v=5"></script>
-<script defer src="client-portal-data.js?v=9"></script>
+<script defer src="client-portal-data.js?v=10"></script>
 <style>
 :root{--red:#C0392B;--dark:#1A1A1A;--bg:#F8F7F5;--border:#E8E8E8;--muted:#6B6560;--light:#9B9590;--mid:#888;--caption:#bbb;--red-light:#FDF0EE;--success:#3B8B3B;--success-bg:#EBF5EB;--success-text:#2D6A2D;--warn-text:#A07818;--warn-bg:#FDF5E6;--serif:'Cormorant Garamond',Georgia,serif;--sans:'DM Sans',system-ui,sans-serif}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -260,7 +260,7 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
         <div class="kpi-grid col-4 reveal">
           <div class="kpi-cell"><div class="kpi-label" data-en="Outstanding Loan" data-es="Saldo Préstamo">Outstanding Loan</div><div class="kpi-val">$142,500</div><div class="kpi-sub">ONX-2024-0047</div></div>
           <div class="kpi-cell"><div class="kpi-label" data-en="Total Invested" data-es="Total Invertido">Total Invested</div><div class="kpi-val">$385,000</div><div class="kpi-sub" data-en="Across 4 companies" data-es="En 4 empresas">Across 4 companies</div></div>
-          <div class="kpi-cell"><div class="kpi-label" data-en="ROI Earned" data-es="ROI Ganado">ROI Earned</div><div class="kpi-val">$32,840</div><div class="kpi-sub" data-en="12.4% blended IRR" data-es="IRR mezclada 12.4%">12.4% blended IRR</div></div>
+          <div class="kpi-cell"><div class="kpi-label" data-en="ROI Expected" data-es="ROI Esperado">ROI Expected</div><div class="kpi-val">$32,840</div><div class="kpi-sub" data-en="12.4% blended IRR" data-es="IRR mezclada 12.4%">12.4% blended IRR</div></div>
           <div class="kpi-cell"><div class="kpi-label" data-en="Next Payment Due" data-es="Próximo Pago">Next Payment Due</div><div class="kpi-val sm dark">May 1, 2025</div><div class="kpi-sub" style="color:var(--red)">$4,218 · <span data-en="in 11 days" data-es="en 11 días">in 11 days</span></div></div>
         </div>
         <div class="row-2w">
@@ -423,7 +423,7 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
         <div class="page-hd reveal"><div class="eyebrow" data-en="Portfolio" data-es="Portafolio">Portfolio</div><h1 data-en="My Investments" data-es="Mis Inversiones">My Investments</h1><div class="rule"></div></div>
         <div class="kpi-grid col-2 reveal">
           <div class="kpi-cell"><div class="kpi-label" data-en="Total Invested" data-es="Total Invertido">Total Invested</div><div class="kpi-val dark">$385,000</div><div class="kpi-sub" data-en="Across 4 companies" data-es="En 4 empresas">Across 4 companies</div></div>
-          <div class="kpi-cell"><div class="kpi-label" data-en="ROI Earned" data-es="ROI Ganado">ROI Earned</div><div class="kpi-val">$32,840</div><div class="kpi-sub">12.4% <span data-en="blended IRR" data-es="IRR mezclada">blended IRR</span></div></div>
+          <div class="kpi-cell"><div class="kpi-label" data-en="ROI Expected" data-es="ROI Esperado">ROI Expected</div><div class="kpi-val">$32,840</div><div class="kpi-sub">12.4% <span data-en="blended IRR" data-es="IRR mezclada">blended IRR</span></div></div>
         </div>
         <div class="inv-grid reveal">
           <div class="inv-card" onclick="showInvestmentDetail('bari')">
@@ -432,7 +432,7 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
             <div class="inv-card-amount">$125,000</div>
             <div class="inv-card-lbl" data-en="Invested" data-es="Invertido">Invested</div>
             <div class="inv-card-footer"><span data-en="Ownership" data-es="Participación">Ownership</span><span class="v">8.5%</span></div>
-            <div class="inv-card-footer" style="border-top:none;padding-top:0;margin-top:6px"><span data-en="ROI Earned" data-es="ROI Ganado">ROI Earned</span><span class="v" style="color:var(--red)">14.2%</span></div>
+            <div class="inv-card-footer" style="border-top:none;padding-top:0;margin-top:6px"><span data-en="ROI Expected" data-es="ROI Esperado">ROI Expected</span><span class="v" style="color:var(--red)">14.2%</span></div>
             <div style="margin-top:14px;padding-top:14px;border-top:1px solid #f4f4f4;font-size:.7rem;color:var(--red);font-weight:700;letter-spacing:.06em;text-transform:uppercase">View Details →</div>
           </div>
           <div class="inv-card" onclick="showInvestmentDetail('lagrange')">
@@ -441,7 +441,7 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
             <div class="inv-card-amount">$100,000</div>
             <div class="inv-card-lbl" data-en="Invested" data-es="Invertido">Invested</div>
             <div class="inv-card-footer"><span data-en="Ownership" data-es="Participación">Ownership</span><span class="v">5.0%</span></div>
-            <div class="inv-card-footer" style="border-top:none;padding-top:0;margin-top:6px"><span data-en="ROI Earned" data-es="ROI Ganado">ROI Earned</span><span class="v" style="color:var(--red)">11.8%</span></div>
+            <div class="inv-card-footer" style="border-top:none;padding-top:0;margin-top:6px"><span data-en="ROI Expected" data-es="ROI Esperado">ROI Expected</span><span class="v" style="color:var(--red)">11.8%</span></div>
             <div style="margin-top:14px;padding-top:14px;border-top:1px solid #f4f4f4;font-size:.7rem;color:var(--red);font-weight:700;letter-spacing:.06em;text-transform:uppercase">View Details →</div>
           </div>
           <div class="inv-card" onclick="showInvestmentDetail('montrose')">
@@ -450,7 +450,7 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
             <div class="inv-card-amount">$85,000</div>
             <div class="inv-card-lbl" data-en="Invested" data-es="Invertido">Invested</div>
             <div class="inv-card-footer"><span data-en="Ownership" data-es="Participación">Ownership</span><span class="v">4.2%</span></div>
-            <div class="inv-card-footer" style="border-top:none;padding-top:0;margin-top:6px"><span data-en="ROI Earned" data-es="ROI Ganado">ROI Earned</span><span class="v" style="color:var(--red)">13.5%</span></div>
+            <div class="inv-card-footer" style="border-top:none;padding-top:0;margin-top:6px"><span data-en="ROI Expected" data-es="ROI Esperado">ROI Expected</span><span class="v" style="color:var(--red)">13.5%</span></div>
             <div style="margin-top:14px;padding-top:14px;border-top:1px solid #f4f4f4;font-size:.7rem;color:var(--red);font-weight:700;letter-spacing:.06em;text-transform:uppercase">View Details →</div>
           </div>
           <div class="inv-card" onclick="showInvestmentDetail('pasadena')">
@@ -459,7 +459,7 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
             <div class="inv-card-amount">$75,000</div>
             <div class="inv-card-lbl" data-en="Invested" data-es="Invertido">Invested</div>
             <div class="inv-card-footer"><span data-en="Ownership" data-es="Participación">Ownership</span><span class="v">3.1%</span></div>
-            <div class="inv-card-footer" style="border-top:none;padding-top:0;margin-top:6px"><span data-en="ROI Earned" data-es="ROI Ganado">ROI Earned</span><span class="v" style="color:var(--red)">10.9%</span></div>
+            <div class="inv-card-footer" style="border-top:none;padding-top:0;margin-top:6px"><span data-en="ROI Expected" data-es="ROI Esperado">ROI Expected</span><span class="v" style="color:var(--red)">10.9%</span></div>
             <div style="margin-top:14px;padding-top:14px;border-top:1px solid #f4f4f4;font-size:.7rem;color:var(--red);font-weight:700;letter-spacing:.06em;text-transform:uppercase">View Details →</div>
           </div>
         </div>
@@ -486,7 +486,7 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
         <div class="kpi-grid col-4 reveal">
           <div class="kpi-cell"><div class="kpi-label" data-en="Invested" data-es="Invertido">Invested</div><div class="kpi-val" id="det-amount">$125,000</div></div>
           <div class="kpi-cell"><div class="kpi-label" data-en="Ownership" data-es="Participación">Ownership</div><div class="kpi-val dark" id="det-ownership">8.5%</div></div>
-          <div class="kpi-cell"><div class="kpi-label" data-en="ROI Earned" data-es="ROI Ganado">ROI Earned</div><div class="kpi-val" id="det-roi">14.2%</div></div>
+          <div class="kpi-cell"><div class="kpi-label" data-en="ROI Expected" data-es="ROI Esperado">ROI Expected</div><div class="kpi-val" id="det-roi">14.2%</div></div>
           <div class="kpi-cell"><div class="kpi-label" data-en="Status" data-es="Estado">Status</div><div class="kpi-val dark" id="det-status" style="font-size:1.1rem;padding-top:6px">Active</div></div>
         </div>
         <div class="row-2w">
