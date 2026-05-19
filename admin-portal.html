@@ -969,6 +969,93 @@
   });
 
   /* =====================================================================
+     GLOBAL SEARCH — wire the .top-bar-search input to live-filter the
+     active tab's table by textContent. Most tabs are filtered directly.
+     The Applications tab has its own local search (#__onix_app_search);
+     we relay the global query into that input so the two don't fight.
+     ===================================================================== */
+  window.addEventListener('load', function(){
+    var INPUT_SEL = '.top-bar-search input';
+    var input = null;
+
+    function getInput(){
+      if (input && document.body.contains(input)) return input;
+      input = document.querySelector(INPUT_SEL);
+      return input;
+    }
+
+    function activeView(){
+      var v = document.querySelector('.view.active');
+      if (v) return v;
+      var all = document.querySelectorAll('.view');
+      for (var i=0; i<all.length; i++){
+        if (window.getComputedStyle(all[i]).display !== 'none') return all[i];
+      }
+      return null;
+    }
+
+    function applyFilter(){
+      var el = getInput();
+      if (!el) return;
+      var raw = (el.value || '').trim();
+      var q = raw.toLowerCase();
+      var av = activeView();
+      if (!av) return;
+
+      // Applications tab has its own filter — relay the query and bail.
+      if (av.id === 'view-applications') {
+        var local = document.getElementById('__onix_app_search');
+        if (local) {
+          if (local.value !== raw) {
+            local.value = raw;
+            local.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          return;
+        }
+      }
+
+      av.querySelectorAll('table').forEach(function(t){
+        var rows = t.querySelectorAll('tbody tr');
+        rows.forEach(function(tr){
+          if (!q) { tr.style.display = ''; return; }
+          var text = (tr.textContent || '').toLowerCase();
+          tr.style.display = text.indexOf(q) >= 0 ? '' : 'none';
+        });
+      });
+    }
+
+    function wireInput(){
+      var el = getInput();
+      if (!el || el.__onix_search_wired) return;
+      el.__onix_search_wired = true;
+      el.addEventListener('input', applyFilter);
+    }
+
+    var debounceT;
+    function debouncedApply(){
+      clearTimeout(debounceT);
+      debounceT = setTimeout(applyFilter, 80);
+    }
+
+    setTimeout(function(){
+      wireInput();
+      applyFilter();
+      var root = document.querySelector('.main') || document.body;
+      // Watch for view switches (class flips) and table repaints (childList).
+      // Style changes are intentionally not observed to avoid the apply-loop
+      // when we set tr.style.display.
+      new MutationObserver(function(){
+        wireInput();
+        debouncedApply();
+      }).observe(root, { subtree:true, childList:true, attributes:true, attributeFilter:['class'] });
+      // The search input itself may not exist until the bundler unpacks the
+      // top bar; keep retrying to wire it.
+      var topbar = document.querySelector('.top-bar') || document.body;
+      new MutationObserver(wireInput).observe(topbar, { subtree:true, childList:true });
+    }, 1400);
+  });
+
+  /* =====================================================================
      DOCUMENTS VIEW — replace the bundle's Documents page with a 3-level
      browser:  Root (Investments / Onix Docs)  →  Names  →  Files
      ===================================================================== */
