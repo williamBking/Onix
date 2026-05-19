@@ -211,17 +211,28 @@
       btn.addEventListener('click', async (e) => {
         e.preventDefault();
         const newStatus = btn.dataset.appStatus;
+        const prevStatus = app.status;
         btn.style.opacity = '.5';
 
         // Approving an application should also create an active loan record,
         // unless one was already created previously for this application.
-        if (newStatus === 'approved') {
+        if (newStatus === 'approved' && prevStatus !== 'approved') {
           const created = await ensureLoanFromApplication(app);
           if (created === false) { btn.style.opacity = '1'; return; }
         }
 
+        // Un-approving (pending/reviewed/rejected) should remove the loan that
+        // was created by the previous approve, so Active Loans stays accurate.
+        if (prevStatus === 'approved' && newStatus !== 'approved') {
+          const removed = await removeLoanFromApplication(app);
+          if (removed === false) { btn.style.opacity = '1'; return; }
+        }
+
         const { error } = await OnixDB.client.from('loan_applications').update({ status: newStatus }).eq('id', app.id);
         if (error) { alert(error.message); btn.style.opacity = '1'; return; }
+        // Keep the local copy in sync so a follow-up click in the same modal
+        // sees the latest status (prevents accidental duplicate work).
+        app.status = newStatus;
         m.classList.remove('open');
         refreshAll();
       });
@@ -273,6 +284,47 @@
       return true;
     } catch (err) {
       alert('Unexpected error creating loan: ' + (err && err.message ? err.message : err));
+      return false;
+    }
+  }
+
+  // Reverse of ensureLoanFromApplication: when admin moves an approved
+  // application back to pending / reviewed / rejected, remove the auto-created
+  // loan so Active Loans reflects reality. If the loan already has recorded
+  // payments, refuse to delete and surface a clear warning — those payments
+  // represent real money movement and should be handled deliberately by admin.
+  async function removeLoanFromApplication(app) {
+    try {
+      const { data: loans, error: lookupErr } = await OnixDB.client
+        .from('loans')
+        .select('id, loan_id_display')
+        .eq('application_id', app.id);
+      if (lookupErr) { alert('Loan lookup failed: ' + lookupErr.message); return false; }
+      if (!loans || !loans.length) return true; // nothing to remove
+
+      // Check for payment activity on any of those loans
+      const loanIds = loans.map(l => l.id);
+      const { count: paymentCount, error: payErr } = await OnixDB.client
+        .from('loan_payments')
+        .select('id', { count: 'exact', head: true })
+        .in('loan_id', loanIds);
+      if (payErr) { alert('Payment check failed: ' + payErr.message); return false; }
+
+      if (paymentCount && paymentCount > 0) {
+        alert(
+          'Cannot change status — the loan created from this application already has ' +
+          paymentCount + ' payment record' + (paymentCount === 1 ? '' : 's') + '.\n\n' +
+          'Delete the payments or close the loan manually first.'
+        );
+        return false;
+      }
+
+      const { error: delErr } = await OnixDB.client.from('loans').delete().in('id', loanIds);
+      if (delErr) { alert('Loan removal failed: ' + delErr.message); return false; }
+      console.log('[onix] Removed ' + loans.length + ' loan(s) tied to application ' + app.id);
+      return true;
+    } catch (err) {
+      alert('Unexpected error removing loan: ' + (err && err.message ? err.message : err));
       return false;
     }
   }
