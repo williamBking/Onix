@@ -767,21 +767,30 @@
       table.dataset.roleSplit = '';
     }
 
-    // Paint on initial Clients view show + whenever the tab becomes active.
+    // Poll until view-clients exists in the DOM (the Bolt bundler unpacks
+    // the template asynchronously), then paint once. We deliberately do NOT
+    // require .active — the bundle may toggle views via inline display
+    // styles rather than classes, and we want the table ready by the time
+    // the admin actually navigates to it.
     var painted = false;
-    function maybePaint(){
-      var view = document.getElementById('view-clients');
-      if (!view || !view.classList.contains('active')) return;
+    function tryPaint(){
       if (painted) return;
+      var view = document.getElementById('view-clients');
+      if (!view) return;
+      var table = view.querySelector('table.tbl');
+      if (!table || !table.querySelector('tbody')) return;
       painted = true;
-      loadClientsAndPaint().catch(function(e){ console.error('[onix-clients] paint failed:', e); painted = false; });
+      loadClientsAndPaint().catch(function(e){
+        console.error('[onix-clients] paint failed:', e);
+        painted = false;
+      });
     }
-    setTimeout(function(){
-      maybePaint();
-      var mo = new MutationObserver(maybePaint);
-      var root = document.querySelector('.main') || document.body;
-      mo.observe(root, {subtree:true, childList:true, attributes:true, attributeFilter:['class']});
-    }, 1500);
+    var attempts = 0;
+    (function poll(){
+      if (painted || attempts++ > 40) return; // ~12s max
+      tryPaint();
+      setTimeout(poll, 300);
+    })();
 
     // ---------- View button → reuse the Investors LP Profile modal ----------
     function ivCell(label, val, full){
