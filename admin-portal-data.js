@@ -633,17 +633,37 @@
     return true;
   }
 
-  function paintClientsView(clients) {
+  function paintClientsView(clients, loans, investments) {
     const v = findView(STATIC_VIEWS.clients); if (!v) return false;
     if (alreadyPainted(v)) return true;
+    // Per-client loan / investment counts so the admin can see activity at a glance.
+    const loanCounts = {}, invCounts = {};
+    (loans || []).forEach(l => { loanCounts[l.user_id] = (loanCounts[l.user_id] || 0) + 1; });
+    (investments || []).forEach(i => { invCounts[i.user_id] = (invCounts[i.user_id] || 0) + 1; });
+    // Text-form of the Borrower / LP state — splitRoleColumn (admin-portal.html)
+    // reads this textContent to seed the checkbox state when it rewrites the
+    // Role column into two click-to-toggle cells.
+    const roleText = (c) => {
+      const b = !!c.is_borrower, l = !!c.is_lp;
+      if (b && l) return 'Borrower + LP';
+      if (b) return 'Borrower';
+      if (l) return 'LP';
+      return '—';
+    };
     const rows = clients.length ? clients.map(c => `
-      <tr>
+      <tr data-profile-id="${esc(c.id)}">
         <td>${esc(c.full_name || '—')}</td>
         <td>${esc(c.email)}</td>
-        <td>${esc(c.role)}</td>
+        <td>${esc(roleText(c))}</td>
+        <td>${loanCounts[c.id] || '—'}</td>
+        <td>${invCounts[c.id] || '—'}</td>
         <td><span class="oac-badge ${esc(c.status || '')}">${esc(c.status || '—')}</span></td>
         <td>${fmt.date(c.created_at)}</td>
-      </tr>`).join('') : '<tr><td colspan="5" class="oac-empty">No clients yet.</td></tr>';
+        <td style="white-space:nowrap">
+          <button class="oac-btn outline" data-cl-view="1" type="button">View</button>
+          <button class="oac-btn outline" data-cl-docs="1" type="button">Documents</button>
+        </td>
+      </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No clients yet.</td></tr>';
     const newClientBtn = `
       <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
         <a href="#" id="oac-new-client-btn" style="display:inline-block;background:#C0392B;color:#fff;padding:10px 18px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">+ New Client</a>
@@ -651,7 +671,7 @@
     v.innerHTML = viewShell('Clients', 'All accounts in the system',
       newClientBtn +
       `<table class="oac-table" style="width:100%"><thead><tr>
-        <th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Joined</th>
+        <th>Name</th><th>Email</th><th>Role</th><th>Loans</th><th>Investments</th><th>Status</th><th>Joined</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>`);
     const btn = v.querySelector('#oac-new-client-btn');
     if (btn) btn.addEventListener('click', (e) => { e.preventDefault(); openNewClientModal(); });
@@ -1362,7 +1382,7 @@
     document.querySelectorAll('.' + LIVE_MARKER).forEach(el => el.classList.remove(LIVE_MARKER));
     function tryAll() {
       paintDashboardView(data);
-      paintClientsView(data.clients);
+      paintClientsView(data.clients, data.loans, data.investments);
       paintLoansView(data.loans);
       paintInvestmentsView(data.investments);
       paintRaisesView(data.raises);
