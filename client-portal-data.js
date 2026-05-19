@@ -415,7 +415,7 @@
 
   // ---------- Investments ----------
   function renderInvestments(investments) {
-    // KPIs: Total Invested / ROI Earned / Across N companies
+    // KPIs: Total Invested / ROI Expected / Across N companies
     renderInvestmentKpis(investments);
     // Documents card on the My Documents view
     renderInvestmentDocs(investments);
@@ -475,12 +475,12 @@
       ventureCount === 1 ? 'Across 1 company' : `Across ${ventureCount} companies`);
 
     if (projectedDollars > 0) {
-      setKpi('ROI Earned',
+      setKpi('ROI Expected',
         fmt.money(projectedDollars),
         { html: (blendedReturn != null ? fmt.pct(blendedReturn) : '—') + ' <span>blended IRR</span>' });
     } else {
       // No data to compute — show a neutral state instead of fake numbers
-      setKpi('ROI Earned', '—', 'No realized return yet');
+      setKpi('ROI Expected', '—', 'No realized return yet');
     }
   }
 
