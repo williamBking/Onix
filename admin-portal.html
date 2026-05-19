@@ -2783,51 +2783,16 @@
       return '<div class="onix-info-cell' + (full?' full':'') + '"><div class="ic-label">' + label + '</div><div class="ic-val">' + (val||'—') + '</div></div>';
     }
 
-    // Inject View buttons into investor table rows
-    function injectInvestorViewBtns(){
-      var view = document.getElementById('view-investors');
-      if (!view) return;
-      var tbody = view.querySelector('table tbody');
-      if (!tbody) return;
-      [].slice.call(tbody.querySelectorAll('tr')).forEach(function(tr){
-        if (tr.querySelector('[data-inv-view]')) return;
-        var lastTd = tr.lastElementChild;
-        if (!lastTd) return;
-        // Add a tbl-actions cell if not present
-        if (!tr.querySelector('.tbl-actions')){
-          var td = document.createElement('td');
-          td.className = 'tbl-actions';
-          tr.appendChild(td);
-          lastTd = td;
-        }
-        var btn = document.createElement('button');
-        btn.className = 'tbl-btn';
-        btn.setAttribute('data-inv-view','1');
-        btn.textContent = 'View';
-        lastTd.appendChild(btn);
-      });
-    }
-
-    var mo = new MutationObserver(function(){
-      clearTimeout(window.__onix_inv_view_t);
-      window.__onix_inv_view_t = setTimeout(injectInvestorViewBtns, 100);
-    });
+    // NOTE: Removed legacy `injectInvestorViewBtns()` which appended a second
+    // grey "View" button to every investor row via MutationObserver. The live
+    // Investors table is now rendered by paintInvestmentsView() in
+    // admin-portal-data.js, which already includes the red "View" button (it
+    // uses data-view-static-inv and opens the real viewInvestment() modal).
+    // The old click handler that listened on `button[data-inv-view]` is no
+    // longer needed either, since no such buttons are added anymore.
     setTimeout(function(){
       buildInvestorModal();
-      injectInvestorViewBtns();
-      var root = document.querySelector('.main') || document.body;
-      mo.observe(root, {subtree:true, childList:true, attributes:true, attributeFilter:['class']});
     }, 1700);
-
-    document.addEventListener('click', function(e){
-      var btn = e.target && e.target.closest && e.target.closest('button[data-inv-view]');
-      if (!btn) return;
-      var tr = btn.closest('tr');
-      if (!tr) return;
-      e.preventDefault(); e.stopPropagation();
-      var nameRaw = (tr.children[0] && tr.children[0].textContent || '').trim().replace(/^[A-Z]{2}(?=[A-Z][a-z])/,'').trim();
-      openInvestor(nameRaw);
-    }, true);
   });
 
   /* =====================================================================
