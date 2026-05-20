@@ -624,6 +624,7 @@
   //   view-dashboard, view-clients, view-investors, view-loans, view-raises,
   //   view-applications, view-review, view-documents, view-reports, view-users
   const STATIC_VIEWS = {
+    dashboard:   ['view-dashboard'],
     clients:     ['view-clients', 'view-users'],
     loans:       ['view-loans'],
     investments: ['view-investors'],
@@ -1489,6 +1490,7 @@
     // Invalidate any previously-painted markers so we re-paint with fresh data
     document.querySelectorAll('.' + LIVE_MARKER).forEach(el => el.classList.remove(LIVE_MARKER));
     function tryAll() {
+      paintDashboardView(data);
       paintClientsView(data.clients, data.loans, data.investments);
       paintLoansView(data.loans);
       paintInvestmentsView(data.investments);
