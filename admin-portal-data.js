@@ -511,17 +511,19 @@
 
     el.innerHTML = `
       <table class="oac-table"><thead><tr>
-        <th>Client</th><th>Email</th><th>Raise</th><th>Min</th><th>Expressed</th><th>Status</th><th style="text-align:right">Actions</th>
+        <th>Client</th><th>Raise</th><th>Amount</th><th>Contact</th><th>Notes</th><th>Expressed</th><th>Status</th><th style="text-align:right">Actions</th>
       </tr></thead><tbody>${list.map(i => {
         const p = i.profiles || {};
         const r = i.raises || {};
         const canAct = i.status === 'new';
+        const contactBits = [i.contact_method, i.best_time].filter(Boolean).join(' · ');
         return `
         <tr data-int-id="${esc(i.id)}">
-          <td>${esc(p.full_name || '—')}</td>
-          <td>${esc(p.email || '—')}</td>
-          <td>${esc(r.venture_name || '—')}${r.venture_type ? ` <span style="color:#888;font-size:.78rem">· ${esc(r.venture_type)}</span>` : ''}</td>
-          <td>${r.minimum_investment != null ? fmt.money(r.minimum_investment) : '—'}</td>
+          <td><div style="font-weight:600">${esc(p.full_name || '—')}</div><div style="font-size:.74rem;color:#888">${esc(p.email || '—')}</div></td>
+          <td>${esc(r.venture_name || '—')}${r.venture_type ? `<div style="font-size:.74rem;color:#888">${esc(r.venture_type)}</div>` : ''}</td>
+          <td>${i.amount != null ? fmt.money(i.amount) : '—'}${r.minimum_investment != null ? `<div style="font-size:.74rem;color:#888">min ${fmt.money(r.minimum_investment)}</div>` : ''}</td>
+          <td style="font-size:.82rem">${contactBits ? esc(contactBits) : '<span style="color:#9B9590">—</span>'}</td>
+          <td style="font-size:.82rem;max-width:240px">${i.notes ? esc(i.notes) : '<span style="color:#9B9590">—</span>'}</td>
           <td>${fmt.date(i.submitted_at)}</td>
           <td>${statusBadge(i.status)}</td>
           <td style="text-align:right;white-space:nowrap">
