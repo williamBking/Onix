@@ -928,83 +928,83 @@
   function paintDashboardView(data) {
     const v = findDashboardView();
     if (!v) { console.warn('[onix-admin] dashboard view not found in DOM'); return false; }
-    if (alreadyPainted(v)) return true;
-    console.log('[onix-admin] painting dashboard into', v.id || v.tagName);
+    // Surgical updates only — preserve the original demo layout, just swap numbers + activity.
     const { clients, loans, investments, raises, applications, payments, distributions } = data;
     const activeLoans       = loans.filter(l => l.status === 'active');
     const activeInvestments = investments.filter(i => i.status === 'active');
     const openRaises        = raises.filter(r => r.status === 'open');
-    const pendingClients    = clients.filter(c => c.status === 'pending');
     const pendingApps       = applications.filter(a => !a.status || a.status === 'pending');
-
     const loanPortfolio = activeLoans.reduce((s, l) => s + Number(l.balance || 0), 0);
     const totalDeposits = activeInvestments
       .filter(i => i.venture_type === 'deposit')
       .reduce((s, i) => s + Number(i.amount_invested || 0), 0);
-    const totalEquity = activeInvestments
-      .filter(i => i.venture_type !== 'deposit')
-      .reduce((s, i) => s + Number(i.amount_invested || 0), 0);
+    const ltv = (loanPortfolio + totalDeposits > 0)
+      ? Math.round((loanPortfolio / (loanPortfolio + totalDeposits)) * 100) + '%'
+      : '—';
+    const updates = {
+      'Loan Portfolio':       fmt.money(loanPortfolio),
+      'Total Deposits':       fmt.money(totalDeposits),
+      'Portfolio LTV':        ltv,
+      'Active Clients':       String(clients.filter(c => c.role === 'client' && c.status === 'active').length),
+      'Active Loans':         String(activeLoans.length),
+      'Pending Applications': String(pendingApps.length),
+      'Open Raises':          String(openRaises.length)
+    };
+    Object.entries(updates).forEach(([label, value]) => {
+      v.querySelectorAll('[data-en]').forEach(el => {
+        if (el.getAttribute('data-en') === label) {
+          const valueEl = el.nextElementSibling;
+          if (valueEl && valueEl.textContent !== value) valueEl.textContent = value;
+        }
+      });
+    });
 
-    // KPI grid
-    const kpi = (label, val, sub) => `
-      <div style="background:#fff;border:1px solid #E8E8E8;border-top:3px solid #C0392B;padding:24px 22px">
-        <div style="font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:#888;font-weight:600;margin-bottom:8px">${esc(label)}</div>
-        <div style="font-family:'Cormorant Garamond',serif;font-size:1.9rem;color:#C0392B;font-weight:500;line-height:1">${esc(val)}</div>
-        ${sub ? `<div style="font-size:.72rem;color:#888;margin-top:6px">${esc(sub)}</div>` : ''}
-      </div>`;
-
-    // Recent activity feed — pull from multiple sources, sort by timestamp desc
-    const events = [];
-    applications.slice(0, 10).forEach(a => events.push({
-      ts: new Date(a.submitted_at),
-      label: 'Loan application submitted',
-      detail: ((a.profiles && (a.profiles.full_name || a.profiles.email)) || 'Client') + ' · ' + fmt.money(a.amount_requested),
-      kind: 'application'
-    }));
-    clients.slice(0, 10).forEach(c => events.push({
-      ts: new Date(c.created_at),
-      label: c.status === 'pending' ? 'New client signed up (pending)' : 'Client added',
-      detail: (c.full_name || c.email),
-      kind: 'client'
-    }));
-    payments.filter(p => p.paid_at).slice(0, 10).forEach(p => events.push({
-      ts: new Date(p.paid_at),
-      label: 'Loan payment received',
-      detail: ((p.loans && p.loans.profiles && p.loans.profiles.full_name) || 'Client') + ' · ' + fmt.money(p.amount_due),
-      kind: 'payment'
-    }));
-    distributions.slice(0, 10).forEach(d => events.push({
-      ts: new Date(d.paid_at),
-      label: 'Distribution paid',
-      detail: ((d.investments && d.investments.profiles && d.investments.profiles.full_name) || 'Client') + ' · ' + fmt.money(d.amount) + ' · ' + ((d.investments && d.investments.venture_name) || ''),
-      kind: 'distribution'
-    }));
-    events.sort((a, b) => b.ts - a.ts);
-    const activityRows = events.slice(0, 12).map(e => `
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid #f4f4f4">
-        <div>
-          <div style="font-size:.88rem;font-weight:600;color:#1A1A1A">${esc(e.label)}</div>
-          <div style="font-size:.78rem;color:#888;margin-top:2px">${esc(e.detail)}</div>
-        </div>
-        <div style="font-size:.72rem;color:#888;white-space:nowrap">${esc(fmt.date(e.ts))}</div>
-      </div>`).join('');
-
-    v.innerHTML = viewShell('Admin Dashboard', 'Portfolio snapshot, pending work, and recent activity',
-      `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px">
-        ${kpi('Loan Portfolio', fmt.money(loanPortfolio), activeLoans.length + ' active loan' + (activeLoans.length === 1 ? '' : 's'))}
-        ${kpi('Total Deposits', fmt.money(totalDeposits), 'Onix Finance deposit instrument')}
-        ${kpi('Equity Investments', fmt.money(totalEquity), activeInvestments.filter(i => i.venture_type !== 'deposit').length + ' position' + (activeInvestments.filter(i => i.venture_type !== 'deposit').length === 1 ? '' : 's'))}
-        ${kpi('Active Clients', String(clients.filter(c => c.role === 'client' && c.status === 'active').length), clients.length + ' total accounts')}
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px">
-        ${kpi('Pending Approvals', String(pendingClients.length), pendingClients.length ? 'Review in Clients tab' : 'All caught up')}
-        ${kpi('Applications', String(applications.length), pendingApps.length + ' pending review')}
-        ${kpi('Open Raises', String(openRaises.length), fmt.money(openRaises.reduce((s, r) => s + Number(r.amount_raised || 0), 0)) + ' raised')}
-        ${kpi('Distributions Paid', String(distributions.length), 'All-time count')}
-      </div>
-      <h2 style="font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:1.4rem;margin:24px 0 4px">Recent Activity</h2>
-      <div style="width:40px;height:2px;background:#C0392B;margin-bottom:14px"></div>
-      <div>${activityRows || '<div style="padding:18px 0;color:#888;font-style:italic">No activity yet.</div>'}</div>`);
+    // Replace activity-item rows with live events (preserve container + card chrome).
+    const firstActivity = v.querySelector('.activity-item');
+    if (firstActivity) {
+      const container = firstActivity.parentElement;
+      const events = [];
+      applications.slice(0, 6).forEach(a => events.push({
+        ts: new Date(a.submitted_at),
+        title: 'New application from ' + ((a.profiles && (a.profiles.full_name || a.profiles.email)) || 'a client'),
+        meta:  fmt.money(a.amount_requested) + ' · ' + fmt.date(a.submitted_at),
+        dot:   ''
+      }));
+      payments.filter(p => p.paid_at).slice(0, 6).forEach(p => events.push({
+        ts: new Date(p.paid_at),
+        title: 'Payment received — ' + ((p.loans && p.loans.loan_id_display) || 'loan'),
+        meta:  fmt.money(p.amount_due) + ' · ' + ((p.loans && p.loans.profiles && p.loans.profiles.full_name) || 'client') + ' · ' + fmt.date(p.paid_at),
+        dot:   ''
+      }));
+      distributions.slice(0, 6).forEach(d => events.push({
+        ts: new Date(d.paid_at),
+        title: 'Distribution paid — ' + ((d.investments && d.investments.venture_name) || 'venture'),
+        meta:  fmt.money(d.amount) + ' · ' + ((d.investments && d.investments.profiles && d.investments.profiles.full_name) || 'client') + ' · ' + fmt.date(d.paid_at),
+        dot:   'gray'
+      }));
+      clients.slice(0, 6).forEach(c => events.push({
+        ts: new Date(c.created_at),
+        title: c.status === 'pending' ? 'Signup pending approval — ' + (c.full_name || c.email)
+                                      : 'Client added — ' + (c.full_name || c.email),
+        meta:  c.email + ' · ' + fmt.date(c.created_at),
+        dot:   c.status === 'pending' ? '' : 'gray'
+      }));
+      events.sort((a, b) => b.ts - a.ts);
+      const top = events.slice(0, 10);
+      container.querySelectorAll('.activity-item').forEach(el => el.remove());
+      top.forEach(e => {
+        const item = document.createElement('div');
+        item.className = 'activity-item';
+        item.innerHTML = `<div class="activity-dot${e.dot ? ' ' + e.dot : ''}"></div><div><div class="activity-title">${esc(e.title)}</div><div class="activity-meta">${esc(e.meta)}</div></div>`;
+        container.appendChild(item);
+      });
+      if (!top.length) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'padding:14px 0;color:#888;font-size:.85rem;font-style:italic';
+        empty.textContent = 'No recent activity.';
+        container.appendChild(empty);
+      }
+    }
     return true;
   }
 
