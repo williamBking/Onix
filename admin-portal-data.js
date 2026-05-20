@@ -536,18 +536,129 @@
         </tr>`;
       }).join('')}</tbody></table>`;
 
+    // Build an id->interest lookup so the click handler has the full row
+    // (raise + amount + previous status), not just the id.
+    const byId = new Map(list.map(i => [i.id, i]));
+
     el.querySelectorAll('[data-int-act]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id  = btn.dataset.intId;
         const act = btn.dataset.intAct;
-        const status = act === 'approve' ? 'approved' : 'declined';
+        const interest = byId.get(id);
+        if (!interest) return;
+        const newStatus  = act === 'approve' ? 'approved' : 'declined';
+        const prevStatus = interest.status;
         const row = el.querySelector(`tr[data-int-id="${id}"]`);
         if (row) row.querySelectorAll('button').forEach(b => b.disabled = true);
-        const ok = await OnixDB.setRaiseInterestStatus(id, status);
+
+        // Approving creates the matching Investment row (parallel to how
+        // approving a loan application creates an Active Loan).
+        if (newStatus === 'approved' && prevStatus !== 'approved') {
+          const created = await ensureInvestmentFromInterest(interest);
+          if (created === false) {
+            if (row) row.querySelectorAll('button').forEach(b => b.disabled = false);
+            return;
+          }
+        }
+        // Un-approving (decline) removes the auto-created investment, unless
+        // it already has distribution activity — in which case refuse so the
+        // admin handles it deliberately.
+        if (prevStatus === 'approved' && newStatus !== 'approved') {
+          const removed = await removeInvestmentFromInterest(interest);
+          if (removed === false) {
+            if (row) row.querySelectorAll('button').forEach(b => b.disabled = false);
+            return;
+          }
+        }
+
+        const ok = await OnixDB.setRaiseInterestStatus(id, newStatus);
         if (ok) { refreshAll(); }
         else { alert('Could not ' + act + ' interest.'); if (row) row.querySelectorAll('button').forEach(b => b.disabled = false); }
       });
     });
+  }
+
+  // Create an Investment row from an approved interest, if one doesn't
+  // already exist. Returns true on success or skip-because-exists, false on
+  // hard failure so the caller can stop.
+  async function ensureInvestmentFromInterest(interest) {
+    try {
+      const { data: existing, error: lookupErr } = await OnixDB.client
+        .from('investments')
+        .select('id')
+        .eq('interest_id', interest.id)
+        .limit(1);
+      if (lookupErr) { alert('Investment lookup failed: ' + lookupErr.message); return false; }
+      if (existing && existing.length) return true;
+
+      const r = interest.raises || {};
+      // Use the high end of the projected range as the expected return; fall
+      // back to the low end, then null. The admin can edit this later via the
+      // existing Edit modal on the investments table.
+      const expected =
+        r.projected_return_max != null ? r.projected_return_max :
+        r.projected_return_min != null ? r.projected_return_min : null;
+
+      const insertRow = {
+        interest_id:     interest.id,
+        user_id:         interest.user_id,
+        venture_name:    r.venture_name || 'Unnamed Investment',
+        venture_type:    r.venture_type || null,
+        amount_invested: interest.amount != null ? interest.amount : null,
+        expected_return: expected,
+        start_date:      new Date().toISOString().slice(0, 10),
+        status:          'active'
+      };
+
+      const { error: insertErr } = await OnixDB.client.from('investments').insert(insertRow);
+      if (insertErr) {
+        alert('Investment creation failed: ' + insertErr.message + '\n\nInterest was not approved.');
+        return false;
+      }
+      console.log('[onix] Created investment from approved interest ' + interest.id);
+      return true;
+    } catch (err) {
+      alert('Unexpected error creating investment: ' + (err && err.message ? err.message : err));
+      return false;
+    }
+  }
+
+  // Reverse: when admin moves an approved interest to declined (or back to
+  // 'new'), drop the investment that was created. Safety guard: refuse if
+  // that investment has any distribution activity.
+  async function removeInvestmentFromInterest(interest) {
+    try {
+      const { data: invs, error: lookupErr } = await OnixDB.client
+        .from('investments')
+        .select('id, venture_name')
+        .eq('interest_id', interest.id);
+      if (lookupErr) { alert('Investment lookup failed: ' + lookupErr.message); return false; }
+      if (!invs || !invs.length) return true;
+
+      const invIds = invs.map(i => i.id);
+      // distributions table exists in this schema — check for any rows tied to these investments
+      const { count: distCount, error: distErr } = await OnixDB.client
+        .from('distributions')
+        .select('id', { count: 'exact', head: true })
+        .in('investment_id', invIds);
+      if (distErr) { alert('Distribution check failed: ' + distErr.message); return false; }
+      if (distCount && distCount > 0) {
+        alert(
+          'Cannot change status — the investment created from this interest already has ' +
+          distCount + ' distribution record' + (distCount === 1 ? '' : 's') + '.\n\n' +
+          'Delete the distributions or close the investment manually first.'
+        );
+        return false;
+      }
+
+      const { error: delErr } = await OnixDB.client.from('investments').delete().in('id', invIds);
+      if (delErr) { alert('Investment removal failed: ' + delErr.message); return false; }
+      console.log('[onix] Removed ' + invs.length + ' investment(s) tied to interest ' + interest.id);
+      return true;
+    } catch (err) {
+      alert('Unexpected error removing investment: ' + (err && err.message ? err.message : err));
+      return false;
+    }
   }
 
   function renderApprovals(pending) {
