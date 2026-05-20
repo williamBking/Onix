@@ -17,8 +17,8 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <!-- Supabase + Onix data layer -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="supabase.js?v=8"></script>
-<script defer src="client-portal-data.js?v=10"></script>
+<script src="supabase.js?v=9"></script>
+<script defer src="client-portal-data.js?v=11"></script>
 <style>
 :root{--red:#C0392B;--dark:#1A1A1A;--bg:#F8F7F5;--border:#E8E8E8;--muted:#6B6560;--light:#9B9590;--mid:#888;--caption:#bbb;--red-light:#FDF0EE;--success:#3B8B3B;--success-bg:#EBF5EB;--success-text:#2D6A2D;--warn-text:#A07818;--warn-bg:#FDF5E6;--serif:'Cormorant Garamond',Georgia,serif;--sans:'DM Sans',system-ui,sans-serif}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -987,20 +987,56 @@ function buildInterestModal() {
       '</div>' +
     '</div>'
   );
-  document.getElementById('cp-int-submit').addEventListener('click', function(){
-    var amt = document.getElementById('cp-int-amount').value;
-    var opp = document.getElementById('cp-int-sub').dataset.opp || 'Opportunity';
+  document.getElementById('cp-int-submit').addEventListener('click', async function(){
+    var amtEl = document.getElementById('cp-int-amount');
+    var amt = amtEl.value;
+    var sub = document.getElementById('cp-int-sub');
+    var opp = sub.dataset.opp || 'Opportunity';
+    var raiseId = sub.dataset.raiseId || '';
     if (!amt || parseFloat(amt) <= 0) { cpToast('Please enter an investment amount.', '#C0392B'); return; }
-    cpToast('Your interest in <b>' + opp + '</b> has been sent to the Onix team.<br>We\'ll be in touch within 24 hours.', '#3B8B3B');
+
+    var submitBtn = document.getElementById('cp-int-submit');
+    submitBtn.disabled = true;
+    var originalText = submitBtn.textContent;
+    submitBtn.textContent = 'Submitting…';
+
+    // Persist to Supabase if we have OnixDB + a raise id from the data layer.
+    // Fall back to the demo toast if for some reason the data layer hasn't run.
+    var saved = false;
+    if (window.OnixDB && raiseId) {
+      var session = await OnixDB.getSession();
+      if (session && session.user) {
+        saved = await OnixDB.submitRaiseInterest(session.user.id, raiseId, {
+          amount:         parseFloat(amt),
+          notes:          document.getElementById('cp-int-notes').value,
+          contact_method: document.getElementById('cp-int-contact').value,
+          best_time:      document.getElementById('cp-int-time').value
+        });
+      }
+    }
+
+    submitBtn.disabled = false;
+    submitBtn.textContent = originalText;
+
+    if (saved) {
+      cpToast('Your interest in <b>' + opp + '</b> has been sent to the Onix team.<br>We\'ll be in touch within 24 hours.', '#3B8B3B');
+    } else if (raiseId) {
+      cpToast('Could not record your interest. Please try again or contact Onix directly.', '#C0392B');
+      return;
+    } else {
+      // No raise id available — keep the old behavior so demo flows still feel responsive
+      cpToast('Your interest in <b>' + opp + '</b> has been sent to the Onix team.<br>We\'ll be in touch within 24 hours.', '#3B8B3B');
+    }
     cpClose('cp-interest-modal');
   });
 }
 
-function openInterest(name, min) {
+function openInterest(name, min, raiseId) {
   buildInterestModal();
   var sub = document.getElementById('cp-int-sub');
   sub.textContent = name + ' — Minimum: ' + min;
   sub.dataset.opp = name;
+  if (raiseId) sub.dataset.raiseId = raiseId; else delete sub.dataset.raiseId;
   document.getElementById('cp-int-banner').innerHTML = 'Your relationship manager <b>Elena Vargas</b> will review your interest and reach out within 24 hours to discuss next steps and subscription documents.';
   document.getElementById('cp-int-amount').value = '';
   document.getElementById('cp-int-notes').value = '';
@@ -1025,10 +1061,14 @@ document.addEventListener('click', function(e){
   if (/express\s+interest/i.test(txt)) {
     var card2 = btn.closest('.opp-card');
     var name2 = card2 ? (card2.querySelector('.opp-name')||{}).textContent||'' : '';
-    var min2 = card2 ? (card2.querySelector('.opp-stat-val:last-of-type, .opp-stat-val')||{}).textContent||'' : '';
+    var min2  = card2 ? (card2.querySelector('.opp-stat-val:last-of-type, .opp-stat-val')||{}).textContent||'' : '';
+    // The data-driven cards put the raise id on the Express Interest button
+    // itself (data-raise-interest="UUID"). Thread it into the modal so submit
+    // can actually persist to Supabase instead of just showing a toast.
+    var raiseId = btn.getAttribute('data-raise-interest') || '';
     e.preventDefault(); e.stopPropagation();
     buildInterestModal();
-    openInterest(name2.trim(), min2);
+    openInterest(name2.trim(), min2, raiseId);
   }
 }, true);
 

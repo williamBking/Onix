@@ -138,10 +138,19 @@ async function submitLoanApplication(userId, formData) {
   return true
 }
 
-async function submitRaiseInterest(userId, raiseId) {
-  const { data, error } = await _supabase
+async function submitRaiseInterest(userId, raiseId, extras) {
+  const e = extras || {}
+  const row = {
+    user_id: userId,
+    raise_id: raiseId,
+    amount:         e.amount         != null ? Number(e.amount) : null,
+    notes:          e.notes          || null,
+    contact_method: e.contact_method || null,
+    best_time:      e.best_time      || null
+  }
+  const { error } = await _supabase
     .from('raise_interests')
-    .insert([{ user_id: userId, raise_id: raiseId }])
+    .insert([row])
   if (error) { console.error('Interest submit error:', error); return false }
   return true
 }
