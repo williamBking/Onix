@@ -661,9 +661,24 @@
     return !!(viewEl && viewEl.querySelector('.' + LIVE_MARKER));
   }
 
+  function findDashboardView() {
+    // Try the known id list first
+    const direct = findView(STATIC_VIEWS.dashboard);
+    if (direct) return direct;
+    // Fallback: scan visible .view elements whose heading mentions Dashboard / Overview
+    const views = document.querySelectorAll('.view, [id^="view-"], main, section');
+    for (const v of views) {
+      const h = v.querySelector('h1, h2, .page-title, .eyebrow');
+      if (h && /dashboard|overview|welcome/i.test((h.textContent || ''))) return v;
+    }
+    return null;
+  }
+
   function paintDashboardView(data) {
-    const v = findView(STATIC_VIEWS.dashboard); if (!v) return false;
+    const v = findDashboardView();
+    if (!v) { console.warn('[onix-admin] dashboard view not found in DOM'); return false; }
     if (alreadyPainted(v)) return true;
+    console.log('[onix-admin] painting dashboard into', v.id || v.tagName);
     const { clients, loans, investments, raises, applications, payments, distributions } = data;
     const activeLoans       = loans.filter(l => l.status === 'active');
     const activeInvestments = investments.filter(i => i.status === 'active');
