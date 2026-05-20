@@ -350,6 +350,10 @@
         ${detailRow('Status', r.status)}
         ${detailRow('Created', fmt.date(r.created_at))}
       </div>
+      <div id="oac-raise-interests" data-raise-id="${esc(r.id)}" style="margin:18px 0">
+        <h3 style="font-size:.78rem;letter-spacing:.12em;text-transform:uppercase;color:#6B6560;font-weight:700;margin:0 0 10px">Interested Investors</h3>
+        <div data-interests-body style="font-size:.85rem;color:#6B6560">Loading interests…</div>
+      </div>
       ${docsManagerHtml(r.raise_documents)}
     `);
     const m = document.getElementById('oac-modal');
@@ -372,6 +376,71 @@
       refreshAll();
     });
     wireDocsManager(m, 'raise_documents', 'raise_id', r.id);
+    renderRaiseInterests(r.id);
+  }
+
+  // Pull all expressed-interest rows for this raise + the client profile,
+  // render them in the "Interested Investors" panel of the raise modal, and
+  // wire Approve / Dismiss / Contact buttons.
+  async function renderRaiseInterests(raiseId) {
+    const wrap = document.getElementById('oac-raise-interests');
+    if (!wrap) return;
+    const body = wrap.querySelector('[data-interests-body]');
+    const { data, error } = await OnixDB.client
+      .from('raise_interests')
+      .select('id, status, submitted_at, responded_at, profiles(full_name, email)')
+      .eq('raise_id', raiseId)
+      .order('submitted_at', { ascending: false });
+    if (error) { body.textContent = 'Could not load interests: ' + error.message; return; }
+    if (!data || !data.length) {
+      body.innerHTML = '<div style="padding:10px 0;font-style:italic">No investors have expressed interest yet.</div>';
+      return;
+    }
+    const statusBadge = (s) => {
+      const map = { new: ['#FAE8E8', '#C0392B', 'New'],
+                    approved: ['#EBF5EB', '#3B8B3B', 'Approved'],
+                    dismissed: ['#F0F0F0', '#888', 'Dismissed'] };
+      const [bg, fg, label] = map[s] || ['#F0F0F0', '#888', s];
+      return `<span style="display:inline-block;padding:2px 8px;background:${bg};color:${fg};font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700;border-radius:2px">${label}</span>`;
+    };
+    body.innerHTML = data.map(i => {
+      const p = i.profiles || {};
+      const name = p.full_name || p.email || 'Unknown investor';
+      const when = fmt.date(i.submitted_at);
+      const canAct = i.status === 'new';
+      return `
+        <div data-interest-row="${esc(i.id)}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid #E8E8E8;border-radius:2px;margin-bottom:6px;background:#fff">
+          <div>
+            <div style="font-weight:600;color:#1A1A1A">${esc(name)}</div>
+            <div style="font-size:.74rem;color:#888;margin-top:2px">${esc(p.email || '—')} · expressed ${esc(when)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+            ${statusBadge(i.status)}
+            ${p.email ? `<a class="oac-btn outline" style="font-size:.66rem;padding:5px 10px" href="mailto:${esc(p.email)}?subject=${encodeURIComponent('Onix Finance · investment opportunity follow-up')}">Contact</a>` : ''}
+            ${canAct ? `<button data-interest-approve="${esc(i.id)}" style="background:#C0392B;color:#fff;border:1px solid #C0392B;padding:5px 10px;font:600 .66rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border-radius:2px;cursor:pointer">Approve</button>
+                       <button data-interest-dismiss="${esc(i.id)}" style="background:#fff;color:#1A1A1A;border:1px solid #E8E8E8;padding:5px 10px;font:600 .66rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border-radius:2px;cursor:pointer">Dismiss</button>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+
+    wrap.querySelectorAll('[data-interest-approve]').forEach(b => {
+      b.addEventListener('click', async (e) => {
+        e.preventDefault();
+        b.disabled = true; b.style.opacity = '.5';
+        const ok = await OnixDB.setRaiseInterestStatus(b.dataset.interestApprove, 'approved');
+        if (!ok) { b.disabled = false; b.style.opacity = '1'; return; }
+        renderRaiseInterests(raiseId);
+      });
+    });
+    wrap.querySelectorAll('[data-interest-dismiss]').forEach(b => {
+      b.addEventListener('click', async (e) => {
+        e.preventDefault();
+        b.disabled = true; b.style.opacity = '.5';
+        const ok = await OnixDB.setRaiseInterestStatus(b.dataset.interestDismiss, 'dismissed');
+        if (!ok) { b.disabled = false; b.style.opacity = '1'; return; }
+        renderRaiseInterests(raiseId);
+      });
+    });
   }
 
   function contactBtn(email, label) {
@@ -1437,7 +1506,14 @@
   function paintRaisesView(raises) {
     const v = findView(STATIC_VIEWS.raises); if (!v) return false;
     if (alreadyPainted(v)) return true;
-    const rows = raises.length ? raises.map((r, i) => `
+    const rows = raises.length ? raises.map((r, i) => {
+      const interestTotal = Number(r._interest_total || 0);
+      const interestNew = Number(r._interest_new || 0);
+      const interestCell = interestTotal === 0
+        ? '<span style="color:#9B9590">0</span>'
+        : `<span style="font-weight:600">${interestTotal}</span>` +
+          (interestNew > 0 ? ` <span style="display:inline-block;margin-left:6px;padding:1px 7px;background:#C0392B;color:#fff;border-radius:10px;font-size:.6rem;font-weight:700;letter-spacing:.04em">${interestNew} new</span>` : '');
+      return `
       <tr>
         <td>${esc(r.venture_name)}</td>
         <td>${esc(r.venture_type || '—')}</td>
@@ -1445,16 +1521,18 @@
         <td>${fmt.money(r.amount_raised)}</td>
         <td>${fmt.money(r.minimum_investment)}</td>
         <td>${(r.projected_return_min != null && r.projected_return_max != null) ? r.projected_return_min + '–' + r.projected_return_max + '%' : '—'}</td>
+        <td>${interestCell}</td>
         <td><span class="oac-badge ${esc(r.status || '')}">${esc(r.status || '—')}</span></td>
         <td style="text-align:right;white-space:nowrap">
           <a href="#" data-view-static-raise="${i}" style="display:inline-block;background:#C0392B;color:#fff;padding:6px 12px;font:600 .68rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;margin-right:4px;text-decoration:none">View</a>
           <a href="mailto:info@onixfinance.com?subject=${encodeURIComponent('Onix Finance · ' + r.venture_name)}" style="display:inline-block;background:#fff;color:#1A1A1A;padding:6px 12px;font:600 .68rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none">Contact</a>
         </td>
-      </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No raises yet.</td></tr>';
+      </tr>`;
+    }).join('') : '<tr><td colspan="9" class="oac-empty">No raises yet.</td></tr>';
     v.innerHTML = viewShell('Raises', 'Active and historical investment opportunities',
       actionBarBtn('+ Add Raise', 'oac-add-raise-btn') +
       `<table class="oac-table" style="width:100%"><thead><tr>
-        <th>Venture</th><th>Type</th><th>Goal</th><th>Raised</th><th>Min</th><th>IRR</th><th>Status</th><th style="text-align:right">Actions</th>
+        <th>Venture</th><th>Type</th><th>Goal</th><th>Raised</th><th>Min</th><th>IRR</th><th>Interest</th><th>Status</th><th style="text-align:right">Actions</th>
       </tr></thead><tbody>${rows}</tbody></table>`);
     v.querySelectorAll('[data-view-static-raise]').forEach(b => {
       b.addEventListener('click', (e) => { e.preventDefault(); viewRaise(raises[Number(b.dataset.viewStaticRaise)]); });
@@ -1625,7 +1703,7 @@
     const greeting = document.getElementById('oac-greeting');
     if (greeting) greeting.textContent = 'Loading data…';
     try {
-      const [clients, pending, loans, investments, raises, applications, payments, distributions] = await Promise.all([
+      const [clients, pending, loans, investments, raises, applications, payments, distributions, interests] = await Promise.all([
         OnixDB.getAllClients(),
         OnixDB.getPendingClients(),
         OnixDB.getAllLoans(),
@@ -1633,8 +1711,23 @@
         OnixDB.getAllRaises(),
         OnixDB.getAllApplications(),
         OnixDB.getAllPayments    ? OnixDB.getAllPayments()    : Promise.resolve([]),
-        OnixDB.getAllDistributions ? OnixDB.getAllDistributions() : Promise.resolve([])
+        OnixDB.getAllDistributions ? OnixDB.getAllDistributions() : Promise.resolve([]),
+        OnixDB.getAllRaiseInterests ? OnixDB.getAllRaiseInterests() : Promise.resolve([])
       ]);
+      // Annotate raises with interest totals so paintRaisesView can show counts.
+      const byRaise = new Map();
+      (interests || []).forEach(i => {
+        const cur = byRaise.get(i.raise_id) || { total: 0, neu: 0 };
+        cur.total += 1;
+        if (i.status === 'new') cur.neu += 1;
+        byRaise.set(i.raise_id, cur);
+      });
+      raises.forEach(r => {
+        const c = byRaise.get(r.id) || { total: 0, neu: 0 };
+        r._interest_total = c.total;
+        r._interest_new   = c.neu;
+      });
+
       renderOverview({ clients, pending, loans, investments, raises, applications });
       renderApprovals(pending);
       renderClients(clients);
@@ -1643,7 +1736,8 @@
       renderInvestments(investments);
       renderRaises(raises);
       paintStaticAdmin({ clients, loans, investments, raises, applications, payments, distributions });
-      if (greeting) greeting.textContent = `Loaded · ${clients.length} clients · ${pending.length} pending · ${loans.length} loans · ${applications.length} applications`;
+      const pendingInterest = (interests || []).filter(i => i.status === 'new').length;
+      if (greeting) greeting.textContent = `Loaded · ${clients.length} clients · ${pending.length} pending · ${loans.length} loans · ${applications.length} applications${pendingInterest ? ' · ' + pendingInterest + ' new interest' + (pendingInterest === 1 ? '' : 's') : ''}`;
     } catch (ex) {
       console.error('[onix-admin]', ex);
       if (greeting) greeting.textContent = 'Error loading data — see console';
