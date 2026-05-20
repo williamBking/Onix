@@ -144,11 +144,19 @@
         ${detailRow('Collateral Address', loan.collateral_address)}
       </div>
       ${docsManagerHtml(loan.loan_documents)}
+      ${loan.application_id ? `
+        <div style="margin-top:18px">
+          <h3 style="font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:#1A1A1A;font-weight:700;margin:0 0 10px;padding-top:14px;border-top:1px solid #E8E8E8">Application Documents</h3>
+          <div id="oac-loan-app-docs" style="display:flex;flex-direction:column;gap:6px"></div>
+        </div>` : ''}
     `);
     const m = document.getElementById('oac-modal');
     m.querySelector('[data-edit-loan]').addEventListener('click', (e) => { e.preventDefault(); openEditLoanModal(loan); });
     m.querySelector('[data-add-payment]').addEventListener('click', (e) => { e.preventDefault(); openAddPaymentModal(loan); });
     wireDocsManager(m, 'loan_documents', 'loan_id', loan.id);
+    if (loan.application_id) {
+      loadAndRenderAppDocs(m.querySelector('#oac-loan-app-docs'), loan.application_id);
+    }
   }
 
   function viewInvestment(inv) {
@@ -175,6 +183,59 @@
     m.querySelector('[data-edit-inv]').addEventListener('click', (e) => { e.preventDefault(); openEditInvestmentModal(inv); });
     m.querySelector('[data-add-dist]').addEventListener('click', (e) => { e.preventDefault(); openAddDistributionModal(inv); });
     wireDocsManager(m, 'investment_documents', 'investment_id', inv.id);
+  }
+
+  // Shared block: render client_documents rows tied to a given application_id.
+  // Used by both viewApplication and viewLoan so the supporting docs the
+  // applicant uploaded follow the application into the loan.
+  async function loadAndRenderAppDocs(container, applicationId) {
+    if (!container || !applicationId) return;
+    container.innerHTML = '<div style="padding:10px 0;color:#9B9590;font-size:.8rem">Loading documents…</div>';
+    const { data, error } = await OnixDB.client
+      .from('client_documents')
+      .select('id, name, storage_path, dropbox_url, uploaded_at, category')
+      .eq('application_id', applicationId)
+      .order('uploaded_at', { ascending: false });
+    if (error) {
+      container.innerHTML = '<div style="padding:10px 0;color:#C0392B;font-size:.8rem">Could not load documents: ' + esc(error.message) + '</div>';
+      return;
+    }
+    const docs = data || [];
+    if (!docs.length) {
+      container.innerHTML = '<div style="padding:10px 0;color:#9B9590;font-style:italic;font-size:.8rem">No supporting documents attached.</div>';
+      return;
+    }
+    const linkStyle = 'font-size:.66rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#C0392B;text-decoration:none;border:1px solid #C0392B;padding:6px 12px;border-radius:2px;cursor:pointer';
+    container.innerHTML = docs.map(d => {
+      let meta = '';
+      try { meta = new Date(d.uploaded_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); } catch(_){}
+      const action = d.storage_path
+        ? `<a href="#" data-storage-path="${esc(d.storage_path)}" style="${linkStyle}">View ↗</a>`
+        : (d.dropbox_url
+            ? `<a href="${esc(d.dropbox_url)}" target="_blank" rel="noopener" style="${linkStyle}">View ↗</a>`
+            : '<span style="font-size:.66rem;color:#9B9590">No link</span>');
+      return `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;background:#F8F7F5;border-left:3px solid #C0392B">
+        <div style="min-width:0">
+          <div style="font-size:.84rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.name)}</div>
+          <div style="font-size:.7rem;color:#9B9590;margin-top:2px">${esc(meta)}${d.storage_path ? ' · Uploaded' : (d.dropbox_url ? ' · Dropbox' : '')}</div>
+        </div>
+        ${action}
+      </div>`;
+    }).join('');
+
+    // Wire the storage-backed links to generate signed URLs on click.
+    container.querySelectorAll('[data-storage-path]').forEach(a => {
+      a.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const path = a.getAttribute('data-storage-path');
+        const orig = a.textContent;
+        a.textContent = 'Opening…';
+        const r = await OnixDB.client.storage.from('client-documents').createSignedUrl(path, 3600);
+        a.textContent = orig;
+        if (r.error || !r.data) { alert('Could not open file: ' + (r.error && r.error.message || 'unknown error')); return; }
+        window.open(r.data.signedUrl, '_blank', 'noopener');
+      });
+    });
   }
 
   function viewApplication(app) {
@@ -205,8 +266,13 @@
       <div class="oac-modal-row" style="grid-template-columns:1fr">
         ${detailRow('Client Email', c.email)}
       </div>
+      <div style="margin-top:18px">
+        <h3 style="font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:#1A1A1A;font-weight:700;margin:0 0 10px;padding-top:14px;border-top:1px solid #E8E8E8">Supporting Documents</h3>
+        <div id="oac-app-docs" style="display:flex;flex-direction:column;gap:6px"></div>
+      </div>
     `);
     const m = document.getElementById('oac-modal');
+    loadAndRenderAppDocs(m.querySelector('#oac-app-docs'), app.id);
     m.querySelectorAll('[data-app-status]').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.preventDefault();
