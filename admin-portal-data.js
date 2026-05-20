@@ -950,14 +950,37 @@
       'Pending Applications': String(pendingApps.length),
       'Open Raises':          String(openRaises.length)
     };
-    Object.entries(updates).forEach(([label, value]) => {
-      v.querySelectorAll('[data-en]').forEach(el => {
-        if (el.getAttribute('data-en') === label) {
-          const valueEl = el.nextElementSibling;
-          if (valueEl && valueEl.textContent !== value) valueEl.textContent = value;
+
+    // Robust KPI updater: find the element whose text === label, then locate
+    // its sibling "value" cell (the one with $/digits or a big font).
+    function setKpiSurgically(label, value) {
+      const all = v.querySelectorAll('div, span');
+      for (const el of all) {
+        if (el.children.length === 0 && el.textContent.trim() === label) {
+          const parent = el.parentElement;
+          if (!parent) continue;
+          for (const sib of parent.children) {
+            if (sib === el) continue;
+            const txt = (sib.textContent || '').trim();
+            // The value is anything that's NOT the label text itself — typically
+            // it'll be $-prefixed money or a bare number/percentage.
+            if (txt && /^[\$]|^\d|^\d+%$/.test(txt)) {
+              if (sib.textContent !== value) sib.textContent = value;
+              return true;
+            }
+          }
         }
-      });
+      }
+      return false;
+    }
+    const updated = {};
+    Object.entries(updates).forEach(([label, value]) => {
+      updated[label] = setKpiSurgically(label, value);
     });
+    if (!window.__onixDashboardLogged) {
+      console.log('[onix-admin] dashboard updates:', updated);
+      window.__onixDashboardLogged = true;
+    }
 
     // Replace activity-item rows with live events (preserve container + card chrome).
     const firstActivity = v.querySelector('.activity-item');
