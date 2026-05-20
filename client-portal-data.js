@@ -581,30 +581,37 @@
   }
 
   // ---------- Loan Application Form ----------
+  // Captured supporting documents the user has selected, kept in a closure
+  // so they survive any browser/form clearing of the underlying <input type=file>.
+  let pickedSupportingFiles = [];
+
   function wireLoanApplicationForm(userId, profile) {
-    // Render the list of files the user has picked, inside the upload zone.
-    function renderPickedFiles(fileInput) {
+    function renderPickedFiles() {
       const zone = document.querySelector('.upload-zone');
       if (!zone) return;
       let summary = zone.querySelector('[data-files-summary]');
       if (!summary) {
         summary = document.createElement('div');
         summary.setAttribute('data-files-summary', '');
-        summary.style.cssText = 'margin-top:8px;font-size:.74rem;color:var(--red);font-weight:600';
+        summary.style.cssText = 'margin-top:8px;font-size:.74rem;color:var(--red);font-weight:600;line-height:1.4';
         zone.appendChild(summary);
       }
-      const files = Array.from(fileInput.files || []);
-      if (!files.length) { summary.textContent = ''; return; }
-      summary.textContent = files.length === 1
-        ? files[0].name
-        : files.length + ' files selected · ' + files.map(f => f.name).join(', ');
+      if (!pickedSupportingFiles.length) { summary.textContent = ''; return; }
+      summary.textContent = pickedSupportingFiles.length === 1
+        ? '📎 ' + pickedSupportingFiles[0].name
+        : '📎 ' + pickedSupportingFiles.length + ' files: ' + pickedSupportingFiles.map(f => f.name).join(', ');
     }
 
-    // Drag-and-drop on the upload zone (the existing UI already says "Drop files…").
+    function addFiles(fileList) {
+      if (!fileList || !fileList.length) return;
+      for (const f of fileList) pickedSupportingFiles.push(f);
+      renderPickedFiles();
+    }
+
     const zone = document.querySelector('.upload-zone');
     const fileInput = document.getElementById('fileInput');
-    if (zone && fileInput && !zone.dataset.dndWired) {
-      zone.dataset.dndWired = '1';
+    if (zone && fileInput && !zone.dataset.captureWired) {
+      zone.dataset.captureWired = '1';
       ['dragenter','dragover'].forEach(ev => zone.addEventListener(ev, e => {
         e.preventDefault(); e.stopPropagation();
         zone.style.borderColor = 'var(--red)';
@@ -614,12 +621,18 @@
         zone.style.borderColor = '';
       }));
       zone.addEventListener('drop', e => {
-        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
-          fileInput.files = e.dataTransfer.files;
-          renderPickedFiles(fileInput);
-        }
+        if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files);
       });
-      fileInput.addEventListener('change', () => renderPickedFiles(fileInput));
+      // Capture on every pick. Files captured into pickedSupportingFiles
+      // survive even if fileInput.files later gets cleared.
+      fileInput.addEventListener('change', () => addFiles(fileInput.files));
+
+      // Reset clears our captured list too.
+      const form = document.querySelector('#view-apply form');
+      if (form) form.addEventListener('reset', () => {
+        pickedSupportingFiles = [];
+        renderPickedFiles();
+      });
     }
 
     // The portal already calls submitLoanApp(event) inline. Override that global
@@ -663,32 +676,47 @@
       let uploadedCount = 0;
       let uploadErrors = [];
       if (ok) {
-        const files = Array.from((document.getElementById('fileInput') || {}).files || []);
+        // Read from the closure-captured list (fileInput.files can be cleared
+        // by form behavior or browser quirks; pickedSupportingFiles survives).
+        // Fall back to fileInput.files if for some reason capture didn't run.
+        const captured = pickedSupportingFiles.slice();
+        const fallback = Array.from((document.getElementById('fileInput') || {}).files || []);
+        const files = captured.length ? captured : fallback;
+        console.log('[onix] submitting application ' + inserted.id + ' with ' + files.length + ' supporting file(s)');
         for (const file of files) {
           const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, '_');
           const key = userId + '/applications/' + inserted.id + '/' + Date.now() + '-' + safeName;
-          const upRes = await OnixDB.client.storage
-            .from('client-documents')
-            .upload(key, file, { upsert: false, contentType: file.type || undefined });
-          if (upRes.error) {
-            uploadErrors.push(file.name + ': ' + upRes.error.message);
-            continue;
-          }
-          const ins = await OnixDB.client.from('client_documents').insert({
-            profile_id: userId,
-            application_id: inserted.id,
-            category: 'loan_application',
-            name: file.name,
-            storage_path: key
-          });
-          if (ins.error) {
-            uploadErrors.push(file.name + ': ' + ins.error.message);
-            // Roll back the file so the bucket doesn't drift from the table
-            OnixDB.client.storage.from('client-documents').remove([key]).catch(() => {});
-          } else {
-            uploadedCount++;
+          try {
+            const upRes = await OnixDB.client.storage
+              .from('client-documents')
+              .upload(key, file, { upsert: false, contentType: file.type || undefined });
+            if (upRes.error) {
+              uploadErrors.push(file.name + ': ' + upRes.error.message);
+              console.error('[onix] storage upload failed for', file.name, upRes.error);
+              continue;
+            }
+            const ins = await OnixDB.client.from('client_documents').insert({
+              profile_id: userId,
+              application_id: inserted.id,
+              category: 'loan_application',
+              name: file.name,
+              storage_path: key
+            });
+            if (ins.error) {
+              uploadErrors.push(file.name + ': ' + ins.error.message);
+              console.error('[onix] client_documents insert failed for', file.name, ins.error);
+              // Roll back the file so the bucket doesn't drift from the table
+              OnixDB.client.storage.from('client-documents').remove([key]).catch(() => {});
+            } else {
+              uploadedCount++;
+            }
+          } catch (ex) {
+            uploadErrors.push(file.name + ': ' + (ex && ex.message ? ex.message : String(ex)));
+            console.error('[onix] unexpected error uploading', file.name, ex);
           }
         }
+        // Clear captured list after this submission
+        pickedSupportingFiles = [];
 
         // Trigger the Resend email via Edge Function (fire-and-forget; UI doesn't block on it)
         OnixDB.client.functions.invoke('send-loan-app-email', {
