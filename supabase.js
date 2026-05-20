@@ -238,6 +238,25 @@ async function getAllDistributions() {
   return data || []
 }
 
+async function getAllRaiseInterests() {
+  const { data, error } = await _supabase
+    .from('raise_interests')
+    .select('*, raises(id, venture_name, venture_type, minimum_investment, status), profiles(full_name, email)')
+    .order('submitted_at', { ascending: false })
+  if (error) console.error('All raise interests error:', error)
+  return data || []
+}
+
+async function setRaiseInterestStatus(id, status) {
+  const update = { status, responded_at: new Date().toISOString() }
+  const { error } = await _supabase
+    .from('raise_interests')
+    .update(update)
+    .eq('id', id)
+  if (error) { console.error('Set raise interest status error:', error); return false }
+  return true
+}
+
 /* ── Expose everything globally ───────────────────────────── */
 window.OnixDB = {
   client: _supabase,
@@ -264,4 +283,6 @@ window.OnixDB = {
   getAllRaises,
   getAllPayments,
   getAllDistributions,
+  getAllRaiseInterests,
+  setRaiseInterestStatus,
 }
