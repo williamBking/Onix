@@ -407,6 +407,7 @@
       <div class="oac-tabs">
         <button class="oac-tab active" data-tab="overview">Overview</button>
         <button class="oac-tab" data-tab="approvals">Pending Approvals</button>
+        <button class="oac-tab" data-tab="interests" id="oac-tab-interests">Investment Interest</button>
         <button class="oac-tab" data-tab="clients">All Clients</button>
         <button class="oac-tab" data-tab="applications">Applications</button>
         <button class="oac-tab" data-tab="loans">Loans</button>
@@ -415,6 +416,7 @@
       </div>
       <div class="oac-section active" data-section="overview"><div class="oac-grid" id="oac-overview"></div></div>
       <div class="oac-section" data-section="approvals"><div class="oac-card full" id="oac-approvals-card"><h2>Pending Client Approvals</h2><div class="ttl-sub">Approve or reject new sign-ups</div><div id="oac-approvals"></div></div></div>
+      <div class="oac-section" data-section="interests"><div class="oac-card full"><h2>Investment Interest</h2><div class="ttl-sub">Clients who expressed interest in an open raise — approve or decline</div><div id="oac-interests"></div></div></div>
       <div class="oac-section" data-section="clients"><div class="oac-card full"><h2>All Clients</h2><div class="ttl-sub">Every profile in the system</div><div id="oac-clients"></div></div></div>
       <div class="oac-section" data-section="applications"><div class="oac-card full"><h2>Loan Applications Inbox</h2><div class="ttl-sub">Submitted from the client portal</div><div id="oac-applications"></div></div></div>
       <div class="oac-section" data-section="loans"><div class="oac-card full"><h2>All Loans</h2><div class="ttl-sub">Active and historical loans across all clients</div><div id="oac-loans"></div></div></div>
@@ -474,6 +476,76 @@
           <div class="oac-kpi"><div class="l">Applications</div><div class="v">${applications.length}</div></div>
         </div>
       </div>`;
+  }
+
+  // Render the Investment Interest tab in the Live Admin Console.
+  // Shows every row from raise_interests joined with the client + raise,
+  // newest first. For status='new' rows, Approve / Decline buttons appear
+  // and dispatch to OnixDB.setRaiseInterestStatus.
+  function renderInterests(interests) {
+    const el = document.getElementById('oac-interests');
+    if (!el) return;
+    const list = Array.isArray(interests) ? interests : [];
+
+    // Tab label: count of NEW (un-actioned) interests, surfaced as a red pill
+    const tabBtn = document.getElementById('oac-tab-interests');
+    if (tabBtn) {
+      const newCount = list.filter(i => i.status === 'new').length;
+      tabBtn.innerHTML = 'Investment Interest' +
+        (newCount > 0
+          ? ` <span style="display:inline-block;margin-left:6px;padding:1px 7px;background:#C0392B;color:#fff;border-radius:10px;font-size:.6rem;font-weight:700;letter-spacing:.04em">${newCount} new</span>`
+          : '');
+    }
+
+    if (!list.length) { el.innerHTML = '<div class="oac-empty">No expressed interests yet.</div>'; return; }
+
+    const statusBadge = (s) => {
+      const map = {
+        new:      ['#FAE8E8', '#C0392B', 'New'],
+        approved: ['#EBF5EB', '#3B8B3B', 'Approved'],
+        declined: ['#F0F0F0', '#888',    'Declined']
+      };
+      const [bg, fg, label] = map[s] || ['#F0F0F0', '#888', s || '—'];
+      return `<span style="display:inline-block;padding:2px 8px;background:${bg};color:${fg};font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700;border-radius:2px">${label}</span>`;
+    };
+
+    el.innerHTML = `
+      <table class="oac-table"><thead><tr>
+        <th>Client</th><th>Email</th><th>Raise</th><th>Min</th><th>Expressed</th><th>Status</th><th style="text-align:right">Actions</th>
+      </tr></thead><tbody>${list.map(i => {
+        const p = i.profiles || {};
+        const r = i.raises || {};
+        const canAct = i.status === 'new';
+        return `
+        <tr data-int-id="${esc(i.id)}">
+          <td>${esc(p.full_name || '—')}</td>
+          <td>${esc(p.email || '—')}</td>
+          <td>${esc(r.venture_name || '—')}${r.venture_type ? ` <span style="color:#888;font-size:.78rem">· ${esc(r.venture_type)}</span>` : ''}</td>
+          <td>${r.minimum_investment != null ? fmt.money(r.minimum_investment) : '—'}</td>
+          <td>${fmt.date(i.submitted_at)}</td>
+          <td>${statusBadge(i.status)}</td>
+          <td style="text-align:right;white-space:nowrap">
+            ${p.email ? `<a class="oac-btn outline" style="font-size:.66rem" href="mailto:${esc(p.email)}?subject=${encodeURIComponent('Onix Finance · ' + (r.venture_name || 'investment opportunity'))}">Contact</a>` : ''}
+            ${canAct
+              ? `<button class="oac-btn red"    data-int-act="approve" data-int-id="${esc(i.id)}">Approve</button>
+                 <button class="oac-btn danger" data-int-act="decline" data-int-id="${esc(i.id)}">Decline</button>`
+              : ''}
+          </td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+
+    el.querySelectorAll('[data-int-act]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id  = btn.dataset.intId;
+        const act = btn.dataset.intAct;
+        const status = act === 'approve' ? 'approved' : 'declined';
+        const row = el.querySelector(`tr[data-int-id="${id}"]`);
+        if (row) row.querySelectorAll('button').forEach(b => b.disabled = true);
+        const ok = await OnixDB.setRaiseInterestStatus(id, status);
+        if (ok) { refreshAll(); }
+        else { alert('Could not ' + act + ' interest.'); if (row) row.querySelectorAll('button').forEach(b => b.disabled = false); }
+      });
+    });
   }
 
   function renderApprovals(pending) {
@@ -1627,25 +1699,28 @@
     const greeting = document.getElementById('oac-greeting');
     if (greeting) greeting.textContent = 'Loading data…';
     try {
-      const [clients, pending, loans, investments, raises, applications, payments, distributions] = await Promise.all([
+      const [clients, pending, loans, investments, raises, applications, payments, distributions, interests] = await Promise.all([
         OnixDB.getAllClients(),
         OnixDB.getPendingClients(),
         OnixDB.getAllLoans(),
         OnixDB.getAllInvestments(),
         OnixDB.getAllRaises(),
         OnixDB.getAllApplications(),
-        OnixDB.getAllPayments    ? OnixDB.getAllPayments()    : Promise.resolve([]),
-        OnixDB.getAllDistributions ? OnixDB.getAllDistributions() : Promise.resolve([])
+        OnixDB.getAllPayments         ? OnixDB.getAllPayments()         : Promise.resolve([]),
+        OnixDB.getAllDistributions    ? OnixDB.getAllDistributions()    : Promise.resolve([]),
+        OnixDB.getAllRaiseInterests   ? OnixDB.getAllRaiseInterests()   : Promise.resolve([])
       ]);
       renderOverview({ clients, pending, loans, investments, raises, applications });
       renderApprovals(pending);
+      renderInterests(interests);
       renderClients(clients);
       renderApplications(applications);
       renderLoans(loans);
       renderInvestments(investments);
       renderRaises(raises);
       paintStaticAdmin({ clients, loans, investments, raises, applications, payments, distributions });
-      if (greeting) greeting.textContent = `Loaded · ${clients.length} clients · ${pending.length} pending · ${loans.length} loans · ${applications.length} applications`;
+      const newInterest = (interests || []).filter(i => i.status === 'new').length;
+      if (greeting) greeting.textContent = `Loaded · ${clients.length} clients · ${pending.length} pending · ${loans.length} loans · ${applications.length} applications${newInterest ? ' · ' + newInterest + ' new interest' + (newInterest === 1 ? '' : 's') : ''}`;
     } catch (ex) {
       console.error('[onix-admin]', ex);
       if (greeting) greeting.textContent = 'Error loading data — see console';
