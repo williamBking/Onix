@@ -860,26 +860,6 @@
     }
 
     // ---------- Documents button → new Supabase-backed modal ----------
-    function ensureDocsModal(){
-      var overlay = document.getElementById('__onix_cl_docs_overlay');
-      if (overlay) return overlay;
-      overlay = window.__onix_createOverlay('__onix_cl_docs_overlay');
-      overlay.innerHTML =
-        '<div class="onix-sheet wide">' +
-          '<div class="onix-sheet-hd">' +
-            '<div><div class="o-eyebrow">Client Documents</div><h2 id="__onix_cd_name">Client</h2><div class="o-sub" id="__onix_cd_sub"></div></div>' +
-            '<button class="onix-sheet-close" id="__onix_cd_close" type="button">×</button>' +
-          '</div>' +
-          '<div class="onix-sheet-body" id="__onix_cd_body"></div>' +
-          '<div class="onix-actions">' +
-            '<button class="onix-btn onix-btn-ghost" id="__onix_cd_close2" type="button">Close</button>' +
-          '</div>' +
-        '</div>';
-      overlay.querySelector('#__onix_cd_close').addEventListener('click', function(){ window.__onix_closeOverlay(overlay); });
-      overlay.querySelector('#__onix_cd_close2').addEventListener('click', function(){ window.__onix_closeOverlay(overlay); });
-      return overlay;
-    }
-
     var CATEGORY_LABEL = {
       id: 'ID',
       passport: 'Passport',
@@ -890,9 +870,98 @@
       other: 'Other'
     };
     var CATEGORY_ORDER = ['id','passport','proof_of_address','promissory_note','loan_doc','tax','other'];
+    var CL_DOCS_BUCKET = 'client-documents';
+
+    function ensureDocsModal(){
+      var overlay = document.getElementById('__onix_cl_docs_overlay');
+      if (overlay) return overlay;
+      overlay = window.__onix_createOverlay('__onix_cl_docs_overlay');
+      var categoryOpts = CATEGORY_ORDER.map(function(k){
+        return '<option value="' + esc(k) + '">' + esc(CATEGORY_LABEL[k]) + '</option>';
+      }).join('');
+      overlay.innerHTML =
+        '<div class="onix-sheet wide">' +
+          '<div class="onix-sheet-hd">' +
+            '<div><div class="o-eyebrow">Client Documents</div><h2 id="__onix_cd_name">Client</h2><div class="o-sub" id="__onix_cd_sub"></div></div>' +
+            '<button class="onix-sheet-close" id="__onix_cd_close" type="button">×</button>' +
+          '</div>' +
+          '<div class="onix-sheet-body">' +
+            '<form id="__onix_cd_upload" style="display:flex;gap:8px;align-items:center;padding:14px 16px;background:#F8F7F5;border:1px solid #E8E8E8;border-top:3px solid #C0392B;margin-bottom:18px;flex-wrap:wrap">' +
+              '<label style="font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:#6B6560;font-weight:700">Upload PDF</label>' +
+              '<select id="__onix_cd_category" style="padding:8px 28px 8px 10px;border:1px solid #E8E8E8;border-radius:2px;font:inherit;font-size:.82rem;background:#fff;cursor:pointer">' + categoryOpts + '</select>' +
+              '<input id="__onix_cd_file" type="file" accept="application/pdf,image/*" style="font:inherit;font-size:.82rem;flex:1;min-width:160px">' +
+              '<button id="__onix_cd_upload_btn" type="submit" class="onix-btn onix-btn-primary" style="margin:0">Upload</button>' +
+              '<span id="__onix_cd_upload_msg" style="font-size:.74rem;color:#9B9590;flex-basis:100%"></span>' +
+            '</form>' +
+            '<div id="__onix_cd_body"></div>' +
+          '</div>' +
+          '<div class="onix-actions">' +
+            '<button class="onix-btn onix-btn-ghost" id="__onix_cd_close2" type="button">Close</button>' +
+          '</div>' +
+        '</div>';
+      overlay.querySelector('#__onix_cd_close').addEventListener('click', function(){ window.__onix_closeOverlay(overlay); });
+      overlay.querySelector('#__onix_cd_close2').addEventListener('click', function(){ window.__onix_closeOverlay(overlay); });
+      overlay.querySelector('#__onix_cd_upload').addEventListener('submit', handleClientDocUpload);
+      // Click delegation for storage-backed View links: fetch a signed URL and open.
+      overlay.addEventListener('click', async function(e){
+        var a = e.target && e.target.closest && e.target.closest('[data-storage-path]');
+        if (!a) return;
+        e.preventDefault();
+        var path = a.getAttribute('data-storage-path');
+        a.textContent = 'Opening…';
+        var r = await OnixDB.client.storage.from(CL_DOCS_BUCKET).createSignedUrl(path, 3600);
+        a.textContent = 'View ↗';
+        if (r.error || !r.data) { alert('Could not open file: ' + (r.error && r.error.message || 'unknown error')); return; }
+        window.open(r.data.signedUrl, '_blank', 'noopener');
+      });
+      return overlay;
+    }
+
+    var currentDocsProfileId = null;
+
+    async function handleClientDocUpload(e){
+      e.preventDefault();
+      if (!currentDocsProfileId) return;
+      var fileEl = document.getElementById('__onix_cd_file');
+      var catEl  = document.getElementById('__onix_cd_category');
+      var btn    = document.getElementById('__onix_cd_upload_btn');
+      var msg    = document.getElementById('__onix_cd_upload_msg');
+      var file   = fileEl.files && fileEl.files[0];
+      if (!file) { msg.textContent = 'Pick a file first.'; msg.style.color = '#C0392B'; return; }
+      var safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, '_');
+      var key = currentDocsProfileId + '/' + Date.now() + '-' + safeName;
+      btn.disabled = true; var origLbl = btn.textContent; btn.textContent = 'Uploading…';
+      msg.style.color = '#9B9590'; msg.textContent = 'Uploading ' + file.name + '…';
+      var c = OnixDB.client;
+      var upRes = await c.storage.from(CL_DOCS_BUCKET).upload(key, file, { upsert: false, contentType: file.type || undefined });
+      if (upRes.error) {
+        msg.style.color = '#C0392B'; msg.textContent = 'Upload failed: ' + upRes.error.message;
+        btn.disabled = false; btn.textContent = origLbl;
+        return;
+      }
+      var ins = await c.from('client_documents').insert({
+        profile_id: currentDocsProfileId,
+        category: catEl.value || 'other',
+        name: file.name,
+        storage_path: key
+      });
+      if (ins.error) {
+        // Roll the file back so the bucket doesn't drift from the table.
+        c.storage.from(CL_DOCS_BUCKET).remove([key]).catch(function(){});
+        msg.style.color = '#C0392B'; msg.textContent = 'Saved file but DB insert failed: ' + ins.error.message;
+        btn.disabled = false; btn.textContent = origLbl;
+        return;
+      }
+      msg.style.color = '#2D6A2D'; msg.textContent = 'Uploaded ' + file.name + '.';
+      fileEl.value = '';
+      btn.disabled = false; btn.textContent = origLbl;
+      // Re-render the list so the new row appears immediately.
+      openClientDocs(currentDocsProfileId);
+    }
 
     async function openClientDocs(profileId){
       var overlay = ensureDocsModal();
+      currentDocsProfileId = profileId;
       var c = OnixDB.client;
       var [pRes, dRes] = await Promise.all([
         c.from('profiles').select('full_name, email').eq('id', profileId).single(),
@@ -909,13 +978,14 @@
 
       var body = document.getElementById('__onix_cd_body');
       if (!docs.length) {
-        body.innerHTML = '<div style="padding:18px;color:#9B9590;font-style:italic;font-size:.86rem;text-align:center">No documents on file yet.</div>';
+        body.innerHTML = '<div style="padding:18px;color:#9B9590;font-style:italic;font-size:.86rem;text-align:center">No documents on file yet. Upload one above.</div>';
       } else {
         var grouped = {};
         docs.forEach(function(d){
           var cat = d.category || 'other';
           (grouped[cat] = grouped[cat] || []).push(d);
         });
+        var linkStyle = 'font-size:.66rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#C0392B;text-decoration:none;border:1px solid #C0392B;padding:6px 12px;border-radius:2px;cursor:pointer;background:transparent';
         var html = '';
         CATEGORY_ORDER.forEach(function(cat){
           var list = grouped[cat];
@@ -931,14 +1001,18 @@
                     try { return new Date(d.uploaded_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
                     catch(_) { return ''; }
                   })();
+                  var source = d.storage_path ? 'Uploaded' : (d.dropbox_url ? 'Dropbox' : '');
+                  var action = d.storage_path
+                    ? '<a href="#" data-storage-path="' + esc(d.storage_path) + '" style="' + linkStyle + '">View ↗</a>'
+                    : (d.dropbox_url
+                        ? '<a href="' + esc(d.dropbox_url) + '" target="_blank" rel="noopener" style="' + linkStyle + '">View ↗</a>'
+                        : '<span style="font-size:.66rem;color:#9B9590">No link</span>');
                   return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:#F8F7F5;border-left:3px solid #C0392B">' +
                     '<div style="min-width:0">' +
                       '<div style="font-size:.84rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(d.name) + '</div>' +
-                      '<div style="font-size:.7rem;color:#9B9590;margin-top:2px">' + meta + '</div>' +
+                      '<div style="font-size:.7rem;color:#9B9590;margin-top:2px">' + meta + (source ? ' · ' + source : '') + '</div>' +
                     '</div>' +
-                    (d.dropbox_url
-                      ? '<a href="' + esc(d.dropbox_url) + '" target="_blank" rel="noopener" style="font-size:.66rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#C0392B;text-decoration:none;border:1px solid #C0392B;padding:6px 12px;border-radius:2px">View ↗</a>'
-                      : '<span style="font-size:.66rem;color:#9B9590">No link</span>') +
+                    action +
                   '</div>';
                 }).join('') +
               '</div>' +
@@ -946,6 +1020,9 @@
         });
         body.innerHTML = html;
       }
+      // Clear any stale upload-feedback line
+      var msg = document.getElementById('__onix_cd_upload_msg');
+      if (msg) msg.textContent = '';
       overlay.classList.add('show');
     }
 
