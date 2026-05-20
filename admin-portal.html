@@ -866,10 +866,11 @@
       proof_of_address: 'Proof of Address',
       promissory_note: 'Promissory Notes',
       loan_doc: 'Loan Documents',
+      loan_application: 'Loan Application Supporting Docs',
       tax: 'Tax Documents',
       other: 'Other'
     };
-    var CATEGORY_ORDER = ['id','passport','proof_of_address','promissory_note','loan_doc','tax','other'];
+    var CATEGORY_ORDER = ['id','passport','proof_of_address','loan_application','loan_doc','promissory_note','tax','other'];
     var CL_DOCS_BUCKET = 'client-documents';
 
     function ensureDocsModal(){
@@ -3384,7 +3385,7 @@
   <!-- Onix Supabase live admin layer -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="supabase.js?v=9"></script>
-  <script defer src="admin-portal-data.js?v=22"></script>
+  <script defer src="admin-portal-data.js?v=23"></script>
 </head>
 <body>
   <div id="__bundler_thumbnail">

@@ -582,8 +582,48 @@
 
   // ---------- Loan Application Form ----------
   function wireLoanApplicationForm(userId, profile) {
+    // Render the list of files the user has picked, inside the upload zone.
+    function renderPickedFiles(fileInput) {
+      const zone = document.querySelector('.upload-zone');
+      if (!zone) return;
+      let summary = zone.querySelector('[data-files-summary]');
+      if (!summary) {
+        summary = document.createElement('div');
+        summary.setAttribute('data-files-summary', '');
+        summary.style.cssText = 'margin-top:8px;font-size:.74rem;color:var(--red);font-weight:600';
+        zone.appendChild(summary);
+      }
+      const files = Array.from(fileInput.files || []);
+      if (!files.length) { summary.textContent = ''; return; }
+      summary.textContent = files.length === 1
+        ? files[0].name
+        : files.length + ' files selected · ' + files.map(f => f.name).join(', ');
+    }
+
+    // Drag-and-drop on the upload zone (the existing UI already says "Drop files…").
+    const zone = document.querySelector('.upload-zone');
+    const fileInput = document.getElementById('fileInput');
+    if (zone && fileInput && !zone.dataset.dndWired) {
+      zone.dataset.dndWired = '1';
+      ['dragenter','dragover'].forEach(ev => zone.addEventListener(ev, e => {
+        e.preventDefault(); e.stopPropagation();
+        zone.style.borderColor = 'var(--red)';
+      }));
+      ['dragleave','drop'].forEach(ev => zone.addEventListener(ev, e => {
+        e.preventDefault(); e.stopPropagation();
+        zone.style.borderColor = '';
+      }));
+      zone.addEventListener('drop', e => {
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+          fileInput.files = e.dataTransfer.files;
+          renderPickedFiles(fileInput);
+        }
+      });
+      fileInput.addEventListener('change', () => renderPickedFiles(fileInput));
+    }
+
     // The portal already calls submitLoanApp(event) inline. Override that global
-    // so it inserts into Supabase and triggers the email notification.
+    // so it inserts into Supabase, uploads supporting docs, and triggers email.
     window.submitLoanApp = async function (e) {
       e.preventDefault();
       const form = e.target;
@@ -620,7 +660,36 @@
         .single();
       const ok = !error && inserted;
 
+      let uploadedCount = 0;
+      let uploadErrors = [];
       if (ok) {
+        const files = Array.from((document.getElementById('fileInput') || {}).files || []);
+        for (const file of files) {
+          const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, '_');
+          const key = userId + '/applications/' + inserted.id + '/' + Date.now() + '-' + safeName;
+          const upRes = await OnixDB.client.storage
+            .from('client-documents')
+            .upload(key, file, { upsert: false, contentType: file.type || undefined });
+          if (upRes.error) {
+            uploadErrors.push(file.name + ': ' + upRes.error.message);
+            continue;
+          }
+          const ins = await OnixDB.client.from('client_documents').insert({
+            profile_id: userId,
+            application_id: inserted.id,
+            category: 'loan_application',
+            name: file.name,
+            storage_path: key
+          });
+          if (ins.error) {
+            uploadErrors.push(file.name + ': ' + ins.error.message);
+            // Roll back the file so the bucket doesn't drift from the table
+            OnixDB.client.storage.from('client-documents').remove([key]).catch(() => {});
+          } else {
+            uploadedCount++;
+          }
+        }
+
         // Trigger the Resend email via Edge Function (fire-and-forget; UI doesn't block on it)
         OnixDB.client.functions.invoke('send-loan-app-email', {
           body: {
@@ -630,7 +699,8 @@
             amount_requested: amount,
             purpose,
             applicant_type:   applicantType,
-            notes
+            notes,
+            attachment_count: uploadedCount
           }
         }).catch(err => console.error('[onix] send-loan-app-email failed:', err));
       } else if (error) {
@@ -640,8 +710,19 @@
       if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = orig; }
       const banner = document.getElementById('loan-ok');
       if (ok) {
-        if (banner) banner.style.display = 'block';
+        if (banner) {
+          banner.style.display = 'block';
+          if (uploadedCount > 0) {
+            const note = ' ' + uploadedCount + ' document' + (uploadedCount === 1 ? '' : 's') + ' attached.';
+            banner.textContent = (banner.textContent || '').replace(/\s+\d+ documents? attached\.?$/, '') + note;
+          }
+        }
         form.reset();
+        const summary = document.querySelector('[data-files-summary]');
+        if (summary) summary.textContent = '';
+        if (uploadErrors.length) {
+          alert('Application submitted, but some files failed to upload:\n\n' + uploadErrors.join('\n'));
+        }
       } else {
         alert('Could not submit application. Please try again.');
       }
