@@ -2087,12 +2087,12 @@
      RAISES — New Raise modal + Edit Raise modal
      ===================================================================== */
   window.addEventListener('load', function(){
-    var RAISES_KEY = 'onix-raises';
-    var SEED_RAISES = [
-      {id:'R-001', investment:'Bari Caffè', type:'Equity', target:'$500,000', raised:'$420,000', investors:7, status:'Active', closeDate:'2025-06-30', minInvest:'$25,000', notes:'Series A round targeting restaurant expansion.'},
-      {id:'R-002', investment:'La Grange', type:'Debt', target:'$1,200,000', raised:'$1,200,000', investors:4, status:'Closed', closeDate:'2024-12-31', minInvest:'$100,000', notes:'Bridge financing — fully funded.'},
-      {id:'R-003', investment:'Montrose', type:'Equity', target:'$800,000', raised:'$240,000', investors:3, status:'Active', closeDate:'2025-09-30', minInvest:'$50,000', notes:'Mixed-use development. LOIs received from 2 additional investors.'},
-    ];
+    // Bumped key (was 'onix-raises') so previously-seeded demo rows in
+    // localStorage stop appearing. Raises come from Supabase via
+    // admin-portal-data.js's paintRaisesView.
+    var RAISES_KEY = 'onix-raises-v2';
+    var SEED_RAISES = [];
+    try { localStorage.removeItem('onix-raises'); } catch (_) {}
 
     function loadRaises(){
       var r = null;
