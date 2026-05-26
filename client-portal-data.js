@@ -1038,6 +1038,70 @@
   }
 
   // ---------- Upcoming events sidebar (Dashboard) ----------
+  // Replace the hardcoded NOTIFS demo array on client-portal.html with real events
+  function renderNotifications(payments, distributions, applications) {
+    if (typeof window.NOTIFS === 'undefined') return; // bell not present on this page
+    const items = [];
+    const now = new Date();
+    (distributions || []).forEach(d => items.push({
+      ts: new Date(d.paid_at),
+      msg: '<b>' + (d.kind === 'interest' ? 'Interest' : 'Distribution') + '</b> of ' + fmt.money(d.amount) + ' deposited' + ((d.investments && d.investments.venture_name) ? ' from ' + d.investments.venture_name : ''),
+      read: (now - new Date(d.paid_at)) > 14 * 86400000 // older than 14 days marked read
+    }));
+    (payments || []).forEach(p => {
+      const due = p.due_date ? new Date(p.due_date) : null;
+      const paid = p.paid_at ? new Date(p.paid_at) : null;
+      if (paid) {
+        items.push({
+          ts: paid,
+          msg: 'Loan payment of <b>' + fmt.money(p.amount_due) + '</b> recorded' + ((p.loans && p.loans.loan_id_display) ? ' on ' + p.loans.loan_id_display : ''),
+          read: (now - paid) > 14 * 86400000
+        });
+      } else if (due && (due - now) < 7 * 86400000 && (due - now) > -2 * 86400000) {
+        items.push({
+          ts: due,
+          msg: '<b>Loan payment due</b> ' + fmt.money(p.amount_due) + ' · ' + fmt.date(due),
+          read: false
+        });
+      }
+    });
+    (applications || []).forEach(a => {
+      if (a.status && a.status !== 'pending') {
+        items.push({
+          ts: new Date(a.submitted_at),
+          msg: 'Your loan application is <b>' + a.status + '</b>',
+          read: false
+        });
+      }
+    });
+    if (!items.length) {
+      items.push({
+        ts: now,
+        msg: 'You are all caught up. We will notify you here when new activity arrives.',
+        read: true
+      });
+    }
+    // Sort newest first, take top 8
+    items.sort((a, b) => b.ts - a.ts);
+    const top = items.slice(0, 8);
+    window.NOTIFS = top.map(i => ({
+      msg: i.msg,
+      time: fmt.date(i.ts),
+      read: i.read
+    }));
+    // Re-render the existing panel if it has been built
+    const panel = document.getElementById('cp-notif-panel');
+    if (panel && typeof window.renderNotifPanel === 'function') {
+      window.renderNotifPanel(panel);
+    } else if (panel) {
+      // Trigger a click event to force the inline script's render to re-evaluate
+      // (no-op fallback — page reload will pick it up)
+    }
+    // Show/hide the red dot based on unread count
+    const dot = document.querySelector('.icon-btn-dot');
+    if (dot) dot.style.display = top.some(i => !i.read) ? '' : 'none';
+  }
+
   function renderUpcomingEvents(payments, distributions) {
     const card = findCardByTitle(document.querySelector('#view-dashboard'), txt => /^Upcoming/i.test(txt));
     if (!card) return;
@@ -1177,6 +1241,14 @@
     renderDistributions(distributions);
     renderUpcomingEvents(payments, distributions);
     renderPerformanceChart(investments, distributions);
+
+    // Bell-icon notifications panel (also fetch the user's applications)
+    const { data: applications } = await OnixDB.client
+      .from('loan_applications')
+      .select('id, status, submitted_at, amount_requested')
+      .eq('user_id', userId)
+      .order('submitted_at', { ascending: false });
+    renderNotifications(payments, distributions, applications || []);
 
     wireLoanApplicationForm(userId, profile);
   }
