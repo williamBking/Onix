@@ -86,6 +86,74 @@
     });
   }
 
+  // Wire the Profile tab: fill inputs from the real profile, and make Save
+  // Changes actually update Supabase.
+  function wireProfileForm(profile, userId) {
+    const view = document.querySelector('#view-profile');
+    if (!view) return;
+    const card = Array.from(view.querySelectorAll('.card')).find(c => {
+      const t = c.querySelector('.card-title');
+      return t && /Personal Information/i.test(t.textContent || '');
+    });
+    if (!card) return;
+    const fields = card.querySelectorAll('.field-input');
+    if (fields.length < 4) return;
+    // Pre-fill from real profile
+    fields[0].value = profile.full_name || '';
+    fields[1].value = profile.email || '';
+    fields[1].setAttribute('readonly', 'readonly');
+    fields[1].style.background = '#f4f4f4';
+    fields[1].style.cursor = 'not-allowed';
+    fields[1].setAttribute('title', 'Email cannot be changed from here');
+    fields[2].value = profile.phone || '';
+    fields[3].value = profile.address || '';
+
+    const saveBtn = card.querySelector('.btn-red');
+    if (!saveBtn) return;
+    // Replace the alert-based onclick with a real save
+    saveBtn.removeAttribute('onclick');
+    // Avoid attaching multiple listeners on repeated renders
+    if (saveBtn.dataset.onixWired === '1') return;
+    saveBtn.dataset.onixWired = '1';
+    saveBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const orig = saveBtn.innerHTML;
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<span>Saving…</span>';
+      const payload = {
+        full_name: (fields[0].value || '').trim() || null,
+        phone:     (fields[2].value || '').trim() || null,
+        address:   (fields[3].value || '').trim() || null
+      };
+      const { error } = await OnixDB.client
+        .from('profiles')
+        .update(payload)
+        .eq('id', userId);
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = orig;
+      if (error) {
+        alert('Could not save profile: ' + error.message);
+        return;
+      }
+      // Reflect the new name everywhere on the page
+      profile.full_name = payload.full_name;
+      profile.phone     = payload.phone;
+      profile.address   = payload.address;
+      renderUserName(profile);
+      // Small inline confirmation
+      let banner = card.querySelector('[data-onix-profile-ok]');
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.setAttribute('data-onix-profile-ok', '1');
+        banner.style.cssText = 'margin-top:14px;padding:10px 12px;background:var(--success-bg);color:var(--success-text);border-left:3px solid var(--success);font-size:.85rem';
+        banner.textContent = '✓ Profile updated';
+        saveBtn.after(banner);
+      }
+      banner.style.opacity = '1';
+      setTimeout(() => { banner.style.transition = 'opacity 1s'; banner.style.opacity = '0'; }, 2500);
+    });
+  }
+
   // Update the Loan Details card on the Lending tab using real loan fields.
   // Targets each `.detail-row` by its `.detail-key` label.
   function renderLoanDetails(loan) {
@@ -951,6 +1019,7 @@
     const userId = session.user.id;
 
     renderUserName(profile);
+    wireProfileForm(profile, userId);
 
     // Fetch everything in parallel
     const [loan, investments, raises, payments, distributions] = await Promise.all([
