@@ -103,7 +103,53 @@
   function openModal(html) {
     const m = ensureModal();
     m.querySelector('[data-modal-body]').innerHTML = html;
+    wireMoneyInputs(m);
     m.classList.add('open');
+  }
+
+  // ---------- live thousands-separator on money inputs ----------
+  // Any <input data-money="1"> gets reformatted on every keystroke into
+  // "1,234,567.89" form. Submission handlers (numOrNull etc.) already strip
+  // commas before parsing, so the underlying numeric value is unchanged.
+  function formatMoneyString(raw) {
+    const cleaned = String(raw == null ? '' : raw).replace(/[^0-9.]/g, '');
+    const dot = cleaned.indexOf('.');
+    const intRaw = dot === -1 ? cleaned : cleaned.slice(0, dot);
+    const decRaw = dot === -1 ? null : cleaned.slice(dot + 1).replace(/\./g, '').slice(0, 2);
+    const intClean = intRaw.replace(/^0+(?=\d)/, ''); // strip leading zeros but keep a single "0"
+    const intFormatted = intClean.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return intFormatted + (decRaw == null ? '' : '.' + decRaw);
+  }
+
+  function wireMoneyInput(input) {
+    if (!input || input.__moneyWired) return;
+    input.__moneyWired = true;
+    // Some places still emit type=number which forbids commas — switch to text.
+    if (input.type === 'number') {
+      input.type = 'text';
+      if (!input.getAttribute('inputmode')) input.setAttribute('inputmode', 'decimal');
+    }
+    // Pre-format any initial value (edit modals)
+    if (input.value) input.value = formatMoneyString(input.value);
+    input.addEventListener('input', () => {
+      const raw = input.value;
+      const caret = input.selectionStart != null ? input.selectionStart : raw.length;
+      const beforeCaret = (raw.slice(0, caret).match(/[0-9.]/g) || []).length;
+      const formatted = formatMoneyString(raw);
+      if (formatted !== raw) {
+        input.value = formatted;
+        let pos = 0, seen = 0;
+        while (pos < formatted.length && seen < beforeCaret) {
+          if (/[0-9.]/.test(formatted[pos])) seen++;
+          pos++;
+        }
+        try { input.setSelectionRange(pos, pos); } catch (_) {}
+      }
+    });
+  }
+
+  function wireMoneyInputs(scope) {
+    (scope || document).querySelectorAll('input[data-money]').forEach(wireMoneyInput);
   }
 
   function detailRow(k, v) {
@@ -1176,11 +1222,19 @@
 
   function field(label, name, opts) {
     opts = opts || {};
-    const type = opts.type || 'text';
+    // Any dollar field (label ending in "($)") becomes a text input with
+    // live thousands-separator formatting. type=number is dropped because
+    // browsers reject commas in number inputs.
+    const isMoney = opts.money === true || /\(\$\)\s*$/.test(label);
+    const type = isMoney ? 'text' : (opts.type || 'text');
     const required = opts.required ? 'required' : '';
     const placeholder = opts.placeholder ? `placeholder="${esc(opts.placeholder)}"` : '';
-    const step = opts.step ? `step="${esc(opts.step)}"` : '';
-    const value = opts.value != null ? `value="${esc(opts.value)}"` : '';
+    const step = (opts.step && !isMoney) ? `step="${esc(opts.step)}"` : '';
+    const moneyAttrs = isMoney ? 'data-money="1" inputmode="decimal"' : '';
+    const displayValue = (opts.value != null)
+      ? (isMoney ? formatMoneyString(opts.value) : opts.value)
+      : null;
+    const value = displayValue != null ? `value="${esc(displayValue)}"` : '';
     if (opts.textarea) {
       return `<div><div class="k">${esc(label)}</div><textarea name="${esc(name)}" ${required} ${placeholder} rows="3" style="${INPUT_STYLE};resize:vertical;min-height:60px"></textarea></div>`;
     }
@@ -1192,7 +1246,7 @@
       ).join('');
       return `<div><div class="k">${esc(label)}</div><select name="${esc(name)}" ${required} style="${INPUT_STYLE}">${options}</select></div>`;
     }
-    return `<div><div class="k">${esc(label)}</div><input name="${esc(name)}" type="${type}" ${required} ${placeholder} ${step} ${value} style="${INPUT_STYLE}"></div>`;
+    return `<div><div class="k">${esc(label)}</div><input name="${esc(name)}" type="${type}" ${required} ${placeholder} ${step} ${value} ${moneyAttrs} style="${INPUT_STYLE}"></div>`;
   }
 
   function clientOptions(clients) {
