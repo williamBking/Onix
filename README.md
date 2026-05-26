@@ -155,7 +155,47 @@ linked to the application.
 
 ---
 
-## 9. Known gaps (post-handoff)
+## 9. Custom domain — `portal.onixfinance.com`
+
+The site currently serves at `williambking.github.io/Onix`. The PRD calls for a
+subdomain on `onixfinance.com`. To switch:
+
+**Step 1 — Tell GitHub Pages the domain you want**
+
+1. Go to https://github.com/williamBking/Onix/settings/pages
+2. Under **Custom domain**, enter `portal.onixfinance.com` and click **Save**
+3. GitHub will write a `CNAME` file to the repo root automatically
+
+**Step 2 — Point DNS at GitHub**
+
+In the DNS provider for `onixfinance.com` (GoDaddy / Cloudflare / wherever the
+domain is managed), add a **CNAME record**:
+
+| Type  | Host / Name | Value (Points to)              | TTL  |
+|-------|-------------|--------------------------------|------|
+| CNAME | `portal`    | `williambking.github.io`       | Auto |
+
+Save. Propagation takes a few minutes to an hour.
+
+**Step 3 — Enable HTTPS**
+
+Once DNS resolves, go back to https://github.com/williamBking/Onix/settings/pages
+and tick **Enforce HTTPS**. (May take 15-30 minutes for GitHub to provision the
+TLS cert.)
+
+**Step 4 — Update Supabase Auth redirect URLs**
+
+Add `https://portal.onixfinance.com/reset-password.html` and
+`https://portal.onixfinance.com/login.html` to the allowed redirect URLs in
+Supabase Dashboard → Authentication → URL Configuration → Redirect URLs.
+Otherwise password-reset emails will refuse to redirect to the new domain.
+
+After all four steps, https://portal.onixfinance.com/login.html will be the
+live site.
+
+---
+
+## 10. Known gaps (post-handoff)
 
 See `Onix Finance Portal — 20 Suggested Upgrades` in the team Google Drive for
 the prioritized backlog. Top items:
@@ -169,7 +209,7 @@ the prioritized backlog. Top items:
 
 ---
 
-## 10. Credits
+## 11. Credits
 
 Built by the Onix Finance intern team — frontend, backend, and integration —
 with assistance from Claude Code. Designed by Claude Design for visual fidelity
