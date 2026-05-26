@@ -835,8 +835,18 @@
         const fn  = act === 'approve' ? OnixDB.approveClient : OnixDB.rejectClient;
         const row = el.querySelector(`tr[data-id="${id}"]`);
         if (row) row.querySelectorAll('button').forEach(b => b.disabled = true);
+        const clientRow = pending.find(p => p.id === id);
         const ok = await fn(id);
-        if (ok) { if (row) row.remove(); refreshAll(); }
+        if (ok) {
+          // Notify the client by email that their account is now active.
+          if (act === 'approve' && clientRow && clientRow.email) {
+            OnixDB.client.functions.invoke('send-account-activated-email', {
+              body: { full_name: clientRow.full_name || '', email: clientRow.email }
+            }).catch(err => console.error('[onix-admin] activation email failed:', err));
+          }
+          if (row) row.remove();
+          refreshAll();
+        }
         else { alert('Could not ' + act + ' client.'); if (row) row.querySelectorAll('button').forEach(b => b.disabled = false); }
       });
     });
