@@ -284,6 +284,93 @@
     });
   }
 
+  // Top-level Lending tab orchestrator. Renders a loan picker (only visible
+  // when the client has 2+ loans) plus the detail card for whichever loan
+  // is currently selected. Switching the picker re-runs renderLoan against
+  // the new selection — no full page refresh, no re-fetch.
+  function renderLoanView(loans, payments) {
+    if (!loans || !loans.length) { renderNoLoan(); return; }
+
+    // Remember the user's last choice across page loads.
+    const STORE_KEY = 'onix-selected-loan';
+    const stored = localStorage.getItem(STORE_KEY);
+    let current = loans.find(l => l.id === stored) || loans[0];
+
+    renderLoanSelector(loans, current.id, (nextId) => {
+      const next = loans.find(l => l.id === nextId);
+      if (!next) return;
+      current = next;
+      localStorage.setItem(STORE_KEY, nextId);
+      renderLoan(next, payments);
+    });
+
+    renderLoan(current, payments);
+  }
+
+  // Inject (or update) a labeled <select> at the top of the Lending view that
+  // lists every active loan by its loan_id_display. Hidden when there's only
+  // one loan — no need to clutter the UI.
+  function renderLoanSelector(loans, currentLoanId, onChange) {
+    const view = document.querySelector('#view-loans');
+    if (!view) return;
+
+    let host = view.querySelector('[data-onix-loan-picker]');
+
+    if (loans.length < 2) {
+      if (host) host.remove();
+      return;
+    }
+
+    if (!host) {
+      host = document.createElement('div');
+      host.setAttribute('data-onix-loan-picker', '1');
+      host.style.cssText = 'display:flex;align-items:center;gap:14px;margin:0 0 22px;padding:12px 16px;background:#fff;border:1px solid var(--border);border-left:3px solid var(--red)';
+
+      const label = document.createElement('span');
+      label.style.cssText = 'font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:700;flex-shrink:0';
+      label.setAttribute('data-en', 'Select Loan');
+      label.setAttribute('data-es', 'Seleccionar Préstamo');
+      label.textContent = 'Select Loan';
+      host.appendChild(label);
+
+      const select = document.createElement('select');
+      select.setAttribute('data-onix-loan-select', '1');
+      select.style.cssText = 'flex:1;padding:9px 12px;border:1px solid var(--border);background:#fff;font-family:inherit;font-size:.92rem;color:var(--dark);outline:none;border-radius:2px;cursor:pointer';
+      select.addEventListener('focus', () => { select.style.borderColor = 'var(--red)'; });
+      select.addEventListener('blur',  () => { select.style.borderColor = 'var(--border)'; });
+      select.addEventListener('change', () => onChange(select.value));
+      host.appendChild(select);
+
+      const count = document.createElement('span');
+      count.setAttribute('data-onix-loan-count', '1');
+      count.style.cssText = 'font-size:.74rem;color:var(--light);font-style:italic;flex-shrink:0';
+      host.appendChild(count);
+
+      // Insert just below the page header (or at the top of the view if no header)
+      const header = view.querySelector('.page-hd');
+      if (header && header.parentElement === view) {
+        header.after(host);
+      } else {
+        view.insertBefore(host, view.firstChild);
+      }
+    }
+
+    const select = host.querySelector('[data-onix-loan-select]');
+    const count  = host.querySelector('[data-onix-loan-count]');
+
+    // Rebuild options (data may have changed between renders)
+    select.innerHTML = loans.map(l => {
+      const label = (l.loan_id_display || 'Loan') +
+                    ' · ' + fmt.money(l.balance) +
+                    (l.status && l.status !== 'active' ? ' · ' + l.status : '');
+      return '<option value="' + l.id + '"' +
+             (l.id === currentLoanId ? ' selected' : '') + '>' +
+             escapeHtml(label) + '</option>';
+    }).join('');
+
+    if (count) count.textContent = loans.length + ' active loans';
+  }
+
   function renderLoan(loan, payments) {
     // KPIs — update EVERY matching cell on the page (Dashboard + Lending view both have these labels)
     setKpi('Outstanding Loan',    loan ? fmt.money(loan.balance) : '—',
@@ -1068,15 +1155,22 @@
     wireProfileForm(profile, userId);
 
     // Fetch everything in parallel
-    const [loan, investments, raises, payments, distributions] = await Promise.all([
-      OnixDB.getMyLoan(userId),
+    const [loans, investments, raises, payments, distributions] = await Promise.all([
+      OnixDB.getMyLoans(userId),
       OnixDB.getMyInvestments(userId),
       OnixDB.getOpenRaises(),
       OnixDB.getMyPayments(userId),
       OnixDB.getMyDistributions(userId)
     ]);
 
-    if (loan) renderLoan(loan, payments); else renderNoLoan();
+    // Active loans only — paid-off / closed loans can be added back later
+    // via a separate filter on the loan picker if the team wants that.
+    const activeLoans = (loans || []).filter(l => l.status !== 'paid' && l.status !== 'closed');
+    if (activeLoans.length) {
+      renderLoanView(activeLoans, payments);
+    } else {
+      renderNoLoan();
+    }
     renderInvestments(investments);
     renderRaises(raises, userId);
     renderPayments(payments);
