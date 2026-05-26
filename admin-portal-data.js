@@ -161,28 +161,113 @@
 
   function viewInvestment(inv) {
     const c = inv.profiles || {};
+    const clientName = c.full_name || c.email || 'Unknown client';
     openModal(`
       <h2>${esc(inv.venture_name)}</h2>
-      <div class="sub">${esc(c.full_name || c.email || 'Unknown client')}</div>
+      <div class="sub">${esc(clientName)}</div>
       <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
         <a href="#" data-edit-inv style="display:inline-block;background:#C0392B;color:#fff;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">Edit Investment</a>
         <a href="#" data-add-dist style="display:inline-block;background:#fff;color:#1A1A1A;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none">+ Add Distribution</a>
       </div>
-      <div class="oac-modal-row">
-        ${detailRow('Type', inv.venture_type)}
-        ${detailRow('Amount Invested', fmt.money(inv.amount_invested))}
-        ${detailRow('Ownership', inv.ownership_pct != null ? fmt.pct(inv.ownership_pct) : null)}
-        ${detailRow('Expected Return', inv.expected_return != null ? fmt.pct(inv.expected_return) : null)}
-        ${detailRow('Start Date', fmt.date(inv.start_date))}
-        ${detailRow('Status', inv.status)}
-        ${detailRow('Created', fmt.date(inv.created_at))}
+      <div class="oac-tabs">
+        <button type="button" class="oac-tab active" data-inv-tab="investment">Investment</button>
+        <button type="button" class="oac-tab" data-inv-tab="investor">Investor Profile</button>
       </div>
-      ${docsManagerHtml(inv.investment_documents)}
+      <div class="oac-section active" data-inv-section="investment">
+        <div class="oac-modal-row">
+          ${detailRow('Type', inv.venture_type)}
+          ${detailRow('Amount Invested', fmt.money(inv.amount_invested))}
+          ${detailRow('Ownership', inv.ownership_pct != null ? fmt.pct(inv.ownership_pct) : null)}
+          ${detailRow('Expected Return', inv.expected_return != null ? fmt.pct(inv.expected_return) : null)}
+          ${detailRow('Start Date', fmt.date(inv.start_date))}
+          ${detailRow('Status', inv.status)}
+          ${detailRow('Created', fmt.date(inv.created_at))}
+        </div>
+        ${docsManagerHtml(inv.investment_documents)}
+      </div>
+      <div class="oac-section" data-inv-section="investor">
+        <div id="oac-inv-investor-body" style="padding:10px 0;color:#9B9590;font-size:.84rem">Loading investor profile…</div>
+      </div>
     `);
     const m = document.getElementById('oac-modal');
     m.querySelector('[data-edit-inv]').addEventListener('click', (e) => { e.preventDefault(); openEditInvestmentModal(inv); });
     m.querySelector('[data-add-dist]').addEventListener('click', (e) => { e.preventDefault(); openAddDistributionModal(inv); });
     wireDocsManager(m, 'investment_documents', 'investment_id', inv.id);
+
+    // Tab switching — toggle .active on tab buttons and .oac-section panes
+    m.querySelectorAll('[data-inv-tab]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const key = tab.dataset.invTab;
+        m.querySelectorAll('[data-inv-tab]').forEach(t => t.classList.toggle('active', t === tab));
+        m.querySelectorAll('[data-inv-section]').forEach(s => s.classList.toggle('active', s.dataset.invSection === key));
+      });
+    });
+
+    loadInvestorProfileInto(m.querySelector('#oac-inv-investor-body'), inv.user_id, inv.id);
+  }
+
+  // Render an investor profile block inside the Investor tab of the investment
+  // modal: profile info + an aggregated portfolio summary across all of that
+  // user's investments, plus distribution totals from public.distributions.
+  async function loadInvestorProfileInto(container, userId, currentInvId) {
+    if (!container || !userId) return;
+    const [pRes, iRes] = await Promise.all([
+      OnixDB.client.from('profiles').select('id, full_name, email, status, created_at').eq('id', userId).single(),
+      OnixDB.client.from('investments').select('id, venture_name, venture_type, amount_invested, status, expected_return, ownership_pct').eq('user_id', userId).order('created_at', { ascending: false })
+    ]);
+    if (pRes.error) {
+      container.innerHTML = '<div style="color:#C0392B;font-size:.84rem">Could not load profile: ' + esc(pRes.error.message) + '</div>';
+      return;
+    }
+    const p    = pRes.data || {};
+    const invs = iRes.data || [];
+    const activeInvs = invs.filter(x => x.status !== 'exited');
+    const committed  = activeInvs.reduce((s, x) => s + Number(x.amount_invested || 0), 0);
+
+    let totalDistributions = 0;
+    let ytdDistributions   = 0;
+    const invIds = invs.map(x => x.id);
+    if (invIds.length) {
+      const { data: dist } = await OnixDB.client
+        .from('distributions')
+        .select('amount, paid_at')
+        .in('investment_id', invIds);
+      const yearStart = new Date(new Date().getFullYear(), 0, 1);
+      (dist || []).forEach(d => {
+        const amt = Number(d.amount || 0);
+        totalDistributions += amt;
+        if (d.paid_at && new Date(d.paid_at) >= yearStart) ytdDistributions += amt;
+      });
+    }
+
+    const statusLabel = p.status ? (p.status.charAt(0).toUpperCase() + p.status.slice(1)) : '—';
+    const since = p.created_at ? String(new Date(p.created_at).getFullYear()) : '—';
+
+    container.innerHTML = `
+      <div class="oac-modal-row">
+        ${detailRow('Name', p.full_name || '—')}
+        ${detailRow('Email', p.email || '—')}
+        ${detailRow('Status', statusLabel)}
+        ${detailRow('Investor Since', since)}
+        ${detailRow('Capital Committed', fmt.money(committed))}
+        ${detailRow('Active Deals', String(activeInvs.length))}
+        ${detailRow('Total Distributions', fmt.money(totalDistributions))}
+        ${detailRow('YTD Distributions', fmt.money(ytdDistributions))}
+      </div>
+      <h3 style="font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:#1A1A1A;font-weight:700;margin:18px 0 10px;padding-top:14px;border-top:1px solid #E8E8E8">All Investments (${invs.length})</h3>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${invs.length ? invs.map(x => {
+          const isCurrent = x.id === currentInvId;
+          return `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;background:${isCurrent ? '#FDF0EE' : '#F8F7F5'};border-left:3px solid #C0392B">
+            <div style="min-width:0">
+              <div style="font-size:.86rem;font-weight:600">${esc(x.venture_name || '—')}${isCurrent ? ' <span style="font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:#C0392B;font-weight:700;margin-left:6px">Viewing</span>' : ''}</div>
+              <div style="font-size:.7rem;color:#9B9590;margin-top:2px">${esc(x.venture_type || '—')} · ${esc(x.status || '—')}${x.expected_return != null ? ' · ' + fmt.pct(x.expected_return) + ' expected' : ''}</div>
+            </div>
+            <div style="font-size:.84rem;font-weight:700;white-space:nowrap">${fmt.money(x.amount_invested)}</div>
+          </div>`;
+        }).join('') : '<div style="color:#9B9590;font-style:italic;font-size:.84rem;padding:8px 0">No investments on file.</div>'}
+      </div>
+    `;
   }
 
   // Shared block: render client_documents rows tied to a given application_id.
