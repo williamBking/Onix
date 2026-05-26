@@ -1204,7 +1204,8 @@
         </td>
       </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No clients yet.</td></tr>';
     const newClientBtn = `
-      <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:14px;gap:0">
+        <a href="#" id="oac-export-clients" style="display:inline-block;background:#fff;color:#1A1A1A;padding:10px 18px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none;margin-right:8px">Export CSV</a>
         <a href="#" id="oac-new-client-btn" style="display:inline-block;background:#C0392B;color:#fff;padding:10px 18px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">+ New Client</a>
       </div>`;
     v.innerHTML = viewShell('Clients', 'All accounts in the system',
@@ -1214,6 +1215,19 @@
       </tr></thead><tbody>${rows}</tbody></table>`);
     const btn = v.querySelector('#oac-new-client-btn');
     if (btn) btn.addEventListener('click', (e) => { e.preventDefault(); openNewClientModal(); });
+    wireExport(v, 'oac-export-clients', () => {
+      downloadCsv('onix-clients-' + isoDate(new Date().toISOString()) + '.csv',
+        ['full_name', 'email', 'role', 'status', 'phone', 'address', 'created_at'],
+        clients.map(c => ({
+          full_name: c.full_name,
+          email: c.email,
+          role: c.role,
+          status: c.status,
+          phone: c.phone,
+          address: c.address,
+          created_at: isoDate(c.created_at)
+        })));
+    });
     return true;
   }
 
@@ -1792,10 +1806,35 @@
     });
   }
 
-  function actionBarBtn(label, id) {
-    return `<div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+  function actionBarBtn(label, id, exportId) {
+    const exportBtn = exportId
+      ? `<a href="#" id="${esc(exportId)}" style="display:inline-block;background:#fff;color:#1A1A1A;padding:10px 18px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none;margin-right:8px">Export CSV</a>`
+      : '';
+    return `<div style="display:flex;justify-content:flex-end;margin-bottom:14px;gap:0">${exportBtn}
       <a href="#" id="${esc(id)}" style="display:inline-block;background:#C0392B;color:#fff;padding:10px 18px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">${esc(label)}</a>
     </div>`;
+  }
+
+  // ---------- CSV export ----------
+  function csvEscape(v) {
+    if (v == null) return '';
+    const s = String(v).replace(/"/g, '""');
+    return /[",\n\r]/.test(s) ? '"' + s + '"' : s;
+  }
+  function downloadCsv(filename, headers, rows) {
+    const lines = [headers.map(csvEscape).join(',')];
+    rows.forEach(r => lines.push(headers.map(h => csvEscape(r[h])).join(',')));
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function isoDate(s) { return s ? String(s).slice(0, 10) : ''; }
+  function wireExport(scope, id, onClick) {
+    const btn = scope.querySelector('#' + id);
+    if (btn) btn.addEventListener('click', e => { e.preventDefault(); onClick(); });
   }
 
   function paintLoansView(loans) {
@@ -1816,7 +1855,7 @@
         </td>
       </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No loans yet.</td></tr>';
     v.innerHTML = viewShell('Loans', 'Active and historical loans',
-      actionBarBtn('+ Add Loan', 'oac-add-loan-btn') +
+      actionBarBtn('+ Add Loan', 'oac-add-loan-btn', 'oac-export-loans') +
       `<table class="oac-table" style="width:100%"><thead><tr>
         <th>Loan ID</th><th>Client</th><th>Balance</th><th>Rate</th><th>Payment</th><th>Next Due</th><th>Status</th><th style="text-align:right">Actions</th>
       </tr></thead><tbody>${rows}</tbody></table>`);
@@ -1825,6 +1864,24 @@
     });
     const addBtn = v.querySelector('#oac-add-loan-btn');
     if (addBtn) addBtn.addEventListener('click', (e) => { e.preventDefault(); openAddLoanModal(); });
+    wireExport(v, 'oac-export-loans', () => {
+      downloadCsv('onix-loans-' + isoDate(new Date().toISOString()) + '.csv',
+        ['loan_id', 'client_name', 'client_email', 'balance', 'interest_rate', 'monthly_payment', 'next_due_date', 'origination_date', 'maturity_date', 'term_months', 'collateral_address', 'status'],
+        loans.map(l => ({
+          loan_id: l.loan_id_display || l.id,
+          client_name: (l.profiles && l.profiles.full_name) || '',
+          client_email: (l.profiles && l.profiles.email) || '',
+          balance: l.balance,
+          interest_rate: l.interest_rate,
+          monthly_payment: l.monthly_payment,
+          next_due_date: isoDate(l.next_due_date),
+          origination_date: isoDate(l.origination_date),
+          maturity_date: isoDate(l.maturity_date),
+          term_months: l.term_months,
+          collateral_address: l.collateral_address,
+          status: l.status
+        })));
+    });
     return true;
   }
 
@@ -1846,7 +1903,7 @@
         </td>
       </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No investments yet.</td></tr>';
     v.innerHTML = viewShell('Investments', 'Client positions across every venture',
-      actionBarBtn('+ Add Investment', 'oac-add-inv-btn') +
+      actionBarBtn('+ Add Investment', 'oac-add-inv-btn', 'oac-export-investments') +
       `<table class="oac-table" style="width:100%"><thead><tr>
         <th>Client</th><th>Venture</th><th>Type</th><th>Invested</th><th>Ownership</th><th>Return</th><th>Status</th><th style="text-align:right">Actions</th>
       </tr></thead><tbody>${rows}</tbody></table>`);
@@ -1855,6 +1912,21 @@
     });
     const addBtn = v.querySelector('#oac-add-inv-btn');
     if (addBtn) addBtn.addEventListener('click', (e) => { e.preventDefault(); openAddInvestmentModal(); });
+    wireExport(v, 'oac-export-investments', () => {
+      downloadCsv('onix-investments-' + isoDate(new Date().toISOString()) + '.csv',
+        ['client_name', 'client_email', 'venture_name', 'venture_type', 'amount_invested', 'ownership_pct', 'expected_return', 'start_date', 'status'],
+        invs.map(i => ({
+          client_name: (i.profiles && i.profiles.full_name) || '',
+          client_email: (i.profiles && i.profiles.email) || '',
+          venture_name: i.venture_name,
+          venture_type: i.venture_type,
+          amount_invested: i.amount_invested,
+          ownership_pct: i.ownership_pct,
+          expected_return: i.expected_return,
+          start_date: isoDate(i.start_date),
+          status: i.status
+        })));
+    });
     return true;
   }
 
@@ -1876,7 +1948,7 @@
         </td>
       </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No raises yet.</td></tr>';
     v.innerHTML = viewShell('Raises', 'Active and historical investment opportunities',
-      actionBarBtn('+ Add Raise', 'oac-add-raise-btn') +
+      actionBarBtn('+ Add Raise', 'oac-add-raise-btn', 'oac-export-raises') +
       `<table class="oac-table" style="width:100%"><thead><tr>
         <th>Venture</th><th>Type</th><th>Goal</th><th>Raised</th><th>Min</th><th>IRR</th><th>Status</th><th style="text-align:right">Actions</th>
       </tr></thead><tbody>${rows}</tbody></table>`);
@@ -1885,6 +1957,22 @@
     });
     const addBtn = v.querySelector('#oac-add-raise-btn');
     if (addBtn) addBtn.addEventListener('click', (e) => { e.preventDefault(); openAddRaiseModal(); });
+    wireExport(v, 'oac-export-raises', () => {
+      downloadCsv('onix-raises-' + isoDate(new Date().toISOString()) + '.csv',
+        ['venture_name', 'venture_type', 'total_raise_target', 'amount_raised', 'minimum_investment', 'projected_return_min', 'projected_return_max', 'investment_horizon', 'structure', 'status'],
+        raises.map(r => ({
+          venture_name: r.venture_name,
+          venture_type: r.venture_type,
+          total_raise_target: r.total_raise_target,
+          amount_raised: r.amount_raised,
+          minimum_investment: r.minimum_investment,
+          projected_return_min: r.projected_return_min,
+          projected_return_max: r.projected_return_max,
+          investment_horizon: r.investment_horizon,
+          structure: r.structure,
+          status: r.status
+        })));
+    });
     return true;
   }
 
@@ -1904,12 +1992,28 @@
           ${contactAnchor(a.profiles && a.profiles.email, 'Loan Application')}
         </td>
       </tr>`).join('') : '<tr><td colspan="7" class="oac-empty">No applications submitted yet.</td></tr>';
-    v.innerHTML = viewShell('Loan Applications', 'Submitted via the client portal', `
-      <table class="oac-table" style="width:100%"><thead><tr>
+    const exportBar = `<div style="display:flex;justify-content:flex-end;margin-bottom:14px"><a href="#" id="oac-export-apps" style="display:inline-block;background:#fff;color:#1A1A1A;padding:10px 18px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none">Export CSV</a></div>`;
+    v.innerHTML = viewShell('Loan Applications', 'Submitted via the client portal',
+      exportBar +
+      `<table class="oac-table" style="width:100%"><thead><tr>
         <th>Submitted</th><th>Client</th><th>Amount</th><th>Type</th><th>Purpose</th><th>Status</th><th style="text-align:right">Actions</th>
       </tr></thead><tbody>${rows}</tbody></table>`);
     v.querySelectorAll('[data-view-static-app]').forEach(b => {
       b.addEventListener('click', (e) => { e.preventDefault(); viewApplication(applications[Number(b.dataset.viewStaticApp)]); });
+    });
+    wireExport(v, 'oac-export-apps', () => {
+      downloadCsv('onix-applications-' + isoDate(new Date().toISOString()) + '.csv',
+        ['submitted_at', 'client_name', 'client_email', 'amount_requested', 'applicant_type', 'purpose', 'status', 'notes'],
+        applications.map(a => ({
+          submitted_at: isoDate(a.submitted_at),
+          client_name: (a.profiles && a.profiles.full_name) || '',
+          client_email: (a.profiles && a.profiles.email) || '',
+          amount_requested: a.amount_requested,
+          applicant_type: a.applicant_type,
+          purpose: a.purpose,
+          status: a.status,
+          notes: a.notes
+        })));
     });
     return true;
   }
