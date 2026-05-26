@@ -1,0 +1,36 @@
+name: No merge conflict markers
+
+# Fails the run if any tracked file contains unresolved Git merge markers.
+# Background: in May 2026, admin-portal.html was committed with
+# <<<<<<< / ======= / >>>>>>> markers still in it, which caused two duplicate
+# <script> tags to load and the live admin dashboard to misbehave for hours.
+# This guard catches that situation before it ships again.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for conflict markers
+        run: |
+          set -e
+          # Grep tracked files only, anchored to line starts so we don't false-positive on docs.
+          # The marker is followed by a space (Git always inserts one) — we look for the literal pattern.
+          PATTERNS='^<<<<<<<[[:space:]]|^=======$|^>>>>>>>[[:space:]]'
+          FOUND=$(git ls-files | xargs grep -lE "$PATTERNS" 2>/dev/null | grep -v '^\.github/workflows/no-conflict-markers\.yml$' || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::Unresolved merge conflict markers found in:"
+            echo "$FOUND" | sed 's/^/  - /'
+            echo ""
+            echo "Resolve the conflicts (delete the <<<<<<< / ======= / >>>>>>> lines and"
+            echo "keep the correct content) before committing."
+            exit 1
+          fi
+          echo "✓ No conflict markers found."
