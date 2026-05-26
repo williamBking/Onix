@@ -653,7 +653,53 @@
   // so they survive any browser/form clearing of the underlying <input type=file>.
   let pickedSupportingFiles = [];
 
+  // ---------- live thousands-separator on money inputs ----------
+  // Mirrors the helper used in admin-portal-data.js. Any input marked
+  // data-money gets reformatted to "1,234,567.89" on every keystroke.
+  function formatMoneyString(raw) {
+    const cleaned = String(raw == null ? '' : raw).replace(/[^0-9.]/g, '');
+    const dot = cleaned.indexOf('.');
+    const intRaw = dot === -1 ? cleaned : cleaned.slice(0, dot);
+    const decRaw = dot === -1 ? null : cleaned.slice(dot + 1).replace(/\./g, '').slice(0, 2);
+    const intClean = intRaw.replace(/^0+(?=\d)/, '');
+    const intFormatted = intClean.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return intFormatted + (decRaw == null ? '' : '.' + decRaw);
+  }
+
+  function wireMoneyInput(input) {
+    if (!input || input.__moneyWired) return;
+    input.__moneyWired = true;
+    if (input.type === 'number') {
+      input.type = 'text';
+      if (!input.getAttribute('inputmode')) input.setAttribute('inputmode', 'decimal');
+    }
+    if (input.value) input.value = formatMoneyString(input.value);
+    input.addEventListener('input', () => {
+      const raw = input.value;
+      const caret = input.selectionStart != null ? input.selectionStart : raw.length;
+      const beforeCaret = (raw.slice(0, caret).match(/[0-9.]/g) || []).length;
+      const formatted = formatMoneyString(raw);
+      if (formatted !== raw) {
+        input.value = formatted;
+        let pos = 0, seen = 0;
+        while (pos < formatted.length && seen < beforeCaret) {
+          if (/[0-9.]/.test(formatted[pos])) seen++;
+          pos++;
+        }
+        try { input.setSelectionRange(pos, pos); } catch (_) {}
+      }
+    });
+  }
+
+  function wireMoneyInputs(scope) {
+    (scope || document).querySelectorAll('input[data-money]').forEach(wireMoneyInput);
+  }
+
   function wireLoanApplicationForm(userId, profile) {
+    // The apply form's Loan Amount input is marked data-money in the HTML.
+    // Wire it (and any other future money inputs) for live comma formatting.
+    wireMoneyInputs(document.querySelector('#view-apply') || document);
+
     function renderPickedFiles() {
       const zone = document.querySelector('.upload-zone');
       if (!zone) return;
