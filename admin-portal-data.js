@@ -861,11 +861,23 @@
   function renderApprovals(pending) {
     const el = document.getElementById('oac-approvals');
     if (!pending.length) { el.innerHTML = '<div class="oac-empty">No pending approvals.</div>'; return; }
-    el.innerHTML = `
+    const bulkBar = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px">
+        <label style="font-size:.78rem;color:#1A1A1A;display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="oac-pending-selectall" style="width:16px;height:16px;cursor:pointer">
+          <span><span id="oac-pending-count">0</span> selected</span>
+        </label>
+        <div style="display:flex;gap:8px">
+          <button class="oac-btn red"    id="oac-bulk-approve" disabled>Approve Selected</button>
+          <button class="oac-btn danger" id="oac-bulk-reject"  disabled>Reject Selected</button>
+        </div>
+      </div>`;
+    el.innerHTML = bulkBar + `
       <table class="oac-table"><thead><tr>
-        <th>Name</th><th>Email</th><th>Submitted</th><th style="text-align:right">Actions</th>
+        <th style="width:32px"></th><th>Name</th><th>Email</th><th>Submitted</th><th style="text-align:right">Actions</th>
       </tr></thead><tbody>${pending.map(p => `
         <tr data-id="${esc(p.id)}">
+          <td><input type="checkbox" class="oac-pending-check" data-id="${esc(p.id)}" style="width:16px;height:16px;cursor:pointer"></td>
           <td>${esc(p.full_name || '—')}</td>
           <td>${esc(p.email)}</td>
           <td>${fmt.date(p.created_at)}</td>
@@ -874,6 +886,56 @@
             <button class="oac-btn danger"  data-act="reject"  data-id="${esc(p.id)}">Reject</button>
           </td>
         </tr>`).join('')}</tbody></table>`;
+
+    // Bulk selection wiring
+    const selectAll = el.querySelector('#oac-pending-selectall');
+    const countEl   = el.querySelector('#oac-pending-count');
+    const bulkApprove = el.querySelector('#oac-bulk-approve');
+    const bulkReject  = el.querySelector('#oac-bulk-reject');
+    const checkboxes  = () => Array.from(el.querySelectorAll('.oac-pending-check'));
+    const updateCount = () => {
+      const n = checkboxes().filter(c => c.checked).length;
+      countEl.textContent = String(n);
+      bulkApprove.disabled = n === 0;
+      bulkReject.disabled  = n === 0;
+      // Update select-all state
+      const all = checkboxes();
+      selectAll.checked = n > 0 && n === all.length;
+      selectAll.indeterminate = n > 0 && n < all.length;
+    };
+    selectAll.addEventListener('change', () => {
+      checkboxes().forEach(c => { c.checked = selectAll.checked; });
+      updateCount();
+    });
+    checkboxes().forEach(c => c.addEventListener('change', updateCount));
+
+    async function bulkProcess(action) {
+      const ids = checkboxes().filter(c => c.checked).map(c => c.dataset.id);
+      if (!ids.length) return;
+      if (!confirm(`${action === 'approve' ? 'Approve' : 'Reject'} ${ids.length} client${ids.length === 1 ? '' : 's'}?`)) return;
+      bulkApprove.disabled = true; bulkReject.disabled = true;
+      let ok = 0, failed = 0;
+      const fn = action === 'approve' ? OnixDB.approveClient : OnixDB.rejectClient;
+      for (const id of ids) {
+        const clientRow = pending.find(p => p.id === id);
+        const success = await fn(id);
+        if (success) {
+          ok++;
+          if (action === 'approve' && clientRow && clientRow.email) {
+            OnixDB.client.functions.invoke('send-account-activated-email', {
+              body: { full_name: clientRow.full_name || '', email: clientRow.email }
+            }).catch(err => console.error('[onix-admin] activation email failed:', err));
+          }
+        } else {
+          failed++;
+        }
+      }
+      if (failed > 0) alert(`${ok} succeeded, ${failed} failed. See console for details.`);
+      refreshAll();
+    }
+    bulkApprove.addEventListener('click', () => bulkProcess('approve'));
+    bulkReject.addEventListener('click', () => bulkProcess('reject'));
+
     el.querySelectorAll('[data-act]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.id;
