@@ -577,61 +577,16 @@
   }
 
   // ---------- panel scaffold ----------
+  // The Live Admin Console drawer has been retired. Every drawer tab was a
+  // duplicate of a static admin tab that we already paint live. The Pending
+  // Approvals queue is the one piece of unique functionality, and it now lives
+  // as a banner at the top of the Clients tab (see paintClientsView).
+  // This function and the related render*() helpers below are kept as no-ops
+  // so any stray references don't throw — they can be deleted in a later sweep.
   function buildPanel() {
-    if (document.getElementById('onix-admin-panel')) return;
-    const toggle = document.createElement('button');
-    toggle.id = 'onix-admin-toggle';
-    toggle.textContent = 'Live Admin Console';
-    toggle.addEventListener('click', () => {
-      document.getElementById('onix-admin-panel').classList.toggle('open');
-      refreshAll();
-    });
-    document.body.appendChild(toggle);
-
-    const panel = document.createElement('div');
-    panel.id = 'onix-admin-panel';
-    panel.innerHTML = `
-      <div class="oac-hd">
-        <div>
-          <h1>Onix Live Admin Console</h1>
-          <div class="sub" id="oac-greeting">Loading…</div>
-        </div>
-        <div>
-          <button class="oac-btn outline" id="oac-refresh">Refresh</button>
-          <button class="oac-close" id="oac-close">Close</button>
-        </div>
-      </div>
-      <div class="oac-tabs">
-        <button class="oac-tab active" data-tab="overview">Overview</button>
-        <button class="oac-tab" data-tab="approvals">Pending Approvals</button>
-        <button class="oac-tab" data-tab="interests" id="oac-tab-interests">Investment Interest</button>
-        <button class="oac-tab" data-tab="clients">All Clients</button>
-        <button class="oac-tab" data-tab="applications">Applications</button>
-        <button class="oac-tab" data-tab="loans">Loans</button>
-        <button class="oac-tab" data-tab="investments">Investments</button>
-        <button class="oac-tab" data-tab="raises">Raises</button>
-      </div>
-      <div class="oac-section active" data-section="overview"><div class="oac-grid" id="oac-overview"></div></div>
-      <div class="oac-section" data-section="approvals"><div class="oac-card full" id="oac-approvals-card"><h2>Pending Client Approvals</h2><div class="ttl-sub">Approve or reject new sign-ups</div><div id="oac-approvals"></div></div></div>
-      <div class="oac-section" data-section="interests"><div class="oac-card full"><h2>Investment Interest</h2><div class="ttl-sub">Clients who expressed interest in an open raise — approve or decline</div><div id="oac-interests"></div></div></div>
-      <div class="oac-section" data-section="clients"><div class="oac-card full"><h2>All Clients</h2><div class="ttl-sub">Every profile in the system</div><div id="oac-clients"></div></div></div>
-      <div class="oac-section" data-section="applications"><div class="oac-card full"><h2>Loan Applications Inbox</h2><div class="ttl-sub">Submitted from the client portal</div><div id="oac-applications"></div></div></div>
-      <div class="oac-section" data-section="loans"><div class="oac-card full"><h2>All Loans</h2><div class="ttl-sub">Active and historical loans across all clients</div><div id="oac-loans"></div></div></div>
-      <div class="oac-section" data-section="investments"><div class="oac-card full"><h2>All Investments</h2><div class="ttl-sub">Client positions across every venture</div><div id="oac-investments"></div></div></div>
-      <div class="oac-section" data-section="raises"><div class="oac-card full"><h2>Open Raises</h2><div class="ttl-sub">Active investment opportunities</div><div id="oac-raises"></div></div></div>
-    `;
-    document.body.appendChild(panel);
-
-    panel.querySelector('#oac-close').addEventListener('click', () => panel.classList.remove('open'));
-    panel.querySelector('#oac-refresh').addEventListener('click', refreshAll);
-    panel.querySelectorAll('.oac-tab').forEach(t => {
-      t.addEventListener('click', () => {
-        panel.querySelectorAll('.oac-tab').forEach(x => x.classList.remove('active'));
-        panel.querySelectorAll('.oac-section').forEach(x => x.classList.remove('active'));
-        t.classList.add('active');
-        panel.querySelector('[data-section="' + t.dataset.tab + '"]').classList.add('active');
-      });
-    });
+    // Clean up any drawer artifacts that may exist from a previous load
+    const t = document.getElementById('onix-admin-toggle'); if (t) t.remove();
+    const p = document.getElementById('onix-admin-panel');  if (p) p.remove();
   }
 
   // ---------- renderers ----------
@@ -1234,9 +1189,10 @@
     return true;
   }
 
-  function paintClientsView(clients, loans, investments) {
+  function paintClientsView(clients, loans, investments, pending) {
     const v = findView(STATIC_VIEWS.clients); if (!v) return false;
     if (alreadyPainted(v)) return true;
+    pending = pending || (clients || []).filter(c => c.status === 'pending');
     // Per-client loan / investment counts so the admin can see activity at a glance.
     const loanCounts = {}, invCounts = {};
     (loans || []).forEach(l => { loanCounts[l.user_id] = (loanCounts[l.user_id] || 0) + 1; });
@@ -1265,18 +1221,107 @@
           <button class="oac-btn outline" data-cl-docs="1" type="button">Documents</button>
         </td>
       </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No clients yet.</td></tr>';
+    // Pending Approvals banner — only shown when at least one pending client exists.
+    const pendingRows = pending.length ? pending.map(p => `
+      <tr data-pending-id="${esc(p.id)}">
+        <td style="width:32px"><input type="checkbox" class="oac-pending-check" data-id="${esc(p.id)}" style="width:16px;height:16px;cursor:pointer"></td>
+        <td>${esc(p.full_name || '—')}</td>
+        <td>${esc(p.email)}</td>
+        <td>${fmt.date(p.created_at)}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="oac-btn red"    data-pending-act="approve" data-id="${esc(p.id)}">Approve</button>
+          <button class="oac-btn danger" data-pending-act="reject"  data-id="${esc(p.id)}">Reject</button>
+        </td>
+      </tr>`).join('') : '';
+    const pendingBanner = pending.length ? `
+      <div id="oac-pending-banner" style="background:#fff;border:1px solid #E8E8E8;border-top:3px solid #C0392B;margin-bottom:18px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid #f4f4f4">
+          <div>
+            <div style="font-size:.65rem;letter-spacing:.14em;text-transform:uppercase;color:#C0392B;font-weight:700">Pending Approvals</div>
+            <div style="font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:1.2rem;margin-top:2px">${pending.length} new sign-up${pending.length === 1 ? '' : 's'} awaiting review</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label style="font-size:.78rem;color:#1A1A1A;display:flex;align-items:center;gap:8px;cursor:pointer;margin-right:4px">
+              <input type="checkbox" id="oac-pending-selectall" style="width:16px;height:16px;cursor:pointer">
+              <span><span id="oac-pending-count">0</span> selected</span>
+            </label>
+            <button class="oac-btn red"    id="oac-bulk-approve" disabled>Approve Selected</button>
+            <button class="oac-btn danger" id="oac-bulk-reject"  disabled>Reject Selected</button>
+          </div>
+        </div>
+        <table class="oac-table" style="width:100%"><tbody>${pendingRows}</tbody></table>
+      </div>` : '';
+
     const newClientBtn = `
       <div style="display:flex;justify-content:flex-end;margin-bottom:14px;gap:0">
         <a href="#" id="oac-export-clients" style="display:inline-block;background:#fff;color:#1A1A1A;padding:10px 18px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none;margin-right:8px">Export CSV</a>
         <a href="#" id="oac-new-client-btn" style="display:inline-block;background:#C0392B;color:#fff;padding:10px 18px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">+ New Client</a>
       </div>`;
     v.innerHTML = viewShell('Clients', 'All accounts in the system',
+      pendingBanner +
       newClientBtn +
       `<table class="oac-table" style="width:100%"><thead><tr>
         <th>Name</th><th>Email</th><th>Role</th><th>Loans</th><th>Investments</th><th>Status</th><th>Joined</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>`);
     const btn = v.querySelector('#oac-new-client-btn');
     if (btn) btn.addEventListener('click', (e) => { e.preventDefault(); openNewClientModal(); });
+
+    // Wire the Pending Approvals banner (only present if pending.length > 0)
+    const banner = v.querySelector('#oac-pending-banner');
+    if (banner) {
+      const checkboxes = () => Array.from(banner.querySelectorAll('.oac-pending-check'));
+      const selectAll  = banner.querySelector('#oac-pending-selectall');
+      const countEl    = banner.querySelector('#oac-pending-count');
+      const bulkApprove = banner.querySelector('#oac-bulk-approve');
+      const bulkReject  = banner.querySelector('#oac-bulk-reject');
+      const updateCount = () => {
+        const n = checkboxes().filter(c => c.checked).length;
+        countEl.textContent = String(n);
+        bulkApprove.disabled = n === 0;
+        bulkReject.disabled  = n === 0;
+        const all = checkboxes();
+        selectAll.checked = n > 0 && n === all.length;
+        selectAll.indeterminate = n > 0 && n < all.length;
+      };
+      selectAll.addEventListener('change', () => {
+        checkboxes().forEach(c => { c.checked = selectAll.checked; });
+        updateCount();
+      });
+      checkboxes().forEach(c => c.addEventListener('change', updateCount));
+
+      async function actOne(id, action) {
+        const fn = action === 'approve' ? OnixDB.approveClient : OnixDB.rejectClient;
+        const clientRow = pending.find(p => p.id === id);
+        const ok = await fn(id);
+        if (ok && action === 'approve' && clientRow && clientRow.email) {
+          OnixDB.client.functions.invoke('send-account-activated-email', {
+            body: { full_name: clientRow.full_name || '', email: clientRow.email }
+          }).catch(err => console.error('[onix-admin] activation email failed:', err));
+        }
+        return ok;
+      }
+      async function bulk(action) {
+        const ids = checkboxes().filter(c => c.checked).map(c => c.dataset.id);
+        if (!ids.length) return;
+        if (!confirm(`${action === 'approve' ? 'Approve' : 'Reject'} ${ids.length} client${ids.length === 1 ? '' : 's'}?`)) return;
+        bulkApprove.disabled = true; bulkReject.disabled = true;
+        let ok = 0, failed = 0;
+        for (const id of ids) (await actOne(id, action)) ? ok++ : failed++;
+        if (failed > 0) alert(`${ok} succeeded, ${failed} failed.`);
+        refreshAll();
+      }
+      bulkApprove.addEventListener('click', () => bulk('approve'));
+      bulkReject.addEventListener('click', () => bulk('reject'));
+      banner.querySelectorAll('[data-pending-act]').forEach(b => {
+        b.addEventListener('click', async () => {
+          b.disabled = true;
+          const ok = await actOne(b.dataset.id, b.dataset.pendingAct);
+          if (ok) refreshAll();
+          else { b.disabled = false; alert('Action failed.'); }
+        });
+      });
+    }
+
     wireExport(v, 'oac-export-clients', () => {
       downloadCsv('onix-clients-' + isoDate(new Date().toISOString()) + '.csv',
         ['full_name', 'email', 'role', 'status', 'phone', 'address', 'created_at'],
@@ -2095,7 +2140,7 @@
     document.querySelectorAll('.' + LIVE_MARKER).forEach(el => el.classList.remove(LIVE_MARKER));
     function tryAll() {
       paintDashboardView(data);
-      paintClientsView(data.clients, data.loans, data.investments);
+      paintClientsView(data.clients, data.loans, data.investments, data.pending);
       paintLoansView(data.loans);
       paintInvestmentsView(data.investments);
       paintRaisesView(data.raises);
@@ -2284,15 +2329,10 @@
         OnixDB.getAllDistributions    ? OnixDB.getAllDistributions()    : Promise.resolve([]),
         OnixDB.getAllRaiseInterests   ? OnixDB.getAllRaiseInterests()   : Promise.resolve([])
       ]);
-      renderOverview({ clients, pending, loans, investments, raises, applications });
-      renderApprovals(pending);
-      renderInterests(interests);
-      renderClients(clients);
-      renderApplications(applications);
-      renderLoans(loans);
-      renderInvestments(investments);
-      renderRaises(raises);
-      paintStaticAdmin({ clients, loans, investments, raises, applications, payments, distributions });
+      // The Live Admin Console drawer is retired; everything renders inside
+      // the static admin tabs now. Pending Approvals appears as a banner on
+      // the Clients tab (driven by data.pending).
+      paintStaticAdmin({ clients, loans, investments, raises, applications, payments, distributions, pending });
       paintSidebarBadges({ applications, pending, interests });
       const newInterest = (interests || []).filter(i => i.status === 'new').length;
       if (greeting) greeting.textContent = `Loaded · ${clients.length} clients · ${pending.length} pending · ${loans.length} loans · ${applications.length} applications${newInterest ? ' · ' + newInterest + ' new interest' + (newInterest === 1 ? '' : 's') : ''}`;
