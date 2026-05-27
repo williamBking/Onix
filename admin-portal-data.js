@@ -2214,30 +2214,59 @@
 
   // Update the small count badges next to sidebar items (e.g. the "7" next
   // to Applications) so they reflect real data, not the demo number baked
-  // into the bundled HTML. Matches each <button> in the sidebar by its
-  // data-en label, then patches the .sidebar-item-badge inside it.
-  function paintSidebarBadges(data) {
+  // into the bundled HTML. The bundle injects the sidebar asynchronously
+  // and can re-render it later, so we (1) retry a few times after refreshAll
+  // and (2) install a MutationObserver that re-applies whenever a new
+  // .sidebar-item-badge appears in the DOM.
+  let __onixBadgeData = null;
+  let __onixBadgeObserver = null;
+
+  function applyBadges() {
+    if (!__onixBadgeData) return;
+    const data = __onixBadgeData;
     const counts = {
-      'Applications':     (data.applications || []).filter(a => a.status === 'pending').length,
-      'Pending Approvals':(data.pending      || []).length,
-      'Approvals':        (data.pending      || []).length
+      'Applications':      (data.applications || []).length,
+      'Pending Approvals': (data.pending      || []).length,
+      'Approvals':         (data.pending      || []).length
     };
-    const buttons = document.querySelectorAll('button[data-en], a[data-en]');
-    buttons.forEach(btn => {
-      const label = btn.querySelector('[data-en]') || btn;
-      const key = label.getAttribute && label.getAttribute('data-en');
-      if (!key || !(key in counts)) return;
-      const badge = btn.querySelector('.sidebar-item-badge');
-      if (!badge) return;
+    document.querySelectorAll('.sidebar-item-badge').forEach(badge => {
+      const parent = badge.closest('button, a');
+      if (!parent) return;
+      const labelEl = parent.querySelector('[data-en]');
+      const key = labelEl ? labelEl.getAttribute('data-en') : '';
+      if (!(key in counts)) return;
       const n = counts[key];
-      if (n > 0) {
-        badge.textContent = String(n);
-        badge.style.display = '';
-      } else {
-        // Hide the badge entirely when there's nothing pending — cleaner UI
-        badge.style.display = 'none';
-      }
+      const desired = String(n);
+      if (badge.textContent !== desired) badge.textContent = desired;
+      badge.style.display = n > 0 ? '' : 'none';
     });
+  }
+
+  function paintSidebarBadges(data) {
+    __onixBadgeData = data;
+    applyBadges();
+    // Retry — the sidebar may not be in the DOM yet when refreshAll first runs
+    let attempts = 0;
+    const retry = setInterval(() => {
+      applyBadges();
+      if (++attempts >= 8) clearInterval(retry); // ~4s
+    }, 500);
+    // Keep badges accurate if the bundle re-renders the sidebar later
+    if (!__onixBadgeObserver && document.body) {
+      __onixBadgeObserver = new MutationObserver(muts => {
+        for (const m of muts) {
+          for (const n of m.addedNodes) {
+            if (n.nodeType !== 1) continue;
+            if ((n.classList && n.classList.contains('sidebar-item-badge')) ||
+                (n.querySelector && n.querySelector('.sidebar-item-badge'))) {
+              applyBadges();
+              return;
+            }
+          }
+        }
+      });
+      __onixBadgeObserver.observe(document.body, { subtree: true, childList: true });
+    }
   }
 
   async function refreshAll() {
