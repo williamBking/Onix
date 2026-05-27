@@ -1221,35 +1221,55 @@
           <button class="oac-btn outline" data-cl-docs="1" type="button">Documents</button>
         </td>
       </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No clients yet.</td></tr>';
-    // Pending Approvals banner — only shown when at least one pending client exists.
-    const pendingRows = pending.length ? pending.map(p => `
-      <tr data-pending-id="${esc(p.id)}">
-        <td style="width:32px"><input type="checkbox" class="oac-pending-check" data-id="${esc(p.id)}" style="width:16px;height:16px;cursor:pointer"></td>
-        <td>${esc(p.full_name || '—')}</td>
-        <td>${esc(p.email)}</td>
-        <td>${fmt.date(p.created_at)}</td>
-        <td style="text-align:right;white-space:nowrap">
-          <button class="oac-btn red"    data-pending-act="approve" data-id="${esc(p.id)}">Approve</button>
-          <button class="oac-btn danger" data-pending-act="reject"  data-id="${esc(p.id)}">Reject</button>
-        </td>
-      </tr>`).join('') : '';
+    // Pending Approvals banner — split into "new sign-ups" (just signed up,
+    // need an in-person meeting) and "ready to activate" (admin has met with
+    // them and is ready to flip the account on).
+    const newSignups   = pending.filter(p => p.status === 'pending');
+    const readyToAct   = pending.filter(p => p.status === 'met');
+    function rowHtml(p) {
+      const isReady = p.status === 'met';
+      const activateBtn = `<button class="oac-btn red"     data-pending-act="approve" data-id="${esc(p.id)}">Activate Account</button>`;
+      const metBtn      = `<button class="oac-btn outline" data-pending-act="met"     data-id="${esc(p.id)}">Mark as Met</button>`;
+      const rejectBtn   = `<button class="oac-btn danger"  data-pending-act="reject"  data-id="${esc(p.id)}">Reject</button>`;
+      return `
+        <tr data-pending-id="${esc(p.id)}">
+          <td style="width:32px"><input type="checkbox" class="oac-pending-check" data-id="${esc(p.id)}" data-stage="${isReady ? 'met' : 'pending'}" style="width:16px;height:16px;cursor:pointer"></td>
+          <td>${esc(p.full_name || '—')}</td>
+          <td>${esc(p.email)}</td>
+          <td>${fmt.date(p.created_at)}</td>
+          <td style="text-align:right;white-space:nowrap">
+            ${isReady ? activateBtn : metBtn} ${isReady ? '' : activateBtn} ${rejectBtn}
+          </td>
+        </tr>`;
+    }
+    function sectionHtml(title, sub, rows) {
+      if (!rows.length) return '';
+      return `
+        <div style="padding:12px 18px;border-bottom:1px solid #f4f4f4;background:#FAFAFA">
+          <div style="font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:#1A1A1A;font-weight:700">${esc(title)}</div>
+          <div style="font-size:.78rem;color:#888;margin-top:2px">${esc(sub)}</div>
+        </div>
+        <table class="oac-table" style="width:100%"><tbody>${rows.map(rowHtml).join('')}</tbody></table>`;
+    }
     const pendingBanner = pending.length ? `
       <div id="oac-pending-banner" style="background:#fff;border:1px solid #E8E8E8;border-top:3px solid #C0392B;margin-bottom:18px">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid #f4f4f4">
           <div>
             <div style="font-size:.65rem;letter-spacing:.14em;text-transform:uppercase;color:#C0392B;font-weight:700">Pending Approvals</div>
-            <div style="font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:1.2rem;margin-top:2px">${pending.length} new sign-up${pending.length === 1 ? '' : 's'} awaiting review</div>
+            <div style="font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:1.2rem;margin-top:2px">${pending.length} awaiting review · ${newSignups.length} new · ${readyToAct.length} ready to activate</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
             <label style="font-size:.78rem;color:#1A1A1A;display:flex;align-items:center;gap:8px;cursor:pointer;margin-right:4px">
               <input type="checkbox" id="oac-pending-selectall" style="width:16px;height:16px;cursor:pointer">
               <span><span id="oac-pending-count">0</span> selected</span>
             </label>
-            <button class="oac-btn red"    id="oac-bulk-approve" disabled>Approve Selected</button>
-            <button class="oac-btn danger" id="oac-bulk-reject"  disabled>Reject Selected</button>
+            <button class="oac-btn red"     id="oac-bulk-approve" disabled>Activate Selected</button>
+            <button class="oac-btn outline" id="oac-bulk-met"     disabled>Mark Selected as Met</button>
+            <button class="oac-btn danger"  id="oac-bulk-reject"  disabled>Reject Selected</button>
           </div>
         </div>
-        <table class="oac-table" style="width:100%"><tbody>${pendingRows}</tbody></table>
+        ${sectionHtml('New sign-ups', 'Met with the client in person first, then mark as Met or Activate directly.', newSignups)}
+        ${sectionHtml('Ready to activate', 'Already met with — click Activate Account to send the welcome email.', readyToAct)}
       </div>` : '';
 
     const newClientBtn = `
@@ -1273,11 +1293,13 @@
       const selectAll  = banner.querySelector('#oac-pending-selectall');
       const countEl    = banner.querySelector('#oac-pending-count');
       const bulkApprove = banner.querySelector('#oac-bulk-approve');
+      const bulkMet     = banner.querySelector('#oac-bulk-met');
       const bulkReject  = banner.querySelector('#oac-bulk-reject');
       const updateCount = () => {
         const n = checkboxes().filter(c => c.checked).length;
         countEl.textContent = String(n);
         bulkApprove.disabled = n === 0;
+        bulkMet.disabled     = n === 0;
         bulkReject.disabled  = n === 0;
         const all = checkboxes();
         selectAll.checked = n > 0 && n === all.length;
@@ -1290,28 +1312,36 @@
       checkboxes().forEach(c => c.addEventListener('change', updateCount));
 
       async function actOne(id, action) {
-        const fn = action === 'approve' ? OnixDB.approveClient : OnixDB.rejectClient;
         const clientRow = pending.find(p => p.id === id);
-        const ok = await fn(id);
-        if (ok && action === 'approve' && clientRow && clientRow.email) {
-          OnixDB.client.functions.invoke('send-account-activated-email', {
-            body: { full_name: clientRow.full_name || '', email: clientRow.email }
-          }).catch(err => console.error('[onix-admin] activation email failed:', err));
+        let ok = false;
+        if (action === 'approve') {
+          ok = await OnixDB.approveClient(id);
+          if (ok && clientRow && clientRow.email) {
+            OnixDB.client.functions.invoke('send-account-activated-email', {
+              body: { full_name: clientRow.full_name || '', email: clientRow.email }
+            }).catch(err => console.error('[onix-admin] activation email failed:', err));
+          }
+        } else if (action === 'met') {
+          ok = !!(OnixDB.markClientMet && await OnixDB.markClientMet(id));
+        } else if (action === 'reject') {
+          ok = await OnixDB.rejectClient(id);
         }
         return ok;
       }
       async function bulk(action) {
         const ids = checkboxes().filter(c => c.checked).map(c => c.dataset.id);
         if (!ids.length) return;
-        if (!confirm(`${action === 'approve' ? 'Approve' : 'Reject'} ${ids.length} client${ids.length === 1 ? '' : 's'}?`)) return;
-        bulkApprove.disabled = true; bulkReject.disabled = true;
+        const label = action === 'approve' ? 'activate' : action === 'met' ? 'mark as met' : 'reject';
+        if (!confirm(`${label.charAt(0).toUpperCase() + label.slice(1)} ${ids.length} client${ids.length === 1 ? '' : 's'}?`)) return;
+        bulkApprove.disabled = true; bulkMet.disabled = true; bulkReject.disabled = true;
         let ok = 0, failed = 0;
         for (const id of ids) (await actOne(id, action)) ? ok++ : failed++;
         if (failed > 0) alert(`${ok} succeeded, ${failed} failed.`);
         refreshAll();
       }
       bulkApprove.addEventListener('click', () => bulk('approve'));
-      bulkReject.addEventListener('click', () => bulk('reject'));
+      bulkMet.addEventListener('click',     () => bulk('met'));
+      bulkReject.addEventListener('click',  () => bulk('reject'));
       banner.querySelectorAll('[data-pending-act]').forEach(b => {
         b.addEventListener('click', async () => {
           b.disabled = true;
