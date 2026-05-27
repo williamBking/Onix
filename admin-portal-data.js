@@ -2366,6 +2366,432 @@
     })();
   }
 
+  // ============================================================
+  // CALENDAR TAB
+  // Injects a Calendar sidebar item + view-calendar div into the
+  // unpacked Bolt bundle. Month grid, color-coded events, add/remove.
+  // ============================================================
+  const CAL_TYPES = {
+    birthday:         { label: 'Birthday',          color: '#C58FB8' },
+    payment:          { label: 'Payment Due',       color: '#3B8B3B' },
+    loan_closing:     { label: 'Loan Closing',      color: '#C0392B' },
+    quarterly_report: { label: 'Quarterly Report',  color: '#4A6FA5' },
+    meeting:          { label: 'Meeting',           color: '#B07330' },
+    other:            { label: 'Other',             color: '#6B6560' }
+  };
+  let calMonth   = new Date().getMonth();
+  let calYear    = new Date().getFullYear();
+  let calEvents  = [];
+  let calClients = [];
+  let calLoans   = [];
+
+  function injectCalendarStyles() {
+    if (document.getElementById('cal-styles')) return;
+    const s = document.createElement('style');
+    s.id = 'cal-styles';
+    s.textContent = `
+      #view-calendar{padding:32px 40px;font-family:'DM Sans',sans-serif;color:#1A1A1A}
+      .cal-head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:18px;flex-wrap:wrap}
+      .cal-head h1{font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:2rem;margin:0}
+      .cal-head .cal-eyebrow{font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:#C0392B;font-weight:600;margin-bottom:6px}
+      .cal-rule{width:40px;height:2px;background:#C0392B;margin-bottom:0}
+      .cal-nav{display:flex;gap:6px;align-items:center}
+      .cal-nav button{background:#fff;border:1px solid #E8E8E8;cursor:pointer;padding:8px 12px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;color:#1A1A1A;border-radius:2px}
+      .cal-nav button:hover{border-color:#C0392B;color:#C0392B}
+      .cal-nav .cal-today-btn{background:#1A1A1A;color:#fff;border-color:#1A1A1A}
+      .cal-nav .cal-today-btn:hover{background:#333;color:#fff;border-color:#333}
+      .cal-add{background:#C0392B;color:#fff;border:1px solid #C0392B;padding:10px 16px;cursor:pointer;font:600 .74rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border-radius:2px}
+      .cal-add:hover{background:#a93226}
+      .cal-add:disabled{opacity:.6;cursor:not-allowed}
+      .cal-month-grid{display:grid;grid-template-columns:repeat(7,1fr);background:#E8E8E8;gap:1px;border:1px solid #E8E8E8;border-top:3px solid #C0392B}
+      .cal-dow{background:#F8F7F5;padding:10px 12px;font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:#888;font-weight:700}
+      .cal-cell{background:#fff;min-height:110px;padding:8px 8px 6px;display:flex;flex-direction:column;gap:4px;cursor:pointer;transition:background .12s;position:relative}
+      .cal-cell:hover{background:#FAFAFA}
+      .cal-cell.other-month{background:#F8F7F5}
+      .cal-cell.other-month .cal-day-num{color:#bbb}
+      .cal-cell.today{background:#FDF0EE}
+      .cal-cell.today .cal-day-num{color:#C0392B;font-weight:800}
+      .cal-day-num{font-size:.84rem;font-weight:600;color:#1A1A1A}
+      .cal-event{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:2px;font-size:.7rem;line-height:1.25}
+      .cal-event-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+      .cal-event-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+      .cal-overflow{font-size:.62rem;color:#888;font-weight:700;padding:1px 4px}
+      .cal-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:18px;padding:14px 18px;background:#fff;border:1px solid #E8E8E8}
+      .cal-legend-item{display:flex;align-items:center;gap:6px;font-size:.74rem;color:#1A1A1A}
+      .cal-legend-item .dot{width:10px;height:10px;border-radius:50%}
+      .cal-bg{position:fixed;inset:0;background:rgba(20,20,20,.45);z-index:99996;display:none;align-items:flex-start;justify-content:center;padding:48px 16px;overflow:auto;font-family:'DM Sans',sans-serif}
+      .cal-bg.open{display:flex}
+      .cal-panel{background:#fff;width:540px;max-width:100%;border-top:3px solid #C0392B;box-shadow:0 24px 60px rgba(0,0,0,.25);padding:24px 28px;color:#1A1A1A}
+      .cal-panel h2{font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:1.6rem;margin:0 0 14px}
+      .cal-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 14px;background:#F8F7F5;border-left:3px solid #C0392B;margin-bottom:8px}
+      .cal-row .t{font-size:.86rem;font-weight:600}
+      .cal-row .s{font-size:.72rem;color:#888;margin-top:2px}
+      .cal-row .actions{display:flex;gap:6px;flex-shrink:0}
+      .cal-row button{padding:5px 10px;font-size:.62rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;border:1px solid #E8E8E8;background:#fff;color:#888;cursor:pointer;border-radius:2px;font-family:inherit}
+      .cal-row button.danger:hover{border-color:#C0392B;color:#C0392B}
+      .cal-empty{color:#888;font-style:italic;padding:18px 0;text-align:center}
+      .cal-form .k{display:block;font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:#888;font-weight:700;margin-bottom:4px;margin-top:12px}
+      .cal-form .k:first-of-type{margin-top:0}
+      .cal-form input,.cal-form select,.cal-form textarea{width:100%;padding:9px 11px;border:1px solid #E8E8E8;font-size:.88rem;font-family:inherit;outline:none;background:#fff;color:#1A1A1A;box-sizing:border-box}
+      .cal-form input:focus,.cal-form select:focus,.cal-form textarea:focus{border-color:#C0392B}
+      .cal-form textarea{resize:vertical;min-height:60px}
+      .cal-foot{margin-top:18px;display:flex;justify-content:flex-end;gap:8px}
+      .cal-foot .ghost{background:#fff;color:#888;border:1px solid #E8E8E8;padding:9px 14px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;cursor:pointer;border-radius:2px}
+      .cal-foot .ghost:hover{border-color:#C0392B;color:#C0392B}
+    `;
+    document.head.appendChild(s);
+  }
+
+  function ensureCalendarSidebarAndView() {
+    if (document.getElementById('view-calendar')) return true;
+    const sidebar = document.querySelector('.sidebar');
+    const main    = document.querySelector('.main');
+    if (!sidebar || !main) return false;
+
+    if (!sidebar.querySelector('[data-view="calendar"]')) {
+      const anchor = sidebar.querySelector('[data-view="documents"]') ||
+                     sidebar.querySelector('[data-view="reports"]');
+      const btn = document.createElement('button');
+      btn.className = 'sidebar-item';
+      btn.setAttribute('data-view', 'calendar');
+      btn.setAttribute('onclick', "showView('calendar')");
+      btn.innerHTML =
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+          '<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>' +
+          '<line x1="16" y1="2" x2="16" y2="6"/>' +
+          '<line x1="8" y1="2" x2="8" y2="6"/>' +
+          '<line x1="3" y1="10" x2="21" y2="10"/>' +
+        '</svg>' +
+        '<span data-en="Calendar" data-es="Calendario">Calendar</span>';
+      if (anchor && anchor.parentNode) {
+        anchor.parentNode.insertBefore(btn, anchor.nextSibling);
+      } else {
+        sidebar.appendChild(btn);
+      }
+    }
+
+    if (!document.getElementById('view-calendar')) {
+      const v = document.createElement('div');
+      v.className = 'view';
+      v.id = 'view-calendar';
+      v.innerHTML =
+        '<div class="cal-head">' +
+          '<div>' +
+            '<div class="cal-eyebrow">Schedule</div>' +
+            '<h1 id="cal-month-label">Calendar</h1>' +
+            '<div class="cal-rule"></div>' +
+          '</div>' +
+          '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">' +
+            '<div class="cal-nav">' +
+              '<button id="cal-prev"  type="button" aria-label="Previous month">‹</button>' +
+              '<button id="cal-today" type="button" class="cal-today-btn">Today</button>' +
+              '<button id="cal-next"  type="button" aria-label="Next month">›</button>' +
+            '</div>' +
+            '<button class="cal-add" id="cal-add-btn" type="button">+ Add Event</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="cal-month-grid" id="cal-month-grid"></div>' +
+        '<div class="cal-legend" id="cal-legend"></div>';
+      main.appendChild(v);
+      v.querySelector('#cal-prev').addEventListener('click', () => {
+        calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } renderCalendar();
+      });
+      v.querySelector('#cal-next').addEventListener('click', () => {
+        calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } renderCalendar();
+      });
+      v.querySelector('#cal-today').addEventListener('click', () => {
+        const d = new Date(); calMonth = d.getMonth(); calYear = d.getFullYear(); renderCalendar();
+      });
+      v.querySelector('#cal-add-btn').addEventListener('click', () => openAddEventModal());
+    }
+    return true;
+  }
+
+  async function loadCalendarData() {
+    const c = OnixDB.client;
+    const [eventsRes, bdayRes, loansRes, paymentsRes, clientsRes, allLoansRes] = await Promise.all([
+      c.from('calendar_events').select('*'),
+      c.from('profiles').select('id, full_name, date_of_birth').not('date_of_birth', 'is', null),
+      c.from('loans').select('id, loan_id_display, maturity_date, profiles(full_name)').eq('status', 'active').not('maturity_date', 'is', null),
+      c.from('loan_payments').select('id, due_date, amount_due, loans(loan_id_display, profiles(full_name))').eq('status', 'pending').not('due_date', 'is', null),
+      c.from('profiles').select('id, full_name, email').eq('role', 'client').order('full_name', { ascending: true }),
+      c.from('loans').select('id, loan_id_display, profiles(full_name)').order('created_at', { ascending: false })
+    ]);
+    if (eventsRes.error)   console.error('[onix-cal] events fetch failed:',   eventsRes.error);
+    if (bdayRes.error)     console.error('[onix-cal] birthdays fetch failed:',bdayRes.error);
+    if (loansRes.error)    console.error('[onix-cal] loans fetch failed:',    loansRes.error);
+    if (paymentsRes.error) console.error('[onix-cal] payments fetch failed:', paymentsRes.error);
+
+    calEvents = [];
+    (eventsRes.data || []).forEach(e => calEvents.push({
+      id: e.id, title: e.title, type: e.event_type, date: e.event_date,
+      description: e.description, source: 'manual',
+      profileId: e.related_profile_id, loanId: e.related_loan_id
+    }));
+    (bdayRes.data || []).forEach(p => {
+      const parts = p.date_of_birth.split('-'); // YYYY-MM-DD
+      calEvents.push({
+        id: 'bday-' + p.id,
+        title: (p.full_name || 'Client') + "'s Birthday",
+        type: 'birthday',
+        monthDay: parts[1] + '-' + parts[2],
+        date: null, // recomputed per-viewed-year in renderCalendar
+        source: 'profile', profileId: p.id, readOnly: true
+      });
+    });
+    (loansRes.data || []).forEach(l => calEvents.push({
+      id: 'closing-' + l.id,
+      title: 'Loan closing · ' + (l.loan_id_display || ''),
+      subtitle: (l.profiles && l.profiles.full_name) || '',
+      type: 'loan_closing', date: l.maturity_date,
+      source: 'loan', loanId: l.id, readOnly: true
+    }));
+    (paymentsRes.data || []).forEach(p => calEvents.push({
+      id: 'payment-' + p.id,
+      title: fmt.money(p.amount_due) + ' payment due',
+      subtitle: (p.loans && (p.loans.loan_id_display || (p.loans.profiles && p.loans.profiles.full_name))) || '',
+      type: 'payment', date: p.due_date, source: 'payment', readOnly: true
+    }));
+    calClients = clientsRes.data || [];
+    calLoans   = allLoansRes.data || [];
+  }
+
+  function renderCalendar() {
+    const grid = document.getElementById('cal-month-grid');
+    if (!grid) return;
+    const monthLabel = document.getElementById('cal-month-label');
+    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    if (monthLabel) monthLabel.textContent = monthNames[calMonth] + ' ' + calYear;
+
+    calEvents.forEach(e => {
+      if (e.source === 'profile' && e.monthDay) e.date = calYear + '-' + e.monthDay;
+    });
+
+    const firstOfMonth    = new Date(calYear, calMonth, 1);
+    const startDow        = firstOfMonth.getDay();
+    const daysInMonth     = new Date(calYear, calMonth + 1, 0).getDate();
+    const daysInPrevMonth = new Date(calYear, calMonth, 0).getDate();
+    const today           = new Date();
+    const todayStr        = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+
+    const byDate = {};
+    calEvents.forEach(e => {
+      if (!e.date) return;
+      (byDate[e.date] = byDate[e.date] || []).push(e);
+    });
+
+    const dowHtml = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+      .map(d => '<div class="cal-dow">' + d + '</div>').join('');
+
+    let cellsHtml = '';
+    for (let i = 0; i < 42; i++) {
+      const slot = i - startDow + 1;
+      let cy, cm, cd, otherMonth = false;
+      if (slot < 1) {
+        cy = calMonth === 0 ? calYear - 1 : calYear;
+        cm = calMonth === 0 ? 11 : calMonth - 1;
+        cd = daysInPrevMonth + slot;
+        otherMonth = true;
+      } else if (slot > daysInMonth) {
+        cy = calMonth === 11 ? calYear + 1 : calYear;
+        cm = calMonth === 11 ? 0 : calMonth + 1;
+        cd = slot - daysInMonth;
+        otherMonth = true;
+      } else {
+        cy = calYear; cm = calMonth; cd = slot;
+      }
+      const dateStr = cy + '-' + String(cm + 1).padStart(2, '0') + '-' + String(cd).padStart(2, '0');
+      const isToday = dateStr === todayStr;
+      const events  = byDate[dateStr] || [];
+      const eventsHtml = events.slice(0, 3).map(ev => {
+        const color = (CAL_TYPES[ev.type] || CAL_TYPES.other).color;
+        return '<div class="cal-event" style="background:' + color + '22;color:' + color + '">' +
+                 '<span class="cal-event-dot" style="background:' + color + '"></span>' +
+                 '<span class="cal-event-title">' + esc(ev.title) + '</span>' +
+               '</div>';
+      }).join('');
+      const overflow = events.length > 3 ? '<div class="cal-overflow">+' + (events.length - 3) + ' more</div>' : '';
+      cellsHtml +=
+        '<div class="cal-cell' + (otherMonth ? ' other-month' : '') + (isToday ? ' today' : '') + '" data-date="' + dateStr + '">' +
+          '<div class="cal-day-num">' + cd + '</div>' +
+          eventsHtml + overflow +
+        '</div>';
+    }
+    grid.innerHTML = dowHtml + cellsHtml;
+
+    grid.querySelectorAll('.cal-cell').forEach(c => c.addEventListener('click', () => openDayPanel(c.dataset.date)));
+
+    const legend = document.getElementById('cal-legend');
+    if (legend) {
+      legend.innerHTML = Object.keys(CAL_TYPES).map(k => {
+        const t = CAL_TYPES[k];
+        return '<div class="cal-legend-item"><span class="dot" style="background:' + t.color + '"></span>' + t.label + '</div>';
+      }).join('');
+    }
+  }
+
+  function ensureCalBg(id) {
+    let bg = document.getElementById(id);
+    if (bg) return bg;
+    bg = document.createElement('div');
+    bg.id = id;
+    bg.className = 'cal-bg';
+    bg.innerHTML = '<div class="cal-panel"></div>';
+    document.body.appendChild(bg);
+    bg.addEventListener('click', e => { if (e.target === bg) bg.classList.remove('open'); });
+    return bg;
+  }
+
+  function openDayPanel(dateStr) {
+    const bg = ensureCalBg('cal-day-bg');
+    const panel = bg.querySelector('.cal-panel');
+    const events = calEvents.filter(e => e.date === dateStr);
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const pretty = new Date(y, m - 1, d).toLocaleDateString('en-US',
+      { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+
+    const rowsHtml = events.length ? events.map(ev => {
+      const t = CAL_TYPES[ev.type] || CAL_TYPES.other;
+      return '<div class="cal-row" style="border-left-color:' + t.color + '">' +
+        '<div>' +
+          '<div class="t">' + esc(ev.title) + '</div>' +
+          '<div class="s">' + esc(t.label) +
+            (ev.subtitle    ? ' · ' + esc(ev.subtitle)    : '') +
+            (ev.description ? ' · ' + esc(ev.description) : '') +
+            (ev.readOnly    ? ' · <em>auto</em>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div class="actions">' +
+          (ev.readOnly ? '' : '<button class="danger" data-cal-delete="' + esc(ev.id) + '">Delete</button>') +
+        '</div>' +
+      '</div>';
+    }).join('') : '<div class="cal-empty">No events scheduled for this day.</div>';
+
+    panel.innerHTML =
+      '<h2>' + esc(pretty) + '</h2>' +
+      rowsHtml +
+      '<div class="cal-foot">' +
+        '<button class="ghost" id="cal-day-close" type="button">Close</button>' +
+        '<button class="cal-add" id="cal-day-add"   type="button">+ Add Event</button>' +
+      '</div>';
+
+    panel.querySelector('#cal-day-close').addEventListener('click', () => bg.classList.remove('open'));
+    panel.querySelector('#cal-day-add').addEventListener('click', () => {
+      bg.classList.remove('open');
+      openAddEventModal(dateStr);
+    });
+    panel.querySelectorAll('[data-cal-delete]').forEach(btn => btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-cal-delete');
+      if (!confirm('Delete this event?')) return;
+      btn.disabled = true; btn.textContent = 'Deleting…';
+      const r = await OnixDB.client.from('calendar_events').delete().eq('id', id);
+      if (r.error) { alert('Delete failed: ' + r.error.message); btn.disabled = false; btn.textContent = 'Delete'; return; }
+      calEvents = calEvents.filter(e => e.id !== id);
+      renderCalendar();
+      bg.classList.remove('open');
+    }));
+
+    bg.classList.add('open');
+  }
+
+  function openAddEventModal(presetDate) {
+    const bg = ensureCalBg('cal-add-bg');
+    const panel = bg.querySelector('.cal-panel');
+    const defaultDate = presetDate || new Date().toISOString().slice(0, 10);
+
+    const typeOpts = Object.keys(CAL_TYPES).map(k =>
+      '<option value="' + k + '">' + CAL_TYPES[k].label + '</option>'
+    ).join('');
+    const clientOpts = '<option value="">— No client —</option>' +
+      calClients.map(c =>
+        '<option value="' + esc(c.id) + '">' + esc(c.full_name || c.email || c.id) + '</option>'
+      ).join('');
+    const loanOpts = '<option value="">— No loan —</option>' +
+      calLoans.map(l =>
+        '<option value="' + esc(l.id) + '">' +
+          esc(l.loan_id_display || l.id.slice(0, 8)) +
+          ((l.profiles && l.profiles.full_name) ? ' · ' + esc(l.profiles.full_name) : '') +
+        '</option>'
+      ).join('');
+
+    panel.innerHTML =
+      '<h2>Add Calendar Event</h2>' +
+      '<form id="cal-add-form" class="cal-form">' +
+        '<label class="k">Type</label>' +
+        '<select name="event_type" required>' + typeOpts + '</select>' +
+        '<label class="k">Title</label>' +
+        '<input name="title" type="text" required placeholder="e.g. Q2 2026 LP Letter">' +
+        '<label class="k">Date</label>' +
+        '<input name="event_date" type="date" required value="' + esc(defaultDate) + '">' +
+        '<label class="k">Description (optional)</label>' +
+        '<textarea name="description" rows="2"></textarea>' +
+        '<label class="k">Related Client (optional)</label>' +
+        '<select name="related_profile_id">' + clientOpts + '</select>' +
+        '<label class="k">Related Loan (optional)</label>' +
+        '<select name="related_loan_id">' + loanOpts + '</select>' +
+        '<div id="cal-add-err" style="color:#C0392B;font-size:.85rem;margin-top:10px;display:none"></div>' +
+        '<div class="cal-foot">' +
+          '<button type="button" class="ghost" id="cal-add-cancel">Cancel</button>' +
+          '<button type="submit" class="cal-add" id="cal-add-submit">Save Event</button>' +
+        '</div>' +
+      '</form>';
+
+    panel.querySelector('#cal-add-cancel').addEventListener('click', () => bg.classList.remove('open'));
+    panel.querySelector('#cal-add-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const form = e.target;
+      const err = panel.querySelector('#cal-add-err');
+      err.style.display = 'none';
+      const fd = new FormData(form);
+      const payload = {
+        event_type: fd.get('event_type'),
+        title: (fd.get('title') || '').trim(),
+        event_date: fd.get('event_date'),
+        description: (fd.get('description') || '').trim() || null,
+        related_profile_id: fd.get('related_profile_id') || null,
+        related_loan_id:    fd.get('related_loan_id')    || null
+      };
+      if (!payload.title || !payload.event_date || !payload.event_type) {
+        err.style.display = 'block';
+        err.textContent = 'Type, title, and date are required.';
+        return;
+      }
+      const submitBtn = panel.querySelector('#cal-add-submit');
+      submitBtn.disabled = true;
+      const origLabel = submitBtn.textContent; submitBtn.textContent = 'Saving…';
+      const ins = await OnixDB.client.from('calendar_events').insert(payload).select().single();
+      if (ins.error) {
+        err.style.display = 'block'; err.textContent = ins.error.message;
+        submitBtn.disabled = false; submitBtn.textContent = origLabel;
+        return;
+      }
+      calEvents.push({
+        id: ins.data.id, title: ins.data.title, type: ins.data.event_type,
+        date: ins.data.event_date, description: ins.data.description, source: 'manual',
+        profileId: ins.data.related_profile_id, loanId: ins.data.related_loan_id
+      });
+      const [yy, mm] = ins.data.event_date.split('-').map(Number);
+      calYear = yy; calMonth = mm - 1;
+      renderCalendar();
+      bg.classList.remove('open');
+    });
+
+    bg.classList.add('open');
+  }
+
+  async function wireCalendarTab() {
+    injectCalendarStyles();
+    let tries = 0;
+    const wait = () => new Promise(r => setTimeout(r, 250));
+    while (tries++ < 40 && !ensureCalendarSidebarAndView()) await wait();
+    try {
+      await loadCalendarData();
+      renderCalendar();
+    } catch (ex) {
+      console.error('[onix-cal] init failed:', ex);
+    }
+  }
+
   async function bootstrap() {
     const gate = await OnixDB.requireAdmin();
     if (!gate) return;
@@ -2373,6 +2799,7 @@
     buildPanel();
     renderSidebarUser(gate.profile);
     document.getElementById('oac-greeting').textContent = 'Signed in as ' + (gate.profile.full_name || gate.profile.email);
+    wireCalendarTab();
     // Load data eagerly so the static "Loan Applications" tab is populated
     // even before the admin opens the Live Admin Console.
     refreshAll();
