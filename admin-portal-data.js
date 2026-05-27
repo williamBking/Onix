@@ -2828,10 +2828,12 @@
     injectStyles();
     buildPanel();
     renderSidebarUser(gate.profile);
-    document.getElementById('oac-greeting').textContent = 'Signed in as ' + (gate.profile.full_name || gate.profile.email);
+    // oac-greeting belongs to the retired Live Admin Console drawer; only
+    // set its text if the element actually exists. Without this guard the
+    // bootstrap throws and downstream wiring (Calendar tab, etc.) never runs.
+    const greet = document.getElementById('oac-greeting');
+    if (greet) greet.textContent = 'Signed in as ' + (gate.profile.full_name || gate.profile.email);
     wireCalendarTab();
-    // Load data eagerly so the static "Loan Applications" tab is populated
-    // even before the admin opens the Live Admin Console.
     refreshAll();
   }
 
