@@ -1205,6 +1205,257 @@
   }
 
   // ---------- main ----------
+  // ---------- Global smart search ----------
+  // Module-scope cache of everything loaded for this client, so the search
+  // bar can search across loans / investments / payments / docs / raises
+  // without re-querying Supabase on every keystroke.
+  const searchData = {
+    loans: [], investments: [], raises: [], payments: [],
+    distributions: [], applications: [], clientDocs: []
+  };
+  let currentResults = []; // last-rendered results, for click + keyboard handlers
+  let kbIndex = -1;        // currently keyboard-focused row in the dropdown
+
+  function buildSearchIndex() {
+    const index = [];
+    const lang = (window.OnixLang && OnixLang.getLang && OnixLang.getLang()) || 'en';
+    const sections = [
+      {key:'dashboard',   en:'Dashboard',                  es:'Inicio',          sub:'Account overview & KPIs'},
+      {key:'loans',       en:'My Loan',                    es:'Mi Préstamo',     sub:'Loan details, balance, documents'},
+      {key:'payments',    en:'Payments',                   es:'Pagos',           sub:'Payment history & upcoming'},
+      {key:'apply',       en:'Apply for a New Loan',       es:'Solicitar Préstamo', sub:'Submit a new application'},
+      {key:'investments', en:'My Investments',             es:'Mis Inversiones', sub:'Portfolio positions'},
+      {key:'raises',      en:'Investment Opportunities',   es:'Oportunidades',   sub:'Open raises you can join'},
+      {key:'documents',   en:'My Documents',               es:'Mis Documentos',  sub:'Loan + investment files'},
+      {key:'profile',     en:'Profile & Preferences',      es:'Perfil',          sub:'Account settings'}
+    ];
+    sections.forEach(s => index.push({
+      category: 'Sections',
+      title: (lang === 'es' ? s.es : s.en),
+      subtitle: s.sub,
+      haystack: (s.en + ' ' + s.es + ' ' + s.sub).toLowerCase(),
+      onClick: () => showView(s.key)
+    }));
+
+    (searchData.loans || []).forEach(l => {
+      index.push({
+        category: 'Loans',
+        title: l.loan_id_display || 'Loan',
+        subtitle: [l.status, fmt.money(l.balance), l.collateral_address].filter(Boolean).join(' · '),
+        amount: l.balance != null ? fmt.money(l.balance) : '',
+        haystack: [l.loan_id_display, l.status, l.balance, l.collateral_address, l.term_months, l.interest_rate].filter(x => x != null).join(' ').toLowerCase(),
+        onClick: () => showView('loans')
+      });
+      (l.loan_documents || []).forEach(d => index.push({
+        category: 'Documents',
+        title: d.name,
+        subtitle: 'Loan document · ' + (l.loan_id_display || 'Loan'),
+        haystack: (d.name + ' ' + (l.loan_id_display || '') + ' loan document').toLowerCase(),
+        onClick: () => showView('documents')
+      }));
+    });
+
+    (searchData.investments || []).forEach(inv => {
+      index.push({
+        category: 'Investments',
+        title: inv.venture_name || 'Investment',
+        subtitle: [inv.venture_type, fmt.money(inv.amount_invested), inv.status].filter(Boolean).join(' · '),
+        amount: inv.amount_invested != null ? fmt.money(inv.amount_invested) : '',
+        haystack: [inv.venture_name, inv.venture_type, inv.amount_invested, inv.status, inv.expected_return].filter(x => x != null).join(' ').toLowerCase(),
+        onClick: () => {
+          showView('investments');
+          if (window.showInvestmentDetail) window.showInvestmentDetail(inv.id);
+        }
+      });
+      (inv.investment_documents || []).forEach(d => index.push({
+        category: 'Documents',
+        title: d.name,
+        subtitle: 'Investment document · ' + (inv.venture_name || 'Investment'),
+        haystack: (d.name + ' ' + (inv.venture_name || '') + ' investment document').toLowerCase(),
+        onClick: () => showView('documents')
+      }));
+    });
+
+    (searchData.distributions || []).forEach(d => {
+      const venture = (d.investments && d.investments.venture_name) || 'Investment';
+      index.push({
+        category: 'Distributions',
+        title: 'Distribution · ' + venture,
+        subtitle: [fmt.money(d.amount), fmt.date(d.paid_at), d.kind].filter(Boolean).join(' · '),
+        amount: d.amount != null ? fmt.money(d.amount) : '',
+        haystack: ['distribution', venture, d.amount, d.kind, fmt.date(d.paid_at)].filter(x => x != null).join(' ').toLowerCase(),
+        onClick: () => showView('investments')
+      });
+    });
+
+    (searchData.payments || []).forEach(p => {
+      const loanId = (p.loans && p.loans.loan_id_display) || '';
+      const paid = !!p.paid_at;
+      index.push({
+        category: 'Payments',
+        title: 'Payment' + (loanId ? ' · ' + loanId : ''),
+        subtitle: [fmt.money(p.amount_due), paid ? 'paid ' + fmt.date(p.paid_at) : 'due ' + fmt.date(p.due_date)].filter(Boolean).join(' · '),
+        amount: p.amount_due != null ? fmt.money(p.amount_due) : '',
+        haystack: ['payment', loanId, p.amount_due, paid ? 'paid' : 'due', fmt.date(p.paid_at || p.due_date)].filter(x => x != null).join(' ').toLowerCase(),
+        onClick: () => showView('payments')
+      });
+    });
+
+    (searchData.raises || []).forEach(r => {
+      const goal = fmt.money(r.total_raise_target);
+      const raised = fmt.money(r.amount_raised);
+      index.push({
+        category: 'Open Raises',
+        title: r.venture_name || 'Open Raise',
+        subtitle: [r.venture_type, fmt.money(r.minimum_investment) + ' min', raised + ' / ' + goal].filter(Boolean).join(' · '),
+        amount: goal,
+        haystack: [r.venture_name, r.venture_type, r.structure, r.description, r.minimum_investment, r.total_raise_target, r.investment_horizon].filter(x => x != null).join(' ').toLowerCase(),
+        onClick: () => showView('raises')
+      });
+    });
+
+    (searchData.applications || []).forEach(a => {
+      index.push({
+        category: 'Applications',
+        title: 'Loan application · ' + fmt.money(a.amount_requested),
+        subtitle: [a.status, fmt.date(a.submitted_at)].filter(Boolean).join(' · '),
+        amount: a.amount_requested != null ? fmt.money(a.amount_requested) : '',
+        haystack: ['application', a.status, a.amount_requested, fmt.date(a.submitted_at)].filter(x => x != null).join(' ').toLowerCase(),
+        onClick: () => showView('apply')
+      });
+    });
+
+    (searchData.clientDocs || []).forEach(d => index.push({
+      category: 'Documents',
+      title: d.name,
+      subtitle: [(d.category || 'document').replace(/_/g, ' '), fmt.date(d.uploaded_at)].filter(Boolean).join(' · '),
+      haystack: (d.name + ' ' + (d.category || '') + ' document').toLowerCase(),
+      onClick: () => showView('documents')
+    }));
+
+    return index;
+  }
+
+  function searchScore(tokens, hay) {
+    let score = 0;
+    for (const t of tokens) {
+      if (!t) continue;
+      if (hay.indexOf(t) >= 0) score += 1;
+      if (hay.startsWith(t))   score += 0.5;
+    }
+    return score;
+  }
+
+  function runSearch(query) {
+    const q = String(query || '').trim().toLowerCase();
+    if (!q) return [];
+    const tokens = q.split(/\s+/);
+    return buildSearchIndex()
+      .map(it => ({ ...it, score: searchScore(tokens, it.haystack) }))
+      .filter(it => it.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 30);
+  }
+
+  function renderSearchResults(results) {
+    const box = document.getElementById('cp-search-results');
+    if (!box) return;
+    currentResults = results;
+    kbIndex = -1;
+    if (!results.length) {
+      box.innerHTML = '<div class="cp-search-empty">No matches</div>';
+      box.hidden = false;
+      return;
+    }
+    const groups = {};
+    const groupOrder = [];
+    results.forEach((r, i) => {
+      if (!groups[r.category]) { groups[r.category] = []; groupOrder.push(r.category); }
+      groups[r.category].push({ ...r, _idx: i });
+    });
+    const html = groupOrder.map(cat =>
+      '<div class="cp-search-group">' + escapeHtml(cat) + '</div>' +
+      groups[cat].map(r =>
+        '<div class="cp-search-row" data-idx="' + r._idx + '">' +
+          '<div>' +
+            '<div class="t">' + escapeHtml(r.title || '') + '</div>' +
+            (r.subtitle ? '<div class="s">' + escapeHtml(r.subtitle) + '</div>' : '') +
+          '</div>' +
+          (r.amount ? '<div class="amt">' + escapeHtml(r.amount) + '</div>' : '') +
+        '</div>'
+      ).join('')
+    ).join('');
+    box.innerHTML = html;
+    box.hidden = false;
+  }
+
+  function closeSearchDropdown() {
+    const box = document.getElementById('cp-search-results');
+    if (box) box.hidden = true;
+    kbIndex = -1;
+  }
+
+  function activateResult(idx) {
+    const r = currentResults[idx];
+    if (!r || typeof r.onClick !== 'function') return;
+    closeSearchDropdown();
+    const input = document.getElementById('cp-global-search');
+    if (input) { input.value = ''; input.blur(); }
+    try { r.onClick(); } catch (ex) { console.error('[onix-search] onClick failed:', ex); }
+  }
+
+  function setKbFocus(newIdx) {
+    const box = document.getElementById('cp-search-results');
+    if (!box || !currentResults.length) return;
+    const rows = box.querySelectorAll('.cp-search-row');
+    if (!rows.length) return;
+    kbIndex = ((newIdx % rows.length) + rows.length) % rows.length;
+    rows.forEach((r, i) => r.classList.toggle('kb-focus', i === kbIndex));
+    const row = rows[kbIndex];
+    if (row) row.scrollIntoView({ block: 'nearest' });
+  }
+
+  function wireGlobalSearch() {
+    const input = document.getElementById('cp-global-search');
+    const box   = document.getElementById('cp-search-results');
+    if (!input || !box || input.__searchWired) return;
+    input.__searchWired = true;
+
+    input.addEventListener('input', () => {
+      const q = input.value;
+      if (!q.trim()) { closeSearchDropdown(); return; }
+      renderSearchResults(runSearch(q));
+    });
+
+    input.addEventListener('focus', () => {
+      if (input.value.trim()) renderSearchResults(runSearch(input.value));
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { closeSearchDropdown(); return; }
+      if (!currentResults.length) return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); setKbFocus(kbIndex + 1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); setKbFocus(kbIndex - 1); }
+      else if (e.key === 'Enter') {
+        e.preventDefault();
+        activateResult(kbIndex >= 0 ? kbIndex : 0);
+      }
+    });
+
+    box.addEventListener('mousedown', (e) => {
+      const row = e.target && e.target.closest && e.target.closest('.cp-search-row');
+      if (!row) return;
+      e.preventDefault(); // keep focus, prevent the blur-close from racing
+      const idx = Number(row.dataset.idx);
+      if (Number.isFinite(idx)) activateResult(idx);
+    });
+
+    // Close when clicking outside the search container
+    document.addEventListener('mousedown', (e) => {
+      if (!box.hidden && !e.target.closest('.cp-search')) closeSearchDropdown();
+    });
+  }
+
   async function bootstrap() {
     if (!window.OnixDB) {
       console.error('[onix] supabase.js not loaded — OnixDB missing');
@@ -1217,6 +1468,7 @@
 
     renderUserName(profile);
     wireProfileForm(profile, userId);
+    wireGlobalSearch();
 
     // Fetch everything in parallel
     const [loans, investments, raises, payments, distributions] = await Promise.all([
@@ -1249,6 +1501,22 @@
       .eq('user_id', userId)
       .order('submitted_at', { ascending: false });
     renderNotifications(payments, distributions, applications || []);
+
+    // Client documents (uploaded with applications or by admin)
+    const { data: clientDocs } = await OnixDB.client
+      .from('client_documents')
+      .select('id, name, category, uploaded_at, storage_path, dropbox_url')
+      .eq('profile_id', userId)
+      .order('uploaded_at', { ascending: false });
+
+    // Stash everything for the global search index
+    searchData.loans         = loans || [];
+    searchData.investments   = investments || [];
+    searchData.raises        = raises || [];
+    searchData.payments      = payments || [];
+    searchData.distributions = distributions || [];
+    searchData.applications  = applications || [];
+    searchData.clientDocs    = clientDocs || [];
 
     wireLoanApplicationForm(userId, profile);
   }
