@@ -2212,6 +2212,34 @@
     }, 500);
   }
 
+  // Update the small count badges next to sidebar items (e.g. the "7" next
+  // to Applications) so they reflect real data, not the demo number baked
+  // into the bundled HTML. Matches each <button> in the sidebar by its
+  // data-en label, then patches the .sidebar-item-badge inside it.
+  function paintSidebarBadges(data) {
+    const counts = {
+      'Applications':     (data.applications || []).filter(a => a.status === 'pending').length,
+      'Pending Approvals':(data.pending      || []).length,
+      'Approvals':        (data.pending      || []).length
+    };
+    const buttons = document.querySelectorAll('button[data-en], a[data-en]');
+    buttons.forEach(btn => {
+      const label = btn.querySelector('[data-en]') || btn;
+      const key = label.getAttribute && label.getAttribute('data-en');
+      if (!key || !(key in counts)) return;
+      const badge = btn.querySelector('.sidebar-item-badge');
+      if (!badge) return;
+      const n = counts[key];
+      if (n > 0) {
+        badge.textContent = String(n);
+        badge.style.display = '';
+      } else {
+        // Hide the badge entirely when there's nothing pending — cleaner UI
+        badge.style.display = 'none';
+      }
+    });
+  }
+
   async function refreshAll() {
     const greeting = document.getElementById('oac-greeting');
     if (greeting) greeting.textContent = 'Loading data…';
@@ -2236,6 +2264,7 @@
       renderInvestments(investments);
       renderRaises(raises);
       paintStaticAdmin({ clients, loans, investments, raises, applications, payments, distributions });
+      paintSidebarBadges({ applications, pending, interests });
       const newInterest = (interests || []).filter(i => i.status === 'new').length;
       if (greeting) greeting.textContent = `Loaded · ${clients.length} clients · ${pending.length} pending · ${loans.length} loans · ${applications.length} applications${newInterest ? ' · ' + newInterest + ' new interest' + (newInterest === 1 ? '' : 's') : ''}`;
     } catch (ex) {
