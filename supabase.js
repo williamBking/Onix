@@ -168,19 +168,33 @@ async function getAllClients() {
 }
 
 async function getPendingClients() {
+  // Includes both 'pending' (new sign-up) and 'met' (admin has met them
+  // in person, just hasn't activated their account yet).
   const { data, error } = await _supabase
     .from('profiles')
     .select('*')
     .eq('role', 'client')
-    .eq('status', 'pending')
+    .in('status', ['pending', 'met'])
   if (error) console.error('Pending clients error:', error)
   return data || []
 }
 
-async function approveClient(userId) {
+async function markClientMet(userId, notes) {
+  const payload = { status: 'met' }
+  if (notes != null) payload.admin_notes = notes
   const { error } = await _supabase
     .from('profiles')
-    .update({ status: 'active' })
+    .update(payload)
+    .eq('id', userId)
+  return !error
+}
+
+async function approveClient(userId, notes) {
+  const payload = { status: 'active' }
+  if (notes != null) payload.admin_notes = notes
+  const { error } = await _supabase
+    .from('profiles')
+    .update(payload)
     .eq('id', userId)
   return !error
 }
@@ -284,6 +298,7 @@ window.OnixDB = {
   submitRaiseInterest,
   getAllClients,
   getPendingClients,
+  markClientMet,
   approveClient,
   rejectClient,
   getAllLoans,
