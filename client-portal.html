@@ -185,6 +185,19 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
   .row-2,.row-2w,.row-3,.form-grid,.inv-grid{grid-template-columns:1fr}
   .main{padding:24px}.top-bar{padding:0 20px}
 }
+/* Narrow phones: single-column KPIs, scrollable tables, tighter padding */
+@media(max-width:560px){
+  .kpi-grid.col-4,.kpi-grid.col-2{grid-template-columns:1fr}
+  .opp-detail-kpi{grid-template-columns:1fr 1fr}
+  .opp-stat-row,.cp-row,.cp-info,.form-grid{grid-template-columns:1fr}
+  .main{padding:16px}
+  /* Wide data tables scroll inside their card instead of overflowing the page */
+  .card{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .tbl{min-width:520px}
+  /* Headline sizes scale down a touch so they don't wrap awkwardly */
+  .page-hd h1,.login-title{font-size:2rem}
+  .kpi-val{font-size:1.5rem}
+}
 .mobile-menu-btn{display:none}
 </style>
 </head>

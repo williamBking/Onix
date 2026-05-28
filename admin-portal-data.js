@@ -26,6 +26,13 @@
     const s = document.createElement('style');
     s.id = 'onix-admin-styles';
     s.textContent = `
+      /* Mobile: let the live admin tables scroll horizontally instead of
+         blowing out the page width, and stack the dashboard KPI grids. */
+      @media(max-width:680px){
+        .${LIVE_MARKER} .oac-table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:nowrap}
+        .${LIVE_MARKER} [style*="grid-template-columns:repeat(4"]{grid-template-columns:1fr 1fr !important}
+        .${LIVE_MARKER} [style*="grid-template-columns:repeat(3"]{grid-template-columns:1fr !important}
+      }
       #onix-admin-toggle{position:fixed;bottom:20px;right:20px;z-index:99998;background:#C0392B;color:#fff;padding:12px 18px;border:none;border-radius:2px;font:600 .75rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.18)}
       #onix-admin-toggle:hover{background:#a93226}
       #onix-admin-panel{position:fixed;inset:0;background:#F8F7F5;z-index:99999;overflow-y:auto;display:none;padding:32px 40px 80px;font-family:'DM Sans',sans-serif;color:#1A1A1A}
