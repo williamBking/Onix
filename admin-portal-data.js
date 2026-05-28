@@ -1109,36 +1109,43 @@
       'Open Raises':          String(openRaises.length)
     };
 
-    // Robust KPI updater: find the element whose text === label, then locate
-    // its sibling "value" cell (the one with $/digits or a big font).
+    // Robust KPI updater: find by data-en attribute (stable, set by the
+    // original Claude-design HTML and never modified), then locate the value
+    // cell as a sibling — try nextElementSibling first, then any sibling
+    // that doesn't itself carry data-en.
     function setKpiSurgically(label, value) {
-      const all = v.querySelectorAll('div, span');
-      for (const el of all) {
-        if (el.children.length === 0 && el.textContent.trim() === label) {
-          const parent = el.parentElement;
-          if (!parent) continue;
-          for (const sib of parent.children) {
-            if (sib === el) continue;
-            const txt = (sib.textContent || '').trim();
-            // The value is anything that's NOT the label text itself — typically
-            // it'll be $-prefixed money or a bare number/percentage.
-            if (txt && /^[\$]|^\d|^\d+%$/.test(txt)) {
-              if (sib.textContent !== value) sib.textContent = value;
-              return true;
-            }
-          }
+      // 1. Try by data-en attribute (most reliable)
+      let label_el = v.querySelector('[data-en="' + label + '"]');
+      // 2. Fallback: find by text content
+      if (!label_el) {
+        const candidates = v.querySelectorAll('div, span');
+        for (const el of candidates) {
+          if (el.children.length === 0 && el.textContent.trim() === label) { label_el = el; break; }
         }
       }
+      if (!label_el) return false;
+      // Find the value cell: prefer nextElementSibling, fall back to scanning parent siblings.
+      const parent = label_el.parentElement;
+      const candidates = parent ? Array.from(parent.children) : [];
+      for (const sib of candidates) {
+        if (sib === label_el) continue;
+        if (sib.hasAttribute('data-en')) continue; // skip other labels
+        if (sib.tagName !== 'DIV' && sib.tagName !== 'SPAN') continue;
+        // First non-label sibling — assume it's the value
+        if (sib.textContent !== value) sib.textContent = value;
+        return true;
+      }
+      // Last resort — use immediate nextElementSibling
+      const next = label_el.nextElementSibling;
+      if (next) { if (next.textContent !== value) next.textContent = value; return true; }
       return false;
     }
     const updated = {};
     Object.entries(updates).forEach(([label, value]) => {
       updated[label] = setKpiSurgically(label, value);
     });
-    if (!window.__onixDashboardLogged) {
-      console.log('[onix-admin] dashboard updates:', updated);
-      window.__onixDashboardLogged = true;
-    }
+    // Log every run (no once-only flag) so cache busting is obvious in DevTools
+    console.log('[onix-admin] dashboard updates:', updated);
 
     // Replace activity-item rows with live events (preserve container + card chrome).
     const firstActivity = v.querySelector('.activity-item');
