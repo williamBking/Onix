@@ -1096,6 +1096,11 @@ document.addEventListener('DOMContentLoaded', function(){
 document.addEventListener('click', function(e){
   var btn = e.target && e.target.closest && e.target.closest('button');
   if (!btn) return;
+  // Skip buttons that carry their own raise-id data attribute — those are
+  // wired in client-portal-data.js to open the real Supabase-backed modal
+  // (cp-raise-modal). Without this guard the capture-phase stopPropagation
+  // below kills the click before the bubble-phase handler can fire.
+  if (btn.hasAttribute('data-raise-details') || btn.hasAttribute('data-raise-interest')) return;
   var txt = (btn.textContent||'').trim();
   if (/view\s+details/i.test(txt)) {
     var card = btn.closest('.opp-card');
