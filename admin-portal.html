@@ -2,6 +2,11 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <!-- Always re-validate HTML so the latest ?v=N JS reference is picked up
+       immediately after a deploy. -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>Onix Finance — Admin Console</title>
   <script>
   /* Auth gate — bounce to login if no admin session */
