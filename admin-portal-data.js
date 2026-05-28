@@ -2235,6 +2235,82 @@
   // when the user switches tabs. We poll every 600ms for the lifetime of the
   // session — paint functions are no-ops once a view is already painted, so
   // the cost is one querySelector per tab per tick.
+  // ---------- Global search (top bar) ----------
+  function wireGlobalSearch(data) {
+    const input = document.querySelector('input[data-ph-en*="Search clients"], input[placeholder*="Search clients"]');
+    if (!input || input.dataset.oacSearchWired === '1') return;
+    input.dataset.oacSearchWired = '1';
+
+    // Results dropdown anchored under the input.
+    const box = document.createElement('div');
+    box.id = 'oac-search-results';
+    box.style.cssText = 'position:absolute;z-index:9500;background:#fff;border:1px solid #E8E8E8;border-top:3px solid #C0392B;box-shadow:0 16px 48px rgba(0,0,0,.18);max-height:60vh;overflow-y:auto;display:none;font-family:"DM Sans",sans-serif;min-width:340px';
+    document.body.appendChild(box);
+
+    function positionBox() {
+      const r = input.getBoundingClientRect();
+      box.style.left = r.left + 'px';
+      box.style.top = (r.bottom + 6) + 'px';
+      box.style.width = Math.max(r.width, 340) + 'px';
+    }
+
+    function hide() { box.style.display = 'none'; }
+
+    function run(q) {
+      q = q.trim().toLowerCase();
+      if (q.length < 2) { hide(); return; }
+      const d = window.__onixAdminData || data;
+      const hit = (s) => String(s || '').toLowerCase().includes(q);
+      const results = [];
+      (d.clients || []).forEach(c => {
+        if (hit(c.full_name) || hit(c.email)) results.push({ type: 'Client', label: c.full_name || c.email, sub: c.email + ' · ' + (c.status || ''), act: null });
+      });
+      (d.loans || []).forEach((l, i) => {
+        const cn = (l.profiles && (l.profiles.full_name || l.profiles.email)) || '';
+        if (hit(l.loan_id_display) || hit(cn)) results.push({ type: 'Loan', label: l.loan_id_display || l.id.slice(0,8), sub: cn + ' · ' + fmt.money(l.balance), act: () => viewLoan(l) });
+      });
+      (d.investments || []).forEach(inv => {
+        const cn = (inv.profiles && (inv.profiles.full_name || inv.profiles.email)) || '';
+        if (hit(inv.venture_name) || hit(cn)) results.push({ type: 'Investment', label: inv.venture_name, sub: cn + ' · ' + fmt.money(inv.amount_invested), act: () => viewInvestment(inv) });
+      });
+      (d.raises || []).forEach(r => {
+        if (hit(r.venture_name)) results.push({ type: 'Raise', label: r.venture_name, sub: (r.status || '') + ' · ' + fmt.money(r.total_raise_target), act: () => viewRaise(r) });
+      });
+      (d.applications || []).forEach(a => {
+        const cn = (a.profiles && (a.profiles.full_name || a.profiles.email)) || '';
+        if (hit(cn) || hit(a.purpose)) results.push({ type: 'Application', label: cn || 'Application', sub: fmt.money(a.amount_requested) + ' · ' + (a.status || 'pending'), act: () => viewApplication(a) });
+      });
+
+      const top = results.slice(0, 20);
+      if (!top.length) {
+        box.innerHTML = '<div style="padding:16px 18px;color:#9B9590;font-size:.85rem;font-style:italic">No matches for “' + esc(q) + '”.</div>';
+      } else {
+        box.innerHTML = top.map((r, i) => `
+          <div data-search-idx="${i}" style="padding:11px 16px;border-bottom:1px solid #f6f6f6;cursor:${r.act ? 'pointer' : 'default'};display:flex;justify-content:space-between;gap:12px;align-items:center">
+            <div><div style="font-size:.86rem;font-weight:600;color:#1A1A1A">${esc(r.label)}</div>
+            <div style="font-size:.74rem;color:#888;margin-top:1px">${esc(r.sub)}</div></div>
+            <span style="font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:#C0392B;font-weight:700;white-space:nowrap">${esc(r.type)}</span>
+          </div>`).join('');
+        box.querySelectorAll('[data-search-idx]').forEach(el => {
+          const r = top[Number(el.dataset.searchIdx)];
+          if (r.act) el.addEventListener('click', () => { hide(); input.value = ''; r.act(); });
+          el.addEventListener('mouseenter', () => el.style.background = '#FAFAFA');
+          el.addEventListener('mouseleave', () => el.style.background = '#fff');
+        });
+      }
+      positionBox();
+      box.style.display = 'block';
+    }
+
+    let t;
+    input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => run(input.value), 150); });
+    input.addEventListener('focus', () => { if (input.value.trim().length >= 2) run(input.value); });
+    document.addEventListener('click', (e) => {
+      if (e.target !== input && !box.contains(e.target)) hide();
+    });
+    window.addEventListener('resize', () => { if (box.style.display === 'block') positionBox(); });
+  }
+
   function paintStaticAdmin(data) {
     // Invalidate any previously-painted markers so we re-paint with fresh data
     document.querySelectorAll('.' + LIVE_MARKER).forEach(el => el.classList.remove(LIVE_MARKER));
@@ -2245,6 +2321,7 @@
       paintInvestmentsView(data.investments);
       paintRaisesView(data.raises);
       paintApplicationsView(data.applications);
+      wireGlobalSearch(data);
     }
     tryAll();
     window.__onixAdminData = data;
