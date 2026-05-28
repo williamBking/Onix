@@ -2926,10 +2926,13 @@
         var statusTd = tr.querySelector('.__onix_status_cell');
         var rm = document.createElement('button');
         rm.textContent = 'Remove';
+        rm.setAttribute('data-onix-remove', '1');
         rm.style.cssText = 'margin-left:10px;background:#fff;color:#C0392B;border:1px solid #E8E8E8;padding:5px 11px;font:600 .64rem/1 \'DM Sans\',sans-serif;text-transform:uppercase;letter-spacing:.06em;border-radius:2px;cursor:pointer';
         rm.addEventListener('click', async function(){
           if (!confirm('Remove ' + (m.full_name || m.email) + ' from the team? They will lose admin access.')) return;
           rm.disabled = true;
+          var removed = loadRemoved();
+          if (removed.indexOf((m.email||'').toLowerCase()) < 0) { removed.push((m.email||'').toLowerCase()); saveRemoved(removed); }
           var r = await OnixDB.client.from('profiles').update({ status: 'rejected' }).eq('email', m.email);
           if (r.error) {
             window.__onix_showToast('Could not remove: ' + r.error.message, '#C0392B');
@@ -2942,6 +2945,61 @@
         statusTd.appendChild(rm);
 
         tbody.appendChild(tr);
+      });
+
+      // Make sure EVERY row (including the bundled demo rows) has a Remove button.
+      addRemoveToAllRows(table);
+      applyRemovedFilter(table);
+    }
+
+    // localStorage set of emails the admin has removed (covers demo rows that
+    // would otherwise re-appear from the bundled HTML on every load).
+    var REMOVED_KEY = 'onix-removed-team';
+    function loadRemoved(){ try { return JSON.parse(localStorage.getItem(REMOVED_KEY)||'[]')||[]; } catch(_){ return []; } }
+    function saveRemoved(a){ localStorage.setItem(REMOVED_KEY, JSON.stringify(a)); }
+
+    function rowEmail(tr){
+      var td = tr.children[1];
+      return td ? (td.textContent||'').trim().toLowerCase() : '';
+    }
+
+    // Hide any row whose email the admin previously removed.
+    function applyRemovedFilter(table){
+      if (!table) return;
+      var removed = loadRemoved();
+      Array.prototype.slice.call(table.querySelectorAll('tbody tr')).forEach(function(tr){
+        if (removed.indexOf(rowEmail(tr)) >= 0) tr.remove();
+      });
+    }
+
+    // Add a Remove button to every team row that doesn't already have one.
+    function addRemoveToAllRows(table){
+      if (!table) return;
+      Array.prototype.slice.call(table.querySelectorAll('tbody tr')).forEach(function(tr){
+        if (tr.querySelector('[data-onix-remove]')) return;       // already has one (DB rows)
+        var lastTd = tr.children[tr.children.length - 1];
+        if (!lastTd) return;
+        var email = rowEmail(tr);
+        if (!email) return;
+        var rm = document.createElement('button');
+        rm.textContent = 'Remove';
+        rm.setAttribute('data-onix-remove', '1');
+        rm.style.cssText = 'margin-left:10px;background:#fff;color:#C0392B;border:1px solid #E8E8E8;padding:5px 11px;font:600 .64rem/1 \'DM Sans\',sans-serif;text-transform:uppercase;letter-spacing:.06em;border-radius:2px;cursor:pointer';
+        rm.addEventListener('click', async function(){
+          var name = (tr.children[0] && tr.children[0].textContent || email).trim();
+          if (!confirm('Remove ' + name + ' from the team? They will lose admin access.')) return;
+          rm.disabled = true;
+          // Persist removal for demo rows, and revoke access for real accounts.
+          var removed = loadRemoved();
+          if (removed.indexOf(email) < 0) { removed.push(email); saveRemoved(removed); }
+          if (window.OnixDB && OnixDB.client) {
+            // Harmless no-op if this email isn't a real profile.
+            await OnixDB.client.from('profiles').update({ status: 'rejected' }).eq('email', email);
+          }
+          window.__onix_showToast('Removed <b>'+esc(email)+'</b> from the team.', '#6B6560');
+          tr.remove();
+        });
+        lastTd.appendChild(rm);
       });
     }
 
@@ -2964,11 +3022,25 @@
       }
     }
 
+    // Add Remove buttons + apply the removed filter to whatever team table
+    // exists right now (independent of the DB query in renderActiveTeam, so
+    // demo rows get the button even if Supabase is slow/unavailable).
+    function decorateTeamTable(){
+      var view = document.getElementById('view-users');
+      if (!view) return;
+      var table = Array.prototype.slice.call(view.querySelectorAll('table.tbl'))
+        .find(function(t){ var h=t.querySelector('thead'); return h && /Last Login/i.test(h.textContent||''); });
+      if (!table) return;
+      addRemoveToAllRows(table);
+      applyRemovedFilter(table);
+    }
+
     // Initial load + refresh whenever the Team view is shown.
-    setTimeout(function(){ loadPending(); renderActiveTeam(); }, 1900);
+    setTimeout(function(){ loadPending(); renderActiveTeam(); decorateTeamTable(); }, 1900);
+    setTimeout(decorateTeamTable, 2600); // catch late-injected demo rows
     document.addEventListener('click', function(e){
       var t = e.target && e.target.closest && e.target.closest('[data-view="users"], [href="#users"], .nav-item');
-      if (t) setTimeout(function(){ loadPending(); renderActiveTeam(); }, 300);
+      if (t) setTimeout(function(){ loadPending(); renderActiveTeam(); decorateTeamTable(); }, 300);
     }, true);
   });
 
