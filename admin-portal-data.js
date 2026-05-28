@@ -189,7 +189,7 @@
       <div class="oac-modal-row" style="grid-template-columns:1fr">
         ${detailRow('Collateral Address', loan.collateral_address)}
       </div>
-      ${docsManagerHtml(loan.loan_documents)}
+      ${docsManagerHtml(loan.loan_documents, 'loan')}
       ${loan.application_id ? `
         <div style="margin-top:18px">
           <h3 style="font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:#1A1A1A;font-weight:700;margin:0 0 10px;padding-top:14px;border-top:1px solid #E8E8E8">Application Documents</h3>
@@ -229,7 +229,7 @@
           ${detailRow('Status', inv.status)}
           ${detailRow('Created', fmt.date(inv.created_at))}
         </div>
-        ${docsManagerHtml(inv.investment_documents)}
+        ${docsManagerHtml(inv.investment_documents, 'investment')}
       </div>
       <div class="oac-section" data-inv-section="investor">
         <div id="oac-inv-investor-body" style="padding:10px 0;color:#9B9590;font-size:.84rem">Loading investor profile…</div>
@@ -547,7 +547,7 @@
         ${detailRow('Status', r.status)}
         ${detailRow('Created', fmt.date(r.created_at))}
       </div>
-      ${docsManagerHtml(r.raise_documents)}
+      ${docsManagerHtml(r.raise_documents, 'raise')}
     `);
     const m = document.getElementById('oac-modal');
     m.querySelector('[data-edit-raise]').addEventListener('click', (e) => { e.preventDefault(); openEditRaiseModal(r); });
@@ -1471,36 +1471,59 @@
 
   // ---------- Document management (loan_documents / investment_documents / raise_documents) ----------
   // table: name of the docs table; parentCol: e.g. 'loan_id'; parentId: row id
-  function docsManagerHtml(docs) {
+  // Common document types per the PRD, by record kind. Used as datalist
+  // suggestions so admins can pick a standard name or type their own.
+  const DOC_NAME_SUGGESTIONS = {
+    loan:       ['Promissory Note', 'Deed of Trust', 'Appraisal Report', 'Title Insurance', 'Amortization Schedule', 'Loan Agreement', 'Insurance Certificate'],
+    investment: ['Operating Agreement', 'Subscription Agreement', 'Pitch Deck', 'K-1 Tax Form', 'Financial Statement', 'Distribution Notice', 'Capital Call Notice'],
+    raise:      ['Pitch Deck', 'Financial Model', 'Operating Agreement', 'Offering Memorandum', 'Term Sheet', 'Subscription Agreement']
+  };
+
+  function docsManagerHtml(docs, kind) {
+    kind = kind || 'loan';
+    const listId = 'oac-doc-names-' + kind;
+    const suggestions = (DOC_NAME_SUGGESTIONS[kind] || [])
+      .map(n => `<option value="${esc(n)}"></option>`).join('');
     const list = (docs || []).map(d => `
-      <div class="row" data-doc-id="${esc(d.id)}">
+      <div class="row" data-doc-id="${esc(d.id)}" style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #f4f4f4">
         <div style="flex:1">
           <div class="doc-name" style="font-weight:600;font-size:.88rem">${esc(d.name)}</div>
-          ${d.dropbox_url ? `<a href="${esc(d.dropbox_url)}" target="_blank" rel="noopener" style="font-size:.78rem;color:#C0392B;text-decoration:none;word-break:break-all">${esc(d.dropbox_url)}</a>` : '<span style="color:#888;font-size:.78rem">No link</span>'}
+          ${d.dropbox_url ? `<a href="${esc(d.dropbox_url)}" target="_blank" rel="noopener" style="font-size:.78rem;color:#C0392B;text-decoration:none;word-break:break-all">View ↗</a>` : '<span style="color:#888;font-size:.78rem">No link</span>'}
+          <span style="font-size:.72rem;color:#9B9590;margin-left:8px">${d.uploaded_at ? esc(fmt.date(d.uploaded_at)) : ''}</span>
         </div>
-        <a href="#" data-doc-remove="${esc(d.id)}" style="color:#C0392B;font-size:.78rem;text-decoration:none;font-weight:600;margin-left:10px">Remove</a>
+        <a href="#" data-doc-remove="${esc(d.id)}" style="color:#C0392B;font-size:.78rem;text-decoration:none;font-weight:600;margin-left:10px;white-space:nowrap">Remove</a>
       </div>`).join('');
     return `
       <div class="oac-modal-docs" data-docs-manager>
         <h3>Documents</h3>
         <div data-docs-list>${list || '<div style="color:#888;font-size:.85rem;font-style:italic;padding:6px 0">No documents yet.</div>'}</div>
+        <datalist id="${listId}">${suggestions}</datalist>
         <form data-doc-add-form style="margin-top:14px;display:grid;grid-template-columns:1.2fr 2fr auto;gap:8px;align-items:end">
           <div>
-            <div class="k">Name</div>
-            <input name="name" required placeholder="Promissory Note" style="${INPUT_STYLE}">
+            <div class="k">Document name</div>
+            <input name="name" required list="${listId}" placeholder="Pick or type…" autocomplete="off" style="${INPUT_STYLE}">
           </div>
           <div>
-            <div class="k">Dropbox URL</div>
-            <input name="dropbox_url" type="url" required placeholder="https://www.dropbox.com/..." style="${INPUT_STYLE}">
+            <div class="k">Dropbox share link</div>
+            <input name="dropbox_url" type="url" required placeholder="https://www.dropbox.com/s/..." style="${INPUT_STYLE}">
           </div>
           <button type="submit" class="oac-btn red" style="padding:10px 14px">Add</button>
         </form>
+        <div data-doc-warn style="display:none;font-size:.76rem;color:#A07818;margin-top:6px"></div>
+        <div style="font-size:.72rem;color:#9B9590;margin-top:8px;line-height:1.5">
+          Upload the file to Dropbox, click <b>Share → Copy link</b>, and paste it here. Clients see a <b>View</b> link to open it.
+        </div>
       </div>`;
+  }
+
+  function isLikelyDropboxLink(url) {
+    return /^https?:\/\/(www\.)?(dropbox\.com|dl\.dropboxusercontent\.com)\//i.test(String(url || ''));
   }
 
   function wireDocsManager(scope, table, parentCol, parentId, onChange) {
     const root = scope.querySelector('[data-docs-manager]');
     if (!root) return;
+    const warn = root.querySelector('[data-doc-warn]');
     // Remove
     root.querySelectorAll('[data-doc-remove]').forEach(a => {
       a.addEventListener('click', async (e) => {
@@ -1519,7 +1542,16 @@
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const fd = new FormData(form);
-        const row = { name: strOrNull(fd.get('name')), dropbox_url: strOrNull(fd.get('dropbox_url')) };
+        const name = strOrNull(fd.get('name'));
+        const url  = strOrNull(fd.get('dropbox_url'));
+        // Validate it looks like a Dropbox link; warn but allow other share links.
+        if (url && !isLikelyDropboxLink(url)) {
+          warn.style.display = 'block';
+          warn.textContent = "That doesn't look like a Dropbox link. Click Add again to use it anyway, or paste a dropbox.com share link.";
+          if (form.dataset.warned !== url) { form.dataset.warned = url; return; }
+        }
+        warn.style.display = 'none';
+        const row = { name: name, dropbox_url: url };
         row[parentCol] = parentId;
         const submitBtn = form.querySelector('button[type="submit"]');
         submitBtn.disabled = true; submitBtn.textContent = 'Adding…';
