@@ -1825,13 +1825,21 @@
           ${field('Interest ($)',     'interest',      { type: 'number', step: '0.01' })}
           ${field('Balance After ($)','balance_after', { type: 'number', step: '0.01' })}
         </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:.82rem;color:#1A1A1A;margin:4px 0 4px;cursor:pointer">
+          <input type="checkbox" name="send_email" checked style="width:16px;height:16px;cursor:pointer">
+          Email a confirmation to the client and Onix staff
+        </label>
         ${submitBar('Record Payment')}
       </form>`);
     const form = document.getElementById('oac-add-payment-form');
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(form);
-      handleFormSubmit(form, () => ({
+      const submitBtn = form.querySelector('[data-form-submit]');
+      const errEl = form.querySelector('#oac-form-err');
+      errEl.style.display = 'none';
+      submitBtn.disabled = true; submitBtn.textContent = 'Saving…';
+      const payload = {
         loan_id:        loan.id,
         due_date:       strOrNull(fd.get('due_date')),
         status:         String(fd.get('status')),
@@ -1840,7 +1848,30 @@
         principal:      numOrNull(fd.get('principal')),
         interest:       numOrNull(fd.get('interest')),
         balance_after:  numOrNull(fd.get('balance_after'))
-      }), 'loan_payments');
+      };
+      const { error } = await OnixDB.client.from('loan_payments').insert(payload);
+      if (error) {
+        errEl.style.display = 'block';
+        errEl.textContent = error.message || 'Could not save.';
+        submitBtn.disabled = false; submitBtn.textContent = 'Record Payment';
+        return;
+      }
+      // Send confirmation email when the payment is marked Paid and the box is ticked.
+      const wantEmail = fd.get('send_email') === 'on';
+      if (wantEmail && payload.status === 'paid') {
+        OnixDB.client.functions.invoke('send-payment-confirmation-email', {
+          body: {
+            client_name:     (loan.profiles && loan.profiles.full_name) || '',
+            client_email:    (loan.profiles && loan.profiles.email) || '',
+            amount:          payload.amount_due,
+            paid_at:         payload.paid_at || payload.due_date,
+            loan_id_display: loan.loan_id_display || '',
+            balance_after:   payload.balance_after
+          }
+        }).catch(err => console.error('[onix-admin] payment email failed:', err));
+      }
+      document.getElementById('oac-modal').classList.remove('open');
+      refreshAll();
     });
   }
 
