@@ -2722,6 +2722,144 @@
   });
 
   /* =====================================================================
+     TEAM & SETTINGS — Pending Team Members (approve / decline)
+     Reads pending rows from the team_invites table and lets an admin
+     approve (activate the account with a temp password they hand off)
+     or decline (revoke the invite). No email dependency.
+     ===================================================================== */
+  window.addEventListener('load', function(){
+    var PANEL_ID = '__onix_pending_team';
+
+    function makeTempPassword(){
+      // Readable, >= 8 chars, mixed case + digits. Admin shares this once.
+      var letters = 'ABCDEFGHJKMNPQRSTUVWXYZ';
+      var lower   = 'abcdefghijkmnpqrstuvwxyz';
+      var digits  = '23456789';
+      function pick(s,n){ var o=''; for(var i=0;i<n;i++) o+=s[Math.floor(Math.random()*s.length)]; return o; }
+      return 'Onix-' + pick(letters,2) + pick(lower,3) + pick(digits,4);
+    }
+
+    function esc(s){ return String(s||'').replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+
+    function titleLabel(t){ return t==='admin'?'Admin':t==='manager'?'Manager':t==='ae'?'Account Executive':(t||'Member'); }
+
+    function ensureCard(){
+      var view = document.getElementById('view-users');
+      if (!view) return null;
+      var card = document.getElementById(PANEL_ID);
+      if (card) return card;
+      card = document.createElement('div');
+      card.id = PANEL_ID;
+      card.style.cssText = 'background:#fff;border:1px solid #E8E8E8;border-top:3px solid #C0392B;padding:24px 28px;margin-bottom:22px;font-family:"DM Sans",-apple-system,sans-serif';
+      var header = view.querySelector('.page-hd');
+      if (header && header.parentElement === view) header.after(card);
+      else view.insertBefore(card, view.firstChild);
+      return card;
+    }
+
+    async function loadPending(){
+      if (!window.OnixDB || !OnixDB.client) return;
+      var card = ensureCard();
+      if (!card) return;
+      var res = await OnixDB.client
+        .from('team_invites')
+        .select('id, email, full_name, title, created_at, token')
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false });
+      if (res.error) { card.style.display='none'; return; }
+      var rows = res.data || [];
+      if (!rows.length) { card.style.display = 'none'; return; }
+      card.style.display = 'block';
+
+      card.innerHTML =
+        '<div style="font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;color:#6B6560;font-weight:700;margin-bottom:4px">Pending Team Members</div>' +
+        '<div style="font-size:.82rem;color:#9B9590;margin-bottom:16px">Approve to activate the account, or decline to revoke the invitation.</div>' +
+        '<table class="tbl" style="width:100%;border-collapse:collapse">' +
+          '<thead><tr style="text-align:left">' +
+            '<th style="padding:8px 10px;font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:#9B9590;border-bottom:1px solid #E8E8E8">Name</th>' +
+            '<th style="padding:8px 10px;font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:#9B9590;border-bottom:1px solid #E8E8E8">Email</th>' +
+            '<th style="padding:8px 10px;font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:#9B9590;border-bottom:1px solid #E8E8E8">Role</th>' +
+            '<th style="padding:8px 10px;font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:#9B9590;border-bottom:1px solid #E8E8E8;text-align:right">Actions</th>' +
+          '</tr></thead><tbody>' +
+          rows.map(function(r){
+            return '<tr data-invite-id="'+esc(r.id)+'" data-token="'+esc(r.token)+'" data-email="'+esc(r.email)+'">' +
+              '<td style="padding:10px;border-bottom:1px solid #F2F2F2">'+esc(r.full_name||'—')+'</td>' +
+              '<td style="padding:10px;border-bottom:1px solid #F2F2F2">'+esc(r.email)+'</td>' +
+              '<td style="padding:10px;border-bottom:1px solid #F2F2F2">'+esc(titleLabel(r.title))+'</td>' +
+              '<td style="padding:10px;border-bottom:1px solid #F2F2F2;text-align:right;white-space:nowrap">' +
+                '<button class="__onix_pt_approve" style="background:#C0392B;color:#fff;border:1px solid #C0392B;padding:7px 13px;font:600 .68rem/1 \'DM Sans\',sans-serif;text-transform:uppercase;letter-spacing:.06em;border-radius:2px;cursor:pointer;margin-right:6px">Approve</button>' +
+                '<button class="__onix_pt_decline" style="background:#fff;color:#1A1A1A;border:1px solid #E8E8E8;padding:7px 13px;font:600 .68rem/1 \'DM Sans\',sans-serif;text-transform:uppercase;letter-spacing:.06em;border-radius:2px;cursor:pointer">Decline</button>' +
+              '</td>' +
+            '</tr>';
+          }).join('') +
+          '</tbody></table>';
+
+      card.querySelectorAll('.__onix_pt_approve').forEach(function(btn){
+        btn.addEventListener('click', function(){ approve(btn.closest('tr')); });
+      });
+      card.querySelectorAll('.__onix_pt_decline').forEach(function(btn){
+        btn.addEventListener('click', function(){ decline(btn.closest('tr')); });
+      });
+    }
+
+    async function approve(tr){
+      if (!tr) return;
+      var token = tr.getAttribute('data-token');
+      var email = tr.getAttribute('data-email');
+      var btns = tr.querySelectorAll('button');
+      btns.forEach(function(b){ b.disabled = true; });
+      var tempPw = makeTempPassword();
+      try {
+        // Reuse the accept-team-invite edge function: admin sets a temp
+        // password on the member's behalf (no email needed).
+        var SUPA = OnixDB.client;
+        var resp = await SUPA.functions.invoke('accept-team-invite', {
+          body: { token: token, password: tempPw }
+        });
+        if (resp.error) {
+          var detail=''; try { detail=(await resp.error.context.json()).error; } catch(_){}
+          throw new Error(detail || resp.error.message || 'Approve failed');
+        }
+        window.__onix_showToast(
+          'Approved <b>'+esc(email)+'</b>. Share this temporary password so they can sign in:<br>' +
+          '<span style="font-family:monospace;font-size:.9rem;background:#fff;color:#C0392B;padding:2px 8px;border-radius:2px;display:inline-block;margin-top:6px">'+esc(tempPw)+'</span>',
+          '#3B8B3B'
+        );
+        loadPending();
+      } catch (err) {
+        window.__onix_showToast('Could not approve: ' + (err && err.message ? err.message : err), '#C0392B');
+        btns.forEach(function(b){ b.disabled = false; });
+      }
+    }
+
+    async function decline(tr){
+      if (!tr) return;
+      var id = tr.getAttribute('data-invite-id');
+      var email = tr.getAttribute('data-email');
+      if (!confirm('Decline the invitation for ' + email + '? They will not be able to join.')) return;
+      var btns = tr.querySelectorAll('button');
+      btns.forEach(function(b){ b.disabled = true; });
+      try {
+        var res = await OnixDB.client.from('team_invites')
+          .update({ status: 'revoked' }).eq('id', id);
+        if (res.error) throw new Error(res.error.message);
+        window.__onix_showToast('Declined the invitation for <b>'+esc(email)+'</b>.', '#6B6560');
+        loadPending();
+      } catch (err) {
+        window.__onix_showToast('Could not decline: ' + (err && err.message ? err.message : err), '#C0392B');
+        btns.forEach(function(b){ b.disabled = false; });
+      }
+    }
+
+    // Initial load + refresh whenever the Team view is shown.
+    setTimeout(loadPending, 1900);
+    document.addEventListener('click', function(e){
+      var t = e.target && e.target.closest && e.target.closest('[data-view="users"], [href="#users"], .nav-item');
+      if (t) setTimeout(loadPending, 300);
+    }, true);
+  });
+
+  /* =====================================================================
      TEAM & SETTINGS — Remove Billing from Role Permissions
      ===================================================================== */
   window.addEventListener('load', function(){
