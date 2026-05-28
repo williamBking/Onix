@@ -1468,7 +1468,7 @@
     { key: 'loan_application',  label: 'Loan Application Supporting Docs' },
     { key: 'loan_doc',          label: 'Loan Documents' },
     { key: 'promissory_note',   label: 'Promissory Notes' },
-    { key: 'tax',               label: 'Tax Documents' },
+    { key: 'tax',               label: 'RFC or Tax ID' },
     { key: 'other',             label: 'Other' }
   ];
   const CLIENT_DOC_BUCKET = 'client-documents';
@@ -1497,6 +1497,19 @@
       catch (_) { return ''; }
     };
     const linkStyle = 'font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--red);background:transparent;border:1px solid var(--red);padding:6px 12px;border-radius:2px;text-decoration:none;cursor:pointer';
+    // Required-doc rule: every client must have ID OR Passport (either is fine),
+    // a Proof of Address, and an RFC / Tax ID on file. Compute flags once so
+    // the same answer drives both ID and Passport headers.
+    const hasIdDoc       = (byCat['id'] || []).length > 0;
+    const hasPassportDoc = (byCat['passport'] || []).length > 0;
+    const hasEitherIdent = hasIdDoc || hasPassportDoc;
+    const isMissingFor = key => {
+      if (key === 'id' || key === 'passport') return !hasEitherIdent;
+      if (key === 'proof_of_address')         return (byCat['proof_of_address'] || []).length === 0;
+      if (key === 'tax')                      return (byCat['tax'] || []).length === 0;
+      return false;
+    };
+    const missingBadge = '<span class="cl-doc-missing">⚠ Missing</span>';
     // Always render one card per category (matching the original "Loan /
     // Investments / Tax & Statements" layout) so clients always see every
     // type they can have on file. Empty categories show a quiet message.
@@ -1504,12 +1517,14 @@
     CLIENT_DOC_CATEGORIES.forEach((cat, i) => {
       const list = byCat[cat.key] || [];
       const revealCls = i === 0 ? 'card reveal' : 'card reveal reveal-d' + Math.min(i, 3);
+      const missing = isMissingFor(cat.key);
       html +=
-        '<div class="' + revealCls + '" style="margin-top:20px">' +
+        '<div class="' + revealCls + '" style="margin-top:20px' + (missing ? ';border-top:3px solid var(--red);box-shadow:0 0 0 1px rgba(192,57,43,.18)' : '') + '">' +
           '<div class="card-title">' + escapeHtml(cat.label) +
             (list.length
               ? ' <span style="color:var(--light);font-weight:600;margin-left:6px">(' + list.length + ')</span>'
               : '') +
+            (missing ? ' ' + missingBadge : '') +
           '</div>';
       if (!list.length) {
         html +=

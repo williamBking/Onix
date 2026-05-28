@@ -23,7 +23,7 @@
 <!-- Supabase + Onix data layer -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase.js?v=11"></script>
-<script defer src="client-portal-data.js?v=21"></script>
+<script defer src="client-portal-data.js?v=22"></script>
 <style>
 :root{--red:#C0392B;--dark:#1A1A1A;--bg:#F8F7F5;--border:#E8E8E8;--muted:#6B6560;--light:#9B9590;--mid:#888;--caption:#bbb;--red-light:#FDF0EE;--success:#3B8B3B;--success-bg:#EBF5EB;--success-text:#2D6A2D;--warn-text:#A07818;--warn-bg:#FDF5E6;--serif:'Cormorant Garamond',Georgia,serif;--sans:'DM Sans',system-ui,sans-serif}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -116,6 +116,15 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
 .progress-fill{height:100%;background:var(--red);border-radius:3px;transition:width 1.2s cubic-bezier(.4,0,.2,1)}
 .doc-row{display:flex;justify-content:space-between;align-items:center;padding:13px 16px;margin-bottom:6px;background:var(--bg);border-left:3px solid var(--red)}
 .doc-name{font-size:.82rem;font-weight:600}.doc-meta{font-size:.7rem;color:var(--light);margin-top:2px}
+/* Urgent "Missing" badge that hangs off the card title when a required
+   document (ID/Passport pair, Proof of Address, RFC or Tax ID) isn't on file.
+   The pulse draws the client's eye so the gap feels actionable. */
+.cl-doc-missing{display:inline-block;margin-left:10px;padding:3px 9px;background:var(--red);color:#fff;font-size:.62rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;border-radius:2px;vertical-align:middle;line-height:1.4;animation:cl-doc-missing-pulse 1.6s ease-in-out infinite;box-shadow:0 0 0 0 rgba(192,57,43,.55)}
+@keyframes cl-doc-missing-pulse{
+  0%   {box-shadow:0 0 0 0 rgba(192,57,43,.55)}
+  70%  {box-shadow:0 0 0 9px rgba(192,57,43,0)}
+  100% {box-shadow:0 0 0 0 rgba(192,57,43,0)}
+}
 .doc-link{font-size:.66rem;color:var(--red);font-weight:700;letter-spacing:.1em;text-transform:uppercase}.doc-link:hover{opacity:.7}
 .tbl{width:100%;border-collapse:collapse}
 .tbl th{text-align:left;padding:10px 14px;font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700;border-bottom:1px solid var(--border);background:var(--bg)}
@@ -607,7 +616,7 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
                 <option value="loan_application" data-en="Loan Application Supporting Docs" data-es="Documentos de Solicitud de Préstamo">Loan Application Supporting Docs</option>
                 <option value="loan_doc" data-en="Loan Documents" data-es="Documentos del Préstamo">Loan Documents</option>
                 <option value="promissory_note" data-en="Promissory Notes" data-es="Pagarés">Promissory Notes</option>
-                <option value="tax" data-en="Tax Documents" data-es="Documentos Fiscales">Tax Documents</option>
+                <option value="tax" data-en="RFC or Tax ID" data-es="RFC o ID Fiscal">RFC or Tax ID</option>
                 <option value="other" data-en="Other" data-es="Otro">Other</option>
               </select>
             </div>

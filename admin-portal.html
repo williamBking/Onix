@@ -872,7 +872,7 @@
       promissory_note: 'Promissory Notes',
       loan_doc: 'Loan Documents',
       loan_application: 'Loan Application Supporting Docs',
-      tax: 'Tax Documents',
+      tax: 'RFC or Tax ID',
       other: 'Other'
     };
     var CATEGORY_ORDER = ['id','passport','proof_of_address','loan_application','loan_doc','promissory_note','tax','other'];
@@ -881,6 +881,21 @@
     function ensureDocsModal(){
       var overlay = document.getElementById('__onix_cl_docs_overlay');
       if (overlay) return overlay;
+      // One-time CSS for the urgent pulsing "Missing" badge that hangs off
+      // required-doc category headers (ID/Passport pair, Proof of Address,
+      // RFC or Tax ID) when the section is empty.
+      if (!document.getElementById('__onix_cd_styles')) {
+        var s = document.createElement('style');
+        s.id = '__onix_cd_styles';
+        s.textContent =
+          '.oac-doc-missing{display:inline-block;margin-left:10px;padding:3px 9px;background:#C0392B;color:#fff;font-size:.62rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;border-radius:2px;line-height:1.4;animation:oac-doc-missing-pulse 1.6s ease-in-out infinite;box-shadow:0 0 0 0 rgba(192,57,43,.55)}' +
+          '@keyframes oac-doc-missing-pulse{' +
+            '0%   {box-shadow:0 0 0 0 rgba(192,57,43,.55)}' +
+            '70%  {box-shadow:0 0 0 9px rgba(192,57,43,0)}' +
+            '100% {box-shadow:0 0 0 0 rgba(192,57,43,0)}' +
+          '}';
+        document.head.appendChild(s);
+      }
       overlay = window.__onix_createOverlay('__onix_cl_docs_overlay');
       var categoryOpts = CATEGORY_ORDER.map(function(k){
         return '<option value="' + esc(k) + '">' + esc(CATEGORY_LABEL[k]) + '</option>';
@@ -988,6 +1003,20 @@
         var cat = d.category || 'other';
         (grouped[cat] = grouped[cat] || []).push(d);
       });
+      // Required-doc rule: every client must have ID OR Passport (either
+      // satisfies), a Proof of Address, and an RFC / Tax ID on file. Flag
+      // missing sections with an urgent pulsing badge so the admin can see at
+      // a glance which docs to chase.
+      var hasIdDoc       = (grouped['id'] || []).length > 0;
+      var hasPassportDoc = (grouped['passport'] || []).length > 0;
+      var hasEitherIdent = hasIdDoc || hasPassportDoc;
+      function isMissingFor(key){
+        if (key === 'id' || key === 'passport') return !hasEitherIdent;
+        if (key === 'proof_of_address')         return (grouped['proof_of_address'] || []).length === 0;
+        if (key === 'tax')                      return (grouped['tax'] || []).length === 0;
+        return false;
+      }
+      var missingBadge = '<span class="oac-doc-missing">⚠ Missing</span>';
       var linkStyle = 'font-size:.66rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#C0392B;text-decoration:none;border:1px solid #C0392B;padding:6px 12px;border-radius:2px;cursor:pointer;background:transparent';
       // Always render a section per category so the admin always sees every
       // type the client could have on file. Empty categories show a quiet
@@ -995,11 +1024,13 @@
       var html = '';
       CATEGORY_ORDER.forEach(function(cat){
         var list = grouped[cat] || [];
+        var missing = isMissingFor(cat);
         html +=
-          '<div style="margin-bottom:18px">' +
-            '<div style="font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;color:#1A1A1A;font-weight:700;margin-bottom:8px">' +
-              esc(CATEGORY_LABEL[cat] || cat) +
+          '<div style="margin-bottom:18px' + (missing ? ';padding:10px 12px;border:1px solid rgba(192,57,43,.25);border-left:3px solid #C0392B;background:#FFF6F5' : '') + '">' +
+            '<div style="font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;color:#1A1A1A;font-weight:700;margin-bottom:8px;display:flex;align-items:center;flex-wrap:wrap">' +
+              '<span>' + esc(CATEGORY_LABEL[cat] || cat) + '</span>' +
               (list.length ? ' <span style="color:#9B9590;font-weight:600;margin-left:6px">(' + list.length + ')</span>' : '') +
+              (missing ? ' ' + missingBadge : '') +
             '</div>';
         if (!list.length) {
           html +=
