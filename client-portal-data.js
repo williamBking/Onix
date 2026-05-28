@@ -1487,17 +1487,8 @@
   function renderClientDocList(docs) {
     const root = document.getElementById('doc-list-root');
     if (!root) return;
-    if (!docs.length) {
-      root.innerHTML =
-        '<div class="card reveal" style="text-align:center;padding:32px;color:var(--muted);font-style:italic">' +
-          '<span data-en="No documents on file yet. Use the upload zone above to add your first one." ' +
-                'data-es="Aún no hay documentos. Use la zona de carga para añadir el primero.">' +
-          'No documents on file yet. Use the upload zone above to add your first one.</span>' +
-        '</div>';
-      return;
-    }
     const byCat = {};
-    docs.forEach(d => {
+    (docs || []).forEach(d => {
       const k = d.category || 'other';
       (byCat[k] = byCat[k] || []).push(d);
     });
@@ -1506,30 +1497,43 @@
       catch (_) { return ''; }
     };
     const linkStyle = 'font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--red);background:transparent;border:1px solid var(--red);padding:6px 12px;border-radius:2px;text-decoration:none;cursor:pointer';
+    // Always render one card per category (matching the original "Loan /
+    // Investments / Tax & Statements" layout) so clients always see every
+    // type they can have on file. Empty categories show a quiet message.
     let html = '';
-    CLIENT_DOC_CATEGORIES.forEach(cat => {
-      const list = byCat[cat.key];
-      if (!list || !list.length) return;
+    CLIENT_DOC_CATEGORIES.forEach((cat, i) => {
+      const list = byCat[cat.key] || [];
+      const revealCls = i === 0 ? 'card reveal' : 'card reveal reveal-d' + Math.min(i, 3);
       html +=
-        '<div class="card reveal" style="margin-top:20px">' +
+        '<div class="' + revealCls + '" style="margin-top:20px">' +
           '<div class="card-title">' + escapeHtml(cat.label) +
-            ' <span style="color:var(--light);font-weight:600;margin-left:6px">(' + list.length + ')</span>' +
-          '</div>' +
-          list.map(d => {
-            const meta = (d.storage_path ? 'Uploaded' : (d.dropbox_url ? 'Dropbox' : 'No link')) +
-                         ' · ' + fmtDate(d.uploaded_at);
-            const action = d.storage_path
-              ? '<a href="#" data-cl-storage-path="' + escapeAttr(d.storage_path) + '" style="' + linkStyle + '">View ↗</a>'
-              : (d.dropbox_url
-                  ? '<a href="' + escapeAttr(d.dropbox_url) + '" target="_blank" rel="noopener" style="' + linkStyle + '">View ↗</a>'
-                  : '<span style="font-size:.7rem;color:var(--light)">—</span>');
-            return '<div class="doc-row">' +
-              '<div><div class="doc-name">' + escapeHtml(d.name) + '</div>' +
-                   '<div class="doc-meta">' + escapeHtml(meta) + '</div></div>' +
-              action +
-            '</div>';
-          }).join('') +
-        '</div>';
+            (list.length
+              ? ' <span style="color:var(--light);font-weight:600;margin-left:6px">(' + list.length + ')</span>'
+              : '') +
+          '</div>';
+      if (!list.length) {
+        html +=
+          '<div style="padding:18px 4px;color:var(--light);font-style:italic;font-size:.84rem">' +
+            '<span data-en="No documents uploaded yet." data-es="Aún no hay documentos.">' +
+              'No documents uploaded yet.</span>' +
+          '</div>';
+      } else {
+        html += list.map(d => {
+          const meta = (d.storage_path ? 'Uploaded' : (d.dropbox_url ? 'Dropbox' : 'No link')) +
+                       ' · ' + fmtDate(d.uploaded_at);
+          const action = d.storage_path
+            ? '<a href="#" data-cl-storage-path="' + escapeAttr(d.storage_path) + '" style="' + linkStyle + '">View ↗</a>'
+            : (d.dropbox_url
+                ? '<a href="' + escapeAttr(d.dropbox_url) + '" target="_blank" rel="noopener" style="' + linkStyle + '">View ↗</a>'
+                : '<span style="font-size:.7rem;color:var(--light)">—</span>');
+          return '<div class="doc-row">' +
+            '<div><div class="doc-name">' + escapeHtml(d.name) + '</div>' +
+                 '<div class="doc-meta">' + escapeHtml(meta) + '</div></div>' +
+            action +
+          '</div>';
+        }).join('');
+      }
+      html += '</div>';
     });
     root.innerHTML = html;
 
