@@ -2838,10 +2838,57 @@
           '#3B8B3B'
         );
         loadPending();
+        renderActiveTeam();   // show the newly-approved member in the team list
       } catch (err) {
         window.__onix_showToast('Could not approve: ' + (err && err.message ? err.message : err), '#C0392B');
         btns.forEach(function(b){ b.disabled = false; });
       }
+    }
+
+    // Initials for the mini-avatar in the team table.
+    function teamInitials(name){
+      var p = String(name||'').trim().split(/\s+/).filter(Boolean);
+      if (!p.length) return '??';
+      return ((p[0][0]||'') + (p.length>1 ? p[p.length-1][0] : '')).toUpperCase();
+    }
+    function teamRoleStyle(t){
+      return t==='admin'   ? {bg:'#FDF0EE',fg:'#C0392B'} :
+             t==='manager' ? {bg:'#FDF1E6',fg:'#B8651A'} :
+                             {bg:'#EBF5EB',fg:'#2D6B2D'};
+    }
+
+    // Paint active admin accounts (incl. newly-approved members) into the
+    // Team & Settings members table. Dedupes by email so demo rows and
+    // repeated renders don't double up.
+    async function renderActiveTeam(){
+      if (!window.OnixDB || !OnixDB.client) return;
+      var view = document.getElementById('view-users');
+      if (!view) return;
+      var table = Array.prototype.slice.call(view.querySelectorAll('table.tbl'))
+        .find(function(t){ var h=t.querySelector('thead'); return h && /Last Login/i.test(h.textContent||''); });
+      if (!table) return;
+      var tbody = table.querySelector('tbody');
+      if (!tbody) return;
+      var res = await OnixDB.client.from('profiles')
+        .select('email, full_name, title, role, status, created_at')
+        .eq('role', 'admin').eq('status', 'active')
+        .order('created_at', { ascending: true });
+      if (res.error) return;
+      (res.data || []).forEach(function(m){
+        var already = Array.prototype.slice.call(tbody.querySelectorAll('tr'))
+          .some(function(tr){ return (tr.textContent||'').toLowerCase().indexOf((m.email||'').toLowerCase()) >= 0; });
+        if (already) return;
+        var st = teamRoleStyle(m.title || 'admin');
+        var tr = document.createElement('tr');
+        tr.setAttribute('data-team-email', m.email);
+        tr.innerHTML =
+          '<td><span class="mini-avatar">'+esc(teamInitials(m.full_name||m.email))+'</span>'+esc(m.full_name||'—')+'</td>' +
+          '<td>'+esc(m.email)+'</td>' +
+          '<td><span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:2px;font:700 .66rem/1 \'DM Sans\',sans-serif;letter-spacing:.08em;text-transform:uppercase;background:'+st.bg+';color:'+st.fg+'">'+esc(titleLabel(m.title))+'</span></td>' +
+          '<td>—</td>' +
+          '<td><span style="background:#EBF5EB;color:#2D6B2D;font-size:.62rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;border-radius:2px">Active</span></td>';
+        tbody.appendChild(tr);
+      });
     }
 
     async function decline(tr){
@@ -2864,10 +2911,10 @@
     }
 
     // Initial load + refresh whenever the Team view is shown.
-    setTimeout(loadPending, 1900);
+    setTimeout(function(){ loadPending(); renderActiveTeam(); }, 1900);
     document.addEventListener('click', function(e){
       var t = e.target && e.target.closest && e.target.closest('[data-view="users"], [href="#users"], .nav-item');
-      if (t) setTimeout(loadPending, 300);
+      if (t) setTimeout(function(){ loadPending(); renderActiveTeam(); }, 300);
     }, true);
   });
 
