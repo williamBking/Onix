@@ -2409,12 +2409,13 @@
   // unpacked Bolt bundle. Month grid, color-coded events, add/remove.
   // ============================================================
   const CAL_TYPES = {
-    birthday:         { label: 'Birthday',          color: '#C58FB8' },
-    payment:          { label: 'Payment Due',       color: '#3B8B3B' },
-    loan_closing:     { label: 'Loan Closing',      color: '#C0392B' },
-    quarterly_report: { label: 'Quarterly Report',  color: '#4A6FA5' },
-    meeting:          { label: 'Meeting',           color: '#B07330' },
-    other:            { label: 'Other',             color: '#6B6560' }
+    birthday:         { label: 'Birthday',             color: '#C58FB8' },
+    payment:          { label: 'Payment Due',          color: '#3B8B3B' },
+    loan_closing:     { label: 'Loan Closing',         color: '#C0392B' },
+    loan_renewal:     { label: 'Client Loan Renewal',  color: '#C9952B' },
+    quarterly_report: { label: 'Quarterly Report',     color: '#4A6FA5' },
+    meeting:          { label: 'Meeting',              color: '#B07330' },
+    other:            { label: 'Other',                color: '#6B6560' }
   };
   let calMonth   = new Date().getMonth();
   let calYear    = new Date().getFullYear();
