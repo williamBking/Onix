@@ -805,21 +805,148 @@
       });
     });
 
-    // Wire details buttons (modal stub for now — opens raise documents in new tabs)
+    // Wire details buttons — open the real raise details modal
     document.querySelectorAll('[data-raise-details]').forEach(btn => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', (e) => {
+        // Stop the document-level "view details" delegated listener (which
+        // falls back to a hardcoded OPP_DATA map) from also firing.
+        e.preventDefault();
+        e.stopPropagation();
         const raiseId = btn.getAttribute('data-raise-details');
-        const raise = raises.find(x => x.id === raiseId);
-        if (!raise) return;
-        const docs = raise.raise_documents || [];
-        const docLinks = docs.length
-          ? docs.map(d => '• ' + d.name + ': ' + d.dropbox_url).join('\n')
-          : '(no documents posted)';
-        alert(raise.venture_name + '\n\n' + (raise.description || '') + '\n\n' +
-              'Structure: ' + (raise.structure || '—') + '\n\n' +
-              'Documents:\n' + docLinks);
+        const raise   = raises.find(x => x.id === raiseId);
+        if (raise) openRaiseDetailsModal(raise, userId);
       });
     });
+  }
+
+  // Standalone styled modal for an Open Raise. Reuses the existing
+  // .cp-overlay / .cp-sheet shell so it matches the rest of the portal.
+  function ensureRaiseDetailsModal() {
+    if (document.getElementById('cp-raise-modal')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'cp-raise-modal';
+    overlay.className = 'cp-overlay';
+    overlay.innerHTML =
+      '<div class="cp-sheet wide">' +
+        '<div class="cp-hd">' +
+          '<div>' +
+            '<div class="cp-eyebrow">Investment Opportunity</div>' +
+            '<h2 id="cp-rd-name">Opportunity</h2>' +
+            '<div class="cp-sub" id="cp-rd-sub"></div>' +
+          '</div>' +
+          '<button class="cp-close" data-rd-close type="button">×</button>' +
+        '</div>' +
+        '<div class="cp-body">' +
+          '<div id="cp-rd-kpis" class="opp-detail-kpi"></div>' +
+          '<p id="cp-rd-desc" style="font-size:.88rem;line-height:1.65;color:var(--muted);margin-bottom:18px"></p>' +
+          '<div id="cp-rd-structure-section" style="margin-bottom:18px">' +
+            '<div style="font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:8px">Structure</div>' +
+            '<div id="cp-rd-structure" style="font-size:.88rem;line-height:1.55;color:var(--dark)"></div>' +
+          '</div>' +
+          '<div id="cp-rd-docs-section" style="margin-bottom:18px">' +
+            '<div style="font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:8px">Documents</div>' +
+            '<div id="cp-rd-docs"></div>' +
+          '</div>' +
+          '<div style="height:1px;background:var(--border);margin:20px 0"></div>' +
+          '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">' +
+            '<div style="flex:1;height:6px;background:#f0f0f0;border-radius:3px;overflow:hidden">' +
+              '<div id="cp-rd-bar" style="height:100%;background:var(--red);border-radius:3px;transition:width 1s cubic-bezier(.4,0,.2,1)"></div>' +
+            '</div>' +
+            '<span id="cp-rd-pct" style="font-size:.78rem;font-weight:700;color:var(--red);white-space:nowrap"></span>' +
+          '</div>' +
+          '<div id="cp-rd-progress-meta" style="display:flex;justify-content:space-between;font-size:.74rem;color:var(--light)"></div>' +
+        '</div>' +
+        '<div class="cp-footer">' +
+          '<button class="cp-btn cp-btn-ghost" data-rd-close type="button">Close</button>' +
+          '<button class="cp-btn cp-btn-red" id="cp-rd-interest-btn" type="button">Express Interest →</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.classList.remove('show');
+    });
+    overlay.querySelectorAll('[data-rd-close]').forEach(b =>
+      b.addEventListener('click', () => overlay.classList.remove('show')));
+  }
+
+  function openRaiseDetailsModal(raise, userId) {
+    ensureRaiseDetailsModal();
+    const minIRR = raise.projected_return_min;
+    const maxIRR = raise.projected_return_max;
+    const irrTxt = (minIRR != null && maxIRR != null)
+      ? minIRR + '–' + maxIRR + '%'
+      : (maxIRR != null ? maxIRR + '%' : '—');
+    const typeLbl = raise.venture_type === 'deposit' ? 'Deposit · Onix Finance'
+                  : raise.venture_type === 'equity'  ? 'Equity · Private'
+                  : (raise.venture_type || '');
+
+    document.getElementById('cp-rd-name').textContent = raise.venture_name || 'Opportunity';
+    document.getElementById('cp-rd-sub').textContent  = typeLbl;
+    document.getElementById('cp-rd-kpis').innerHTML =
+      '<div class="kc"><div class="kc-lbl">Target IRR</div><div class="kc-val">' + escapeHtml(irrTxt) + '</div></div>' +
+      '<div class="kc"><div class="kc-lbl">Hold Period</div><div class="kc-val">' + escapeHtml(raise.investment_horizon || '—') + '</div></div>' +
+      '<div class="kc"><div class="kc-lbl">Minimum</div><div class="kc-val">' + fmt.money(raise.minimum_investment) + '</div></div>' +
+      '<div class="kc"><div class="kc-lbl">Raise Goal</div><div class="kc-val">' + fmt.money(raise.total_raise_target) + '</div></div>';
+    document.getElementById('cp-rd-desc').textContent = raise.description || '';
+
+    const structureSection = document.getElementById('cp-rd-structure-section');
+    if (raise.structure) {
+      document.getElementById('cp-rd-structure').textContent = raise.structure;
+      structureSection.style.display = '';
+    } else {
+      structureSection.style.display = 'none';
+    }
+
+    const docs = raise.raise_documents || [];
+    const docsSection = document.getElementById('cp-rd-docs-section');
+    if (docs.length) {
+      document.getElementById('cp-rd-docs').innerHTML = docs.map(d => {
+        const action = d.dropbox_url
+          ? '<a class="doc-link" href="' + escapeAttr(d.dropbox_url) + '" target="_blank" rel="noopener">View ↗</a>'
+          : '<span class="doc-link" style="opacity:.5">—</span>';
+        return '<div class="doc-row">' +
+          '<div><div class="doc-name">' + escapeHtml(d.name) + '</div></div>' + action +
+        '</div>';
+      }).join('');
+      docsSection.style.display = '';
+    } else {
+      document.getElementById('cp-rd-docs').innerHTML =
+        '<div style="padding:10px 14px;background:var(--bg);color:var(--light);font-style:italic;font-size:.8rem">No documents posted yet.</div>';
+      docsSection.style.display = '';
+    }
+
+    // Progress bar
+    const target = Number(raise.total_raise_target || 0);
+    const raised = Number(raise.amount_raised || 0);
+    const pct    = target > 0 ? Math.min(100, Math.round((raised / target) * 100)) : 0;
+    const bar    = document.getElementById('cp-rd-bar');
+    bar.style.width = '0%';
+    setTimeout(() => { bar.style.width = pct + '%'; }, 60);
+    document.getElementById('cp-rd-pct').textContent = pct + '% funded';
+    document.getElementById('cp-rd-progress-meta').innerHTML =
+      '<span>' + fmt.money(raised) + ' raised</span>' +
+      '<span>' + fmt.money(target - raised) + ' remaining</span>';
+
+    // Express Interest — submit to Supabase
+    const interestBtn = document.getElementById('cp-rd-interest-btn');
+    interestBtn.disabled = false;
+    interestBtn.textContent = 'Express Interest →';
+    interestBtn.onclick = async () => {
+      interestBtn.disabled = true;
+      interestBtn.textContent = 'Submitting…';
+      const ok = await OnixDB.submitRaiseInterest(userId, raise.id);
+      if (ok) {
+        interestBtn.textContent = '✓ Interest recorded';
+        interestBtn.style.background = '#3B8B3B';
+        interestBtn.style.borderColor = '#3B8B3B';
+      } else {
+        interestBtn.disabled = false;
+        interestBtn.textContent = 'Express Interest →';
+        alert('Could not record interest. Please try again.');
+      }
+    };
+
+    document.getElementById('cp-raise-modal').classList.add('show');
   }
 
   // ---------- Loan Application Form ----------
