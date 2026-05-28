@@ -2604,27 +2604,57 @@
       overlay.querySelector('#__onix_inv_close').addEventListener('click', closeInv);
       overlay.querySelector('#__onix_inv_cancel').addEventListener('click', closeInv);
 
-      overlay.querySelector('#__onix_inv_submit').addEventListener('click', function(){
+      overlay.querySelector('#__onix_inv_submit').addEventListener('click', async function(){
         var form = document.getElementById('__onix_inv_form');
         if (!form.checkValidity()) { form.reportValidity(); return; }
         var fd = new FormData(form);
         var roleVal = (fd.get('role')||'').toString();
         var roleLabel = roleVal === 'admin' ? 'Admin' : roleVal === 'manager' ? 'Manager' : 'Account Executive';
-        var member = {
-          id: 'U-' + Date.now().toString(36).toUpperCase().slice(-5),
-          first:  (fd.get('first')||'').toString().trim(),
-          last:   (fd.get('last')||'').toString().trim(),
-          email:  (fd.get('email')||'').toString().trim(),
-          role:   roleVal,
-          roleLabel: roleLabel,
-          dept:   (fd.get('dept')||'').toString().trim(),
-          invitedAt: new Date().toISOString(),
-          status: 'Invited'
-        };
-        var list = loadMembers(); list.push(member); saveMembers(list);
-        injectMemberRow(member);
-        window.__onix_showToast('Invitation sent to <b>' + member.email + '</b> as ' + roleLabel + '.', '#3B8B3B');
-        closeInv();
+        var first = (fd.get('first')||'').toString().trim();
+        var last  = (fd.get('last')||'').toString().trim();
+        var email = (fd.get('email')||'').toString().trim();
+        var fullName = (first + ' ' + last).trim();
+
+        var submitBtn = document.getElementById('__onix_inv_submit');
+        submitBtn.disabled = true;
+        var orig = submitBtn.textContent;
+        submitBtn.textContent = 'Sending…';
+
+        try {
+          if (!window.OnixDB || !OnixDB.client) throw new Error('Supabase not loaded');
+          // Calls the invite-team-member edge function (sends a real email with
+          // a tokenized accept link). The user's admin JWT is attached by the
+          // supabase-js functions client automatically.
+          var resp = await OnixDB.client.functions.invoke('invite-team-member', {
+            body: { email: email, full_name: fullName, title: roleVal }
+          });
+          if (resp.error) {
+            // Try to surface the function's JSON error message
+            var detail = '';
+            try { detail = (await resp.error.context.json()).error; } catch(_){}
+            throw new Error(detail || resp.error.message || 'Invite failed');
+          }
+          var data = resp.data || {};
+          var member = {
+            id: 'U-' + Date.now().toString(36).toUpperCase().slice(-5),
+            first: first, last: last, email: email,
+            role: roleVal, roleLabel: roleLabel,
+            dept: (fd.get('dept')||'').toString().trim(),
+            invitedAt: new Date().toISOString(), status: 'Invited'
+          };
+          injectMemberRow(member);
+          if (data.emailed === false) {
+            window.__onix_showToast('Invite created for <b>' + email + '</b>, but the email could not be sent. Share this link manually:<br><span style="font-size:.72rem;word-break:break-all">' + (data.acceptUrl||'') + '</span>', '#B8651A');
+          } else {
+            window.__onix_showToast('Invitation emailed to <b>' + email + '</b> as ' + roleLabel + '.', '#3B8B3B');
+          }
+          closeInv();
+        } catch (err) {
+          window.__onix_showToast('Could not send invite: ' + (err && err.message ? err.message : err), '#C0392B');
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.textContent = orig;
+        }
       });
     }
 
