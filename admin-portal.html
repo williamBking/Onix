@@ -17,6 +17,35 @@
     } catch(e) { window.location.replace('login.html'); }
   })();
 
+  /* Lock-the-viewport layout — sidebar + top-bar stay anchored, only the
+     right column (main content) scrolls. The Bolt bundler overwrites the
+     <head> when it unpacks the template, so the override has to be injected
+     after that into the freshly-replaced document.head. !important on each
+     declaration so we win the cascade regardless of order. */
+  window.addEventListener('load', function(){
+    function inject(){
+      if (document.getElementById('__onix_lock_layout')) return;
+      var s = document.createElement('style');
+      s.id = '__onix_lock_layout';
+      s.textContent =
+        'html,body{height:100% !important;overflow:hidden !important}' +
+        '.app{height:100vh !important;min-height:0 !important;overflow:hidden !important}' +
+        '.sidebar{height:100vh !important;overflow-y:auto !important}' +
+        '.app > div{height:100vh !important;overflow-y:auto !important}';
+      document.head.appendChild(s);
+    }
+    // Run repeatedly for the first couple of seconds — the bundler may unpack
+    // after our load handler fires, in which case our first injection gets
+    // wiped by replaceWith.
+    var tries = 0;
+    function attempt(){
+      tries++;
+      if (!document.getElementById('__onix_lock_layout')) inject();
+      if (tries < 30) setTimeout(attempt, 200);
+    }
+    attempt();
+  });
+
 
   /* New Client flow — intercept clicks on the "+ New Client" button and
      show an intermediary modal that asks for Investor / Lender / Borrower,

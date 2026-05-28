@@ -28,7 +28,11 @@
 :root{--red:#C0392B;--dark:#1A1A1A;--bg:#F8F7F5;--border:#E8E8E8;--muted:#6B6560;--light:#9B9590;--mid:#888;--caption:#bbb;--red-light:#FDF0EE;--success:#3B8B3B;--success-bg:#EBF5EB;--success-text:#2D6A2D;--warn-text:#A07818;--warn-bg:#FDF5E6;--serif:'Cormorant Garamond',Georgia,serif;--sans:'DM Sans',system-ui,sans-serif}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{max-width:100%;overflow-x:hidden}
-body{font-family:var(--sans);color:var(--dark);background:var(--bg)}
+/* Lock the page itself from scrolling; only the main content column scrolls.
+   That keeps both the sidebar and the top bar anchored in place no matter how
+   tall a single view's content grows. */
+html,body{height:100%}
+body{overflow:hidden;font-family:var(--sans);color:var(--dark);background:var(--bg)}
 a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-family:inherit;color:inherit}
 .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 18px;font-size:.78rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;border-radius:2px;transition:all .15s;border:1px solid transparent}
 .btn-red{background:var(--red);color:#fff;border-color:var(--red)}.btn-red:hover{background:#a93226}
@@ -50,11 +54,16 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
 .reveal.visible{opacity:1;transform:none}.reveal-d1{transition-delay:.08s}.reveal-d2{transition-delay:.16s}
 
 /* App shell */
-.app{min-height:100vh;display:grid;grid-template-columns:248px 1fr}
+.app{height:100vh;display:grid;grid-template-columns:248px 1fr;overflow:hidden}
 /* Dark stripe fills the sidebar column for the full page height so there's no
-   cream gap below the (sticky, 100vh) sidebar on tall pages. */
+   cream gap below the sidebar on widescreens (kept as a safety net even though
+   the new fixed-viewport layout below prevents the cream gap by construction). */
 @media(min-width:1025px){.app{background:linear-gradient(to right,#1A1A1A 248px,var(--bg) 248px)}}
-.sidebar{background:var(--dark);color:#fff;padding:28px 0;position:sticky;top:0;height:100vh;overflow-y:auto;display:flex;flex-direction:column}
+.sidebar{background:var(--dark);color:#fff;padding:28px 0;height:100vh;overflow-y:auto;display:flex;flex-direction:column}
+/* The right-column wrapper holds the top-bar + main; it owns the scroll
+   so the sidebar (left column) and the sticky top-bar stay locked while the
+   content scrolls. */
+.app > div{height:100vh;overflow-y:auto}
 .sidebar-brand{padding:0 24px 24px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:24px}
 .sidebar-logo{font-size:1.1rem;font-weight:900;letter-spacing:4px;color:#fff;text-transform:uppercase}
 .sidebar-logo span{color:var(--red)}
