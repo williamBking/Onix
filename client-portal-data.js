@@ -205,8 +205,14 @@
   }
 
   // Override the inline showInvestmentDetail() with one that reads real data.
-  function wireInvestmentDetailModal(investments) {
+  function wireInvestmentDetailModal(investments, distributions) {
     const map = new Map(investments.map(i => [i.id, i]));
+    const allDist = distributions || [];
+    const distKindLabel = (k) => ({
+      distribution: 'Distribution', interest: 'Interest', dividend: 'Dividend',
+      return_of_capital: 'Return of Capital', other: 'Other'
+    })[k] || (k || 'Distribution');
+
     window.showInvestmentDetail = function (id) {
       const inv = map.get(id);
       if (!inv) return;
@@ -214,6 +220,16 @@
       const typeLabel = (inv.venture_type === 'deposit') ? 'Deposit · Onix Finance'
                        : (inv.venture_type === 'equity')  ? 'Equity · Private'
                        : (inv.venture_type || 'Investment');
+
+      // Distributions for THIS investment (newest first)
+      const myDist = allDist
+        .filter(d => d.investment_id === inv.id)
+        .sort((a, b) => new Date(b.paid_at || 0) - new Date(a.paid_at || 0));
+      const totalDist = myDist.reduce((s, d) => s + Number(d.amount || 0), 0);
+      const invested  = Number(inv.amount_invested || 0);
+      const currentValue = invested + totalDist;          // simple: principal + payouts received
+      const totalReturnPct = invested > 0 ? (totalDist / invested) * 100 : null;
+
       setT('#det-type', typeLabel);
       setT('#det-name', inv.venture_name || 'Investment');
       setT('#det-amount', fmt.money(inv.amount_invested));
@@ -222,6 +238,7 @@
       setT('#det-status', inv.status === 'active' ? 'Active'
                        : inv.status === 'exited' ? 'Exited'
                        : inv.status === 'pending' ? 'Pending' : (inv.status || '—'));
+
       const details = document.getElementById('det-details');
       if (details) {
         const rows = [
@@ -231,12 +248,32 @@
           ['Ownership', inv.ownership_pct != null ? fmt.pct(inv.ownership_pct) : '—'],
           ['Expected Return', inv.expected_return != null ? fmt.pct(inv.expected_return) : '—'],
           ['Status', inv.status || '—'],
-          ['Amount Invested', fmt.money(inv.amount_invested)]
+          ['Amount Invested', fmt.money(inv.amount_invested)],
+          ['Distributions to Date', fmt.money(totalDist)],
+          ['Current Value', fmt.money(currentValue)],
+          ['Total Return', totalReturnPct != null ? fmt.pct(totalReturnPct) : '—']
         ];
         details.innerHTML = rows.map(r =>
           `<div class="detail-row"><span class="detail-key">${escapeHtml(r[0])}</span><span class="detail-val">${escapeHtml(r[1] == null ? '—' : r[1])}</span></div>`
         ).join('');
       }
+
+      // Distribution history table (#det-distributions tbody)
+      const distBody = document.getElementById('det-distributions');
+      if (distBody) {
+        distBody.innerHTML = myDist.length
+          ? myDist.map(d => `
+            <tr>
+              <td>${escapeHtml(fmt.date(d.paid_at))}</td>
+              <td>${escapeHtml(distKindLabel(d.kind))}</td>
+              <td>${escapeHtml(fmt.money(d.amount))}</td>
+            </tr>`).join('') +
+            `<tr style="font-weight:700">
+              <td>Total</td><td></td><td>${escapeHtml(fmt.money(totalDist))}</td>
+            </tr>`
+          : '<tr><td colspan="3" style="padding:14px 16px;color:var(--muted);font-size:.85rem;font-style:italic">No distributions yet.</td></tr>';
+      }
+
       const docs = document.getElementById('det-docs');
       if (docs) {
         const list = inv.investment_documents || [];
@@ -247,11 +284,19 @@
             ${d.dropbox_url ? `<a class="doc-link" href="${escapeAttr(d.dropbox_url)}" target="_blank" rel="noopener">View ↗</a>` : '<span class="doc-link" style="opacity:.5">—</span>'}
           </div>`).join('') : '<div style="padding:14px 16px;color:var(--muted);font-size:.85rem;font-style:italic">No documents on file.</div>';
       }
+
       // Switch to the detail view
       const all = document.querySelectorAll('.view');
       all.forEach(v => v.classList.remove('active'));
       const target = document.getElementById('view-investment-detail');
-      if (target) target.classList.add('active');
+      if (target) {
+        target.classList.add('active');
+        // CRITICAL: this view's cards use the .reveal animation (opacity:0
+        // until .visible). showView() normally adds .visible, but we switch
+        // views manually here — so reveal them ourselves or the page is blank.
+        target.querySelectorAll('.reveal').forEach(el => el.classList.add('visible'));
+        window.scrollTo(0, 0);
+      }
     };
   }
 
@@ -656,7 +701,7 @@
   function escapeAttr(s) { return escapeHtml(s); }
 
   // ---------- Investments ----------
-  function renderInvestments(investments) {
+  function renderInvestments(investments, distributions) {
     // KPIs: Total Invested / ROI Expected / Across N companies
     renderInvestmentKpis(investments);
     // Documents card on the My Documents view
@@ -695,7 +740,7 @@
       grid.appendChild(card);
     });
     // Wire detail modal + portfolio chart with the same dataset
-    wireInvestmentDetailModal(investments);
+    wireInvestmentDetailModal(investments, distributions || []);
     renderPortfolioChart(investments);
   }
 
@@ -1768,7 +1813,7 @@
     } else {
       renderNoLoan();
     }
-    renderInvestments(investments);
+    renderInvestments(investments, distributions);
     renderRaises(raises, userId);
     renderPayments(payments);
     renderDistributions(distributions);
