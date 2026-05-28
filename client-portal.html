@@ -18,7 +18,7 @@
 <!-- Supabase + Onix data layer -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase.js?v=9"></script>
-<script defer src="client-portal-data.js?v=19"></script>
+<script defer src="client-portal-data.js?v=20"></script>
 <style>
 :root{--red:#C0392B;--dark:#1A1A1A;--bg:#F8F7F5;--border:#E8E8E8;--muted:#6B6560;--light:#9B9590;--mid:#888;--caption:#bbb;--red-light:#FDF0EE;--success:#3B8B3B;--success-bg:#EBF5EB;--success-text:#2D6A2D;--warn-text:#A07818;--warn-bg:#FDF5E6;--serif:'Cormorant Garamond',Georgia,serif;--sans:'DM Sans',system-ui,sans-serif}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -597,34 +597,31 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
 
         <div class="card reveal" style="margin-bottom:24px">
           <div class="card-title" data-en="Upload Documents" data-es="Subir Documentos">Upload Documents</div>
-          <div id="doc-dropzone" style="border:2px dashed var(--border);border-radius:2px;padding:40px 24px;text-align:center;background:var(--bg);cursor:pointer;transition:all .2s"
-            ondragover="event.preventDefault();this.style.borderColor='var(--red)';this.style.background='var(--red-light)'"
-            ondragleave="this.style.borderColor='var(--border)';this.style.background='var(--bg)'"
-            ondrop="handleDocDrop(event)"
-            onclick="document.getElementById('docDropInput').click()">
+          <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:12px">
+            <div style="flex:1;min-width:220px">
+              <label class="field-label" data-en="Document type" data-es="Tipo de documento" style="display:block;margin-bottom:6px;font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700">Document type</label>
+              <select id="doc-category" class="field-select" style="width:100%">
+                <option value="id" data-en="ID" data-es="Identificación">ID</option>
+                <option value="passport" data-en="Passport" data-es="Pasaporte">Passport</option>
+                <option value="proof_of_address" data-en="Proof of Address" data-es="Comprobante de Domicilio">Proof of Address</option>
+                <option value="loan_application" data-en="Loan Application Supporting Docs" data-es="Documentos de Solicitud de Préstamo">Loan Application Supporting Docs</option>
+                <option value="loan_doc" data-en="Loan Documents" data-es="Documentos del Préstamo">Loan Documents</option>
+                <option value="promissory_note" data-en="Promissory Notes" data-es="Pagarés">Promissory Notes</option>
+                <option value="tax" data-en="Tax Documents" data-es="Documentos Fiscales">Tax Documents</option>
+                <option value="other" data-en="Other" data-es="Otro">Other</option>
+              </select>
+            </div>
+          </div>
+          <div id="doc-dropzone" style="border:2px dashed var(--border);border-radius:2px;padding:40px 24px;text-align:center;background:var(--bg);cursor:pointer;transition:all .2s">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.5" style="margin-bottom:12px;opacity:.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             <div style="font-weight:600;font-size:.9rem;margin-bottom:4px" data-en="Drop files here or click to browse" data-es="Arrastre archivos aquí o haga clic">Drop files here or click to browse</div>
             <div style="font-size:.72rem;color:var(--light);margin-top:4px">PDF, JPG, PNG, XLSX · Max 20MB per file</div>
-            <input type="file" id="docDropInput" multiple accept=".pdf,.jpg,.jpeg,.png,.xlsx" style="display:none" onchange="handleDocFileInput(this)">
+            <input type="file" id="docDropInput" multiple accept=".pdf,.jpg,.jpeg,.png,.xlsx" style="display:none">
           </div>
-          <div id="doc-drop-list" style="margin-top:14px;display:flex;flex-direction:column;gap:6px"></div>
+          <div id="doc-drop-status" style="margin-top:10px;font-size:.78rem;color:var(--muted);min-height:1em"></div>
         </div>
 
-        <div class="card reveal"><div class="card-title">Loan · ONX-2024-0047</div>
-          <div class="doc-row"><div><div class="doc-name" data-en="Promissory Note" data-es="Pagaré">Promissory Note</div><div class="doc-meta">PDF · 2.4 MB · Nov 1, 2024</div></div><button class="doc-link">Download ↓</button></div>
-          <div class="doc-row"><div><div class="doc-name" data-en="Deed of Trust" data-es="Escritura">Deed of Trust</div><div class="doc-meta">PDF · 1.8 MB · Nov 1, 2024</div></div><button class="doc-link">Download ↓</button></div>
-          <div class="doc-row"><div><div class="doc-name" data-en="Amortization Schedule" data-es="Amortización">Amortization Schedule</div><div class="doc-meta">XLSX · 0.2 MB · Nov 1, 2024</div></div><button class="doc-link">Download ↓</button></div>
-        </div>
-        <div class="card reveal reveal-d1" style="margin-top:20px"><div class="card-title" data-en="Investments" data-es="Inversiones">Investments</div>
-          <div class="doc-row"><div><div class="doc-name" data-en="Bari Caffè — Operating Agreement" data-es="Bari Caffè — Acuerdo Operativo">Bari Caffè — Operating Agreement</div><div class="doc-meta">PDF · 3.1 MB · Aug 12, 2024</div></div><button class="doc-link">Download ↓</button></div>
-          <div class="doc-row"><div><div class="doc-name" data-en="La Grange — Subscription Agreement" data-es="La Grange — Suscripción">La Grange — Subscription Agreement</div><div class="doc-meta">PDF · 1.4 MB · Oct 3, 2024</div></div><button class="doc-link">Download ↓</button></div>
-          <div class="doc-row"><div><div class="doc-name" data-en="Montrose — Note" data-es="Montrose — Pagaré">Montrose — Note</div><div class="doc-meta">PDF · 0.9 MB · Feb 18, 2025</div></div><button class="doc-link">Download ↓</button></div>
-        </div>
-        <div class="card reveal reveal-d2" style="margin-top:20px"><div class="card-title" data-en="Tax & Statements" data-es="Fiscal">Tax & Statements</div>
-          <div class="doc-row"><div><div class="doc-name">2024 K-1 · Bari Caffè</div><div class="doc-meta">PDF · 0.3 MB · Mar 14, 2025</div></div><button class="doc-link">Download ↓</button></div>
-          <div class="doc-row"><div><div class="doc-name">2024 K-1 · La Grange</div><div class="doc-meta">PDF · 0.3 MB · Mar 14, 2025</div></div><button class="doc-link">Download ↓</button></div>
-          <div class="doc-row"><div><div class="doc-name" data-en="Q1 2025 Portfolio Statement" data-es="Estado Q1 2025">Q1 2025 Portfolio Statement</div><div class="doc-meta">PDF · 0.6 MB · Apr 8, 2025</div></div><button class="doc-link">Download ↓</button></div>
-        </div>
+        <div id="doc-list-root"></div>
       </div>
 
       <!-- MESSAGES -->
@@ -1301,30 +1298,8 @@ function signOut() {
   window.location.href = 'login.html';
 }
 
-function handleDocDrop(e) {
-  e.preventDefault();
-  const zone = document.getElementById('doc-dropzone');
-  zone.style.borderColor = 'var(--border)';
-  zone.style.background = 'var(--bg)';
-  const files = Array.from(e.dataTransfer.files);
-  renderDroppedFiles(files);
-}
-
-function handleDocFileInput(input) {
-  const files = Array.from(input.files);
-  renderDroppedFiles(files);
-}
-
-function renderDroppedFiles(files) {
-  const list = document.getElementById('doc-drop-list');
-  files.forEach(f => {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#fff;border:1px solid var(--border);border-left:3px solid var(--red)';
-    const sizeMB = (f.size / (1024*1024)).toFixed(2);
-    row.innerHTML = `<div><div style="font-size:.84rem;font-weight:600">${f.name}</div><div style="font-size:.7rem;color:var(--light);margin-top:2px">${sizeMB} MB · Ready to submit</div></div><button onclick="this.parentElement.remove()" style="font-size:.66rem;color:var(--red);font-weight:700;letter-spacing:.08em;text-transform:uppercase;background:none;border:none;cursor:pointer">Remove</button>`;
-    list.appendChild(row);
-  });
-}
+// (Old doc upload helpers retired — wireDocumentsTab in client-portal-data.js
+// now handles category picker + real Supabase Storage upload + grouped list.)
 function submitLoanApp(e) {
   e.preventDefault();
   document.getElementById('loan-ok').style.display = 'block';

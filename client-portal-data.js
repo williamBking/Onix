@@ -1456,6 +1456,181 @@
     });
   }
 
+  // ============================================================
+  // MY DOCUMENTS TAB
+  // ============================================================
+  // Same category set as the admin Documents modal so uploads slot
+  // directly into the matching group on the admin side.
+  const CLIENT_DOC_CATEGORIES = [
+    { key: 'id',                label: 'ID' },
+    { key: 'passport',          label: 'Passport' },
+    { key: 'proof_of_address',  label: 'Proof of Address' },
+    { key: 'loan_application',  label: 'Loan Application Supporting Docs' },
+    { key: 'loan_doc',          label: 'Loan Documents' },
+    { key: 'promissory_note',   label: 'Promissory Notes' },
+    { key: 'tax',               label: 'Tax Documents' },
+    { key: 'other',             label: 'Other' }
+  ];
+  const CLIENT_DOC_BUCKET = 'client-documents';
+
+  // Reusable so any callsite (upload, list) can fetch the latest docs
+  async function fetchClientDocs(userId) {
+    const { data, error } = await OnixDB.client
+      .from('client_documents')
+      .select('id, name, category, uploaded_at, storage_path, dropbox_url')
+      .eq('profile_id', userId)
+      .order('uploaded_at', { ascending: false });
+    if (error) console.error('[onix] client_documents fetch failed:', error);
+    return data || [];
+  }
+
+  function renderClientDocList(docs) {
+    const root = document.getElementById('doc-list-root');
+    if (!root) return;
+    if (!docs.length) {
+      root.innerHTML =
+        '<div class="card reveal" style="text-align:center;padding:32px;color:var(--muted);font-style:italic">' +
+          '<span data-en="No documents on file yet. Use the upload zone above to add your first one." ' +
+                'data-es="Aún no hay documentos. Use la zona de carga para añadir el primero.">' +
+          'No documents on file yet. Use the upload zone above to add your first one.</span>' +
+        '</div>';
+      return;
+    }
+    const byCat = {};
+    docs.forEach(d => {
+      const k = d.category || 'other';
+      (byCat[k] = byCat[k] || []).push(d);
+    });
+    const fmtDate = s => {
+      try { return new Date(s).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }); }
+      catch (_) { return ''; }
+    };
+    const linkStyle = 'font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--red);background:transparent;border:1px solid var(--red);padding:6px 12px;border-radius:2px;text-decoration:none;cursor:pointer';
+    let html = '';
+    CLIENT_DOC_CATEGORIES.forEach(cat => {
+      const list = byCat[cat.key];
+      if (!list || !list.length) return;
+      html +=
+        '<div class="card reveal" style="margin-top:20px">' +
+          '<div class="card-title">' + escapeHtml(cat.label) +
+            ' <span style="color:var(--light);font-weight:600;margin-left:6px">(' + list.length + ')</span>' +
+          '</div>' +
+          list.map(d => {
+            const meta = (d.storage_path ? 'Uploaded' : (d.dropbox_url ? 'Dropbox' : 'No link')) +
+                         ' · ' + fmtDate(d.uploaded_at);
+            const action = d.storage_path
+              ? '<a href="#" data-cl-storage-path="' + escapeAttr(d.storage_path) + '" style="' + linkStyle + '">View ↗</a>'
+              : (d.dropbox_url
+                  ? '<a href="' + escapeAttr(d.dropbox_url) + '" target="_blank" rel="noopener" style="' + linkStyle + '">View ↗</a>'
+                  : '<span style="font-size:.7rem;color:var(--light)">—</span>');
+            return '<div class="doc-row">' +
+              '<div><div class="doc-name">' + escapeHtml(d.name) + '</div>' +
+                   '<div class="doc-meta">' + escapeHtml(meta) + '</div></div>' +
+              action +
+            '</div>';
+          }).join('') +
+        '</div>';
+    });
+    root.innerHTML = html;
+
+    // Storage-backed links → signed URL on click
+    root.querySelectorAll('[data-cl-storage-path]').forEach(a => {
+      a.addEventListener('click', async e => {
+        e.preventDefault();
+        const path = a.getAttribute('data-cl-storage-path');
+        const orig = a.textContent;
+        a.textContent = 'Opening…';
+        const r = await OnixDB.client.storage.from(CLIENT_DOC_BUCKET).createSignedUrl(path, 3600);
+        a.textContent = orig;
+        if (r.error || !r.data) {
+          alert('Could not open file: ' + (r.error && r.error.message || 'unknown error'));
+          return;
+        }
+        window.open(r.data.signedUrl, '_blank', 'noopener');
+      });
+    });
+  }
+
+  function wireDocumentsTab(userId, initialDocs) {
+    const zone   = document.getElementById('doc-dropzone');
+    const input  = document.getElementById('docDropInput');
+    const status = document.getElementById('doc-drop-status');
+    const catEl  = document.getElementById('doc-category');
+    if (!zone || !input || !catEl) return;
+
+    // Initial render of any docs already on file
+    renderClientDocList(initialDocs || []);
+
+    // Browse on click (we removed the inline onclick when we edited the HTML)
+    zone.addEventListener('click', () => input.click());
+
+    // Drag-and-drop UX
+    ['dragenter', 'dragover'].forEach(ev => zone.addEventListener(ev, e => {
+      e.preventDefault(); e.stopPropagation();
+      zone.style.borderColor = 'var(--red)';
+      zone.style.background  = 'var(--red-light)';
+    }));
+    ['dragleave', 'drop'].forEach(ev => zone.addEventListener(ev, e => {
+      e.preventDefault(); e.stopPropagation();
+      zone.style.borderColor = 'var(--border)';
+      zone.style.background  = 'var(--bg)';
+    }));
+
+    async function uploadFiles(fileList) {
+      const files = Array.from(fileList || []);
+      if (!files.length) return;
+      const category = catEl.value || 'other';
+      const catLabel = (CLIENT_DOC_CATEGORIES.find(c => c.key === category) || {}).label || category;
+      let ok = 0;
+      const errors = [];
+      for (const file of files) {
+        status.style.color = 'var(--muted)';
+        status.textContent = 'Uploading "' + file.name + '" as ' + catLabel + '…';
+        const safe = file.name.replace(/[^a-zA-Z0-9._-]+/g, '_');
+        const key  = userId + '/' + category + '/' + Date.now() + '-' + safe;
+        try {
+          const up = await OnixDB.client.storage
+            .from(CLIENT_DOC_BUCKET)
+            .upload(key, file, { upsert: false, contentType: file.type || undefined });
+          if (up.error) { errors.push(file.name + ': ' + up.error.message); continue; }
+          const ins = await OnixDB.client.from('client_documents').insert({
+            profile_id:  userId,
+            category:    category,
+            name:        file.name,
+            storage_path: key
+          });
+          if (ins.error) {
+            errors.push(file.name + ': ' + ins.error.message);
+            OnixDB.client.storage.from(CLIENT_DOC_BUCKET).remove([key]).catch(() => {});
+            continue;
+          }
+          ok++;
+        } catch (ex) {
+          errors.push(file.name + ': ' + (ex && ex.message ? ex.message : String(ex)));
+        }
+      }
+      if (ok) {
+        status.style.color = 'var(--success-text, #2D6A2D)';
+        status.textContent = '✓ Uploaded ' + ok + ' file' + (ok === 1 ? '' : 's') + ' as ' + catLabel + '.';
+      }
+      if (errors.length) {
+        status.style.color = 'var(--red)';
+        status.textContent = (ok ? status.textContent + ' ' : '') +
+          'Could not upload: ' + errors.join(' | ');
+      }
+      // Refresh the list from Supabase so the new rows show up
+      const fresh = await fetchClientDocs(userId);
+      searchData.clientDocs = fresh;
+      renderClientDocList(fresh);
+      input.value = '';
+    }
+
+    input.addEventListener('change', () => uploadFiles(input.files));
+    zone.addEventListener('drop', e => {
+      if (e.dataTransfer && e.dataTransfer.files) uploadFiles(e.dataTransfer.files);
+    });
+  }
+
   async function bootstrap() {
     if (!window.OnixDB) {
       console.error('[onix] supabase.js not loaded — OnixDB missing');
@@ -1519,6 +1694,7 @@
     searchData.clientDocs    = clientDocs || [];
 
     wireLoanApplicationForm(userId, profile);
+    wireDocumentsTab(userId, clientDocs || []);
   }
 
   if (document.readyState === 'loading') {
