@@ -390,13 +390,100 @@
     // and the Paid-to-Date / Remaining / Total Interest summary boxes all from real data.
     renderRepaymentProgress(loan, payments || []);
 
-    // Replace loan document rows inside the LENDING view (#view-loans) specifically,
-    // and inside the Documents → "Loan" card if present.
+    // My Loan tab "Loan Documents" card — show every real doc tied to this
+    // loan: admin-uploaded loan_documents PLUS the supporting docs the
+    // client uploaded on the original loan application (linked via
+    // client_documents.application_id = loan.application_id).
+    renderLoanDocsCardForLoan(loan).catch(err =>
+      console.error('[onix] loan docs render failed:', err)
+    );
+    // My Documents tab "Loan" card keeps mirroring admin-uploaded loan_documents
+    // (application supporting docs already appear there under their own header).
     if (loan && loan.loan_documents && loan.loan_documents.length) {
-      renderDocRowsInto(document.querySelector('#view-loans'), loan.loan_documents);
-      // The "Loan · …" card in view-documents
       renderDocRowsIntoCard(document.querySelector('#view-documents'), 'Loan', loan.loan_documents, loan.loan_id_display);
     }
+  }
+
+  // Combined doc list for the My Loan tab. loan_documents rows can come with
+  // either a dropbox_url or a storage_path; client_documents rows from the
+  // application form always have a storage_path. Both render as a View ↗
+  // link that resolves a 1-hour signed URL for storage-backed files.
+  async function renderLoanDocsCardForLoan(loan) {
+    const card = findCardByTitle(document.querySelector('#view-loans'),
+      txt => /Loan Documents|Documentos/i.test(txt));
+    if (!card) return;
+
+    // Pull supporting docs uploaded with the loan's application
+    let appDocs = [];
+    if (loan && loan.application_id) {
+      const { data, error } = await OnixDB.client
+        .from('client_documents')
+        .select('id, name, storage_path, dropbox_url, uploaded_at')
+        .eq('application_id', loan.application_id)
+        .order('uploaded_at', { ascending: false });
+      if (error) console.error('[onix] application docs fetch failed:', error);
+      appDocs = (data || []).map(d => Object.assign({ source: 'application' }, d));
+    }
+    const loanDocs = (loan && loan.loan_documents || []).map(d =>
+      Object.assign({ source: 'loan' }, d));
+    const allDocs = loanDocs.concat(appDocs).sort((a, b) =>
+      new Date(b.uploaded_at || 0) - new Date(a.uploaded_at || 0));
+
+    // Clear the hardcoded rows + any prior empty/state markers
+    card.querySelectorAll('.doc-row, [data-loan-docs-empty]').forEach(el => el.remove());
+
+    if (!allDocs.length) {
+      const empty = document.createElement('div');
+      empty.setAttribute('data-loan-docs-empty', '');
+      empty.style.cssText = 'padding:18px;color:var(--light);font-style:italic;text-align:center;font-size:.84rem';
+      empty.setAttribute('data-en', 'No loan documents on file yet.');
+      empty.setAttribute('data-es', 'Aún no hay documentos.');
+      empty.textContent = 'No loan documents on file yet.';
+      card.appendChild(empty);
+      return;
+    }
+
+    allDocs.forEach(d => {
+      const row = document.createElement('div');
+      row.className = 'doc-row';
+      const dateStr = fmt.date(d.uploaded_at || new Date());
+      const sourceLbl = d.source === 'application' ? 'From your application' : 'Loan document';
+      let actionHtml;
+      if (d.storage_path) {
+        actionHtml =
+          '<a href="#" class="doc-link" data-loandocs-storage-path="' +
+          escapeAttr(d.storage_path) + '">View ↗</a>';
+      } else if (d.dropbox_url) {
+        actionHtml =
+          '<a class="doc-link" href="' + escapeAttr(d.dropbox_url) +
+          '" target="_blank" rel="noopener">View ↗</a>';
+      } else {
+        actionHtml = '<button class="doc-link" disabled>—</button>';
+      }
+      row.innerHTML =
+        '<div><div class="doc-name">' + escapeHtml(d.name) + '</div>' +
+        '<div class="doc-meta">' + escapeHtml(sourceLbl) + ' · ' + escapeHtml(dateStr) + '</div></div>' +
+        actionHtml;
+      card.appendChild(row);
+    });
+
+    // Wire storage-backed View links to generate signed URLs on click
+    card.querySelectorAll('[data-loandocs-storage-path]').forEach(a => {
+      a.addEventListener('click', async e => {
+        e.preventDefault();
+        const path = a.getAttribute('data-loandocs-storage-path');
+        const orig = a.textContent;
+        a.textContent = 'Opening…';
+        const r = await OnixDB.client.storage
+          .from('client-documents').createSignedUrl(path, 3600);
+        a.textContent = orig;
+        if (r.error || !r.data) {
+          alert('Could not open file: ' + (r.error && r.error.message || 'unknown'));
+          return;
+        }
+        window.open(r.data.signedUrl, '_blank', 'noopener');
+      });
+    });
   }
 
   // Drive the Repayment Progress card on the Lending tab from real loan + payment data.
