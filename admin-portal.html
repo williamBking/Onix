@@ -2874,19 +2874,73 @@
         .eq('role', 'admin').eq('status', 'active')
         .order('created_at', { ascending: true });
       if (res.error) return;
+      var TEAM_ROLES = [
+        { key:'admin',   label:'Admin' },
+        { key:'manager', label:'Manager' },
+        { key:'ae',      label:'Account Executive' }
+      ];
       (res.data || []).forEach(function(m){
         var already = Array.prototype.slice.call(tbody.querySelectorAll('tr'))
           .some(function(tr){ return (tr.textContent||'').toLowerCase().indexOf((m.email||'').toLowerCase()) >= 0; });
         if (already) return;
-        var st = teamRoleStyle(m.title || 'admin');
+        var current = (m.title === 'manager' || m.title === 'ae') ? m.title : 'admin';
         var tr = document.createElement('tr');
         tr.setAttribute('data-team-email', m.email);
         tr.innerHTML =
           '<td><span class="mini-avatar">'+esc(teamInitials(m.full_name||m.email))+'</span>'+esc(m.full_name||'—')+'</td>' +
           '<td>'+esc(m.email)+'</td>' +
-          '<td><span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:2px;font:700 .66rem/1 \'DM Sans\',sans-serif;letter-spacing:.08em;text-transform:uppercase;background:'+st.bg+';color:'+st.fg+'">'+esc(titleLabel(m.title))+'</span></td>' +
+          '<td class="__onix_role_cell"></td>' +
           '<td>—</td>' +
-          '<td><span style="background:#EBF5EB;color:#2D6B2D;font-size:.62rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;border-radius:2px">Active</span></td>';
+          '<td class="__onix_status_cell"><span style="background:#EBF5EB;color:#2D6B2D;font-size:.62rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;border-radius:2px">Active</span></td>';
+
+        // Role dropdown — same look as the existing team rows. Mark the cell
+        // roleized so the other takeover() handler skips it. Changes persist
+        // to profiles.title in the DB.
+        var roleTd = tr.querySelector('.__onix_role_cell');
+        roleTd.dataset.onixRoleized = '1';
+        var sel = document.createElement('select');
+        sel.className = '__onix_role_select role-' + current;
+        sel.dataset.email = m.email;
+        TEAM_ROLES.forEach(function(r){
+          var o = document.createElement('option');
+          o.value = r.key; o.textContent = r.label;
+          if (r.key === current) o.selected = true;
+          sel.appendChild(o);
+        });
+        sel.addEventListener('change', async function(){
+          sel.className = '__onix_role_select role-' + sel.value;
+          var prev = current;
+          current = sel.value;
+          var r = await OnixDB.client.from('profiles').update({ title: sel.value }).eq('email', m.email);
+          if (r.error) {
+            window.__onix_showToast('Could not change role: ' + r.error.message, '#C0392B');
+            sel.value = prev; current = prev; sel.className = '__onix_role_select role-' + prev;
+          } else {
+            window.__onix_showToast('Role updated for <b>'+esc(m.email)+'</b>.', '#3B8B3B');
+          }
+        });
+        roleTd.appendChild(sel);
+
+        // Remove button in the status cell — revokes admin access (sets the
+        // profile status to rejected, which the requireAdmin gate blocks).
+        var statusTd = tr.querySelector('.__onix_status_cell');
+        var rm = document.createElement('button');
+        rm.textContent = 'Remove';
+        rm.style.cssText = 'margin-left:10px;background:#fff;color:#C0392B;border:1px solid #E8E8E8;padding:5px 11px;font:600 .64rem/1 \'DM Sans\',sans-serif;text-transform:uppercase;letter-spacing:.06em;border-radius:2px;cursor:pointer';
+        rm.addEventListener('click', async function(){
+          if (!confirm('Remove ' + (m.full_name || m.email) + ' from the team? They will lose admin access.')) return;
+          rm.disabled = true;
+          var r = await OnixDB.client.from('profiles').update({ status: 'rejected' }).eq('email', m.email);
+          if (r.error) {
+            window.__onix_showToast('Could not remove: ' + r.error.message, '#C0392B');
+            rm.disabled = false;
+          } else {
+            window.__onix_showToast('Removed <b>'+esc(m.email)+'</b> from the team.', '#6B6560');
+            tr.remove();
+          }
+        });
+        statusTd.appendChild(rm);
+
         tbody.appendChild(tr);
       });
     }
@@ -3593,7 +3647,7 @@
   </noscript>
   <!-- Onix Supabase live admin layer -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="supabase.js?v=10"></script>
+  <script src="supabase.js?v=11"></script>
   <script defer src="admin-portal-data.js?v=39"></script>
   <!-- Shared i18n helper: wires EN/ES toggle via event delegation so it
        works even for late-injected DOM (the admin bundle ships its own
