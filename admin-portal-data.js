@@ -2351,6 +2351,98 @@
     }
   }
 
+  // ---------- Live admin notification bell ----------
+  // Builds a feed from real activity and takes over the top-bar bell icon.
+  // Marks items read once viewed (persisted in localStorage by timestamp).
+  function renderAdminNotifications(data) {
+    const READ_KEY = 'onix-admin-notif-read-at';
+    const lastReadAt = Number(localStorage.getItem(READ_KEY) || 0);
+
+    const items = [];
+    (data.applications || []).forEach(a => items.push({
+      ts: new Date(a.submitted_at).getTime(),
+      msg: 'New loan application from <b>' + esc((a.profiles && (a.profiles.full_name || a.profiles.email)) || 'a client') + '</b> · ' + fmt.money(a.amount_requested)
+    }));
+    (data.payments || []).filter(p => p.paid_at).forEach(p => items.push({
+      ts: new Date(p.paid_at).getTime(),
+      msg: 'Payment received from <b>' + esc((p.loans && p.loans.profiles && p.loans.profiles.full_name) || 'a client') + '</b> · ' + fmt.money(p.amount_due)
+    }));
+    (data.distributions || []).forEach(d => items.push({
+      ts: new Date(d.paid_at).getTime(),
+      msg: 'Distribution paid to <b>' + esc((d.investments && d.investments.profiles && d.investments.profiles.full_name) || 'a client') + '</b> · ' + fmt.money(d.amount) + ((d.investments && d.investments.venture_name) ? ' · ' + esc(d.investments.venture_name) : '')
+    }));
+    (data.pending || []).forEach(c => items.push({
+      ts: new Date(c.created_at).getTime(),
+      msg: (c.status === 'met' ? 'Client ready to activate: <b>' : 'New client signed up: <b>') + esc(c.full_name || c.email) + '</b>'
+    }));
+    (data.interests || []).forEach(i => items.push({
+      ts: new Date(i.created_at || i.submitted_at || Date.now()).getTime(),
+      msg: 'Investment interest from <b>' + esc((i.profiles && (i.profiles.full_name || i.profiles.email)) || 'a client') + '</b>' + ((i.raises && i.raises.venture_name) ? ' · ' + esc(i.raises.venture_name) : '')
+    }));
+
+    items.sort((a, b) => b.ts - a.ts);
+    const top = items.slice(0, 15);
+    top.forEach(i => { i.read = i.ts <= lastReadAt; });
+    const unread = top.filter(i => !i.read).length;
+
+    // Build (once) my own panel; remove the static demo panel if present.
+    const staticPanel = document.getElementById('__onix_admin_notif');
+    if (staticPanel) staticPanel.remove();
+
+    let panel = document.getElementById('oac-live-notif');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'oac-live-notif';
+      panel.style.cssText = 'position:fixed;top:68px;right:18px;width:360px;max-height:70vh;overflow-y:auto;background:#fff;border:1px solid #E8E8E8;border-top:3px solid #C0392B;box-shadow:0 16px 48px rgba(0,0,0,.2);z-index:9000;display:none;font-family:"DM Sans",-apple-system,sans-serif';
+      document.body.appendChild(panel);
+      document.addEventListener('click', (e) => {
+        if (!panel.contains(e.target) && !(e.target.closest && e.target.closest('[data-oac-bell]'))) {
+          panel.style.display = 'none';
+        }
+      });
+    }
+    const rowsHtml = top.length ? top.map(n => `
+      <div style="padding:13px 18px;border-bottom:1px solid #f6f6f6;display:flex;gap:12px;align-items:flex-start">
+        <div style="width:8px;height:8px;border-radius:50%;background:${n.read ? '#E8E8E8' : '#C0392B'};flex-shrink:0;margin-top:5px"></div>
+        <div><div style="font-size:.82rem;line-height:1.45;color:#1A1A1A">${n.msg}</div>
+        <div style="font-size:.68rem;color:#9B9590;margin-top:3px">${esc(fmt.date(new Date(n.ts)))}</div></div>
+      </div>`).join('') : '<div style="padding:24px 18px;color:#9B9590;font-size:.85rem;font-style:italic;text-align:center">No activity yet.</div>';
+    panel.innerHTML =
+      `<div style="padding:14px 18px;border-bottom:1px solid #E8E8E8;display:flex;justify-content:space-between;align-items:center">
+         <span style="font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;font-weight:700;color:#6B6560">Notifications${unread ? ' <span style="background:#C0392B;color:#fff;border-radius:10px;padding:1px 7px;font-size:.6rem">' + unread + '</span>' : ''}</span>
+         <button id="oac-notif-clear" style="font-size:.64rem;color:#C0392B;font-weight:700;background:none;border:none;cursor:pointer;letter-spacing:.06em;text-transform:uppercase">Mark all read</button>
+       </div>` + rowsHtml;
+
+    panel.querySelector('#oac-notif-clear').addEventListener('click', () => {
+      localStorage.setItem(READ_KEY, String(Date.now()));
+      renderAdminNotifications(data); // re-render to clear dots
+    });
+
+    // Take over the bell icon (clone to strip the static script's listeners).
+    document.querySelectorAll('.icon-btn').forEach(b => {
+      const svgPath = b.querySelector('path');
+      const isBell = svgPath && /M18 8A6 6/.test(svgPath.getAttribute('d') || '');
+      if (!isBell) return;
+      if (b.getAttribute('data-oac-bell') === '1') return; // already taken over
+      const fresh = b.cloneNode(true);
+      fresh.setAttribute('data-oac-bell', '1');
+      b.replaceWith(fresh);
+      fresh.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const showing = panel.style.display === 'block';
+        panel.style.display = showing ? 'none' : 'block';
+      });
+      // Manage the unread dot on the bell
+      let dot = fresh.querySelector('.icon-btn-dot');
+      if (unread > 0) {
+        if (!dot) { dot = document.createElement('span'); dot.className = 'icon-btn-dot'; fresh.appendChild(dot); }
+        dot.style.display = '';
+      } else if (dot) {
+        dot.style.display = 'none';
+      }
+    });
+  }
+
   async function refreshAll() {
     const greeting = document.getElementById('oac-greeting');
     if (greeting) greeting.textContent = 'Loading data…';
@@ -2371,6 +2463,7 @@
       // the Clients tab (driven by data.pending).
       paintStaticAdmin({ clients, loans, investments, raises, applications, payments, distributions, pending });
       paintSidebarBadges({ applications, pending, interests });
+      renderAdminNotifications({ applications, payments, distributions, pending, interests });
       const newInterest = (interests || []).filter(i => i.status === 'new').length;
       if (greeting) greeting.textContent = `Loaded · ${clients.length} clients · ${pending.length} pending · ${loans.length} loans · ${applications.length} applications${newInterest ? ' · ' + newInterest + ' new interest' + (newInterest === 1 ? '' : 's') : ''}`;
     } catch (ex) {
