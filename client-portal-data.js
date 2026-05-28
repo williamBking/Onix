@@ -285,6 +285,10 @@
           </div>`).join('') : '<div style="padding:14px 16px;color:var(--muted);font-size:.85rem;font-style:italic">No documents on file.</div>';
       }
 
+      // Tier 2: performance card (annualized return, progress vs target,
+      // cash-flow chart, next-distribution estimate).
+      renderInvestmentPerformance(inv, myDist, { invested, totalDist, currentValue });
+
       // Switch to the detail view
       const all = document.querySelectorAll('.view');
       all.forEach(v => v.classList.remove('active'));
@@ -298,6 +302,113 @@
         window.scrollTo(0, 0);
       }
     };
+  }
+
+  // Tier 2 "Performance" card for the investment detail view. Injected once
+  // (before the Documents card) and refreshed on each open. All derived from
+  // real data: amount invested, distribution history, start date, expected
+  // (annual) return target.
+  function renderInvestmentPerformance(inv, myDist, totals) {
+    const view = document.getElementById('view-investment-detail');
+    if (!view) return;
+    const invested = Number(totals.invested || 0);
+    const totalDist = Number(totals.totalDist || 0);
+
+    // Holding period in years (from start_date to today)
+    let years = null;
+    if (inv.start_date) {
+      const ms = Date.now() - new Date(inv.start_date).getTime();
+      if (ms > 0) years = ms / (365.25 * 24 * 3600 * 1000);
+    }
+    const totalReturnPct = invested > 0 ? (totalDist / invested) * 100 : 0;
+    // Compound annualized return on (invested + distributions) vs invested.
+    let annualizedPct = null;
+    if (invested > 0 && years && years >= 0.08) {
+      annualizedPct = (Math.pow((invested + totalDist) / invested, 1 / years) - 1) * 100;
+    } else if (invested > 0 && years) {
+      annualizedPct = totalReturnPct; // too early to annualize meaningfully
+    }
+    const targetPct = inv.expected_return != null ? Number(inv.expected_return) : null;
+    // Tracking vs the annual target (both annual %), capped 0..100 for the bar.
+    const trackPct = (targetPct && annualizedPct != null && targetPct > 0)
+      ? Math.max(0, Math.min(100, (annualizedPct / targetPct) * 100)) : null;
+
+    // Next distribution estimate from the average gap between payouts.
+    let nextEst = null;
+    const sortedAsc = myDist.slice().filter(d => d.paid_at).sort((a, b) => new Date(a.paid_at) - new Date(b.paid_at));
+    if (sortedAsc.length >= 2) {
+      let gaps = 0;
+      for (let i = 1; i < sortedAsc.length; i++) {
+        gaps += new Date(sortedAsc[i].paid_at) - new Date(sortedAsc[i - 1].paid_at);
+      }
+      const avgGap = gaps / (sortedAsc.length - 1);
+      nextEst = new Date(new Date(sortedAsc[sortedAsc.length - 1].paid_at).getTime() + avgGap);
+    }
+
+    // Build / locate the card (insert before the Documents card)
+    let card = document.getElementById('det-performance');
+    if (!card) {
+      card = document.createElement('div');
+      card.id = 'det-performance';
+      card.className = 'card reveal visible';
+      const docsCard = (document.getElementById('det-docs') || {}).closest
+        ? document.getElementById('det-docs').closest('.card') : null;
+      if (docsCard && docsCard.parentElement) docsCard.parentElement.insertBefore(card, docsCard);
+      else view.appendChild(card);
+    }
+    card.classList.add('visible');
+
+    const stat = (label, val) =>
+      '<div style="flex:1;min-width:120px"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:700;margin-bottom:6px">' +
+      escapeHtml(label) + '</div><div style="font-family:var(--serif);font-style:italic;font-size:1.35rem;font-weight:500">' + escapeHtml(val) + '</div></div>';
+
+    card.innerHTML =
+      '<div class="card-title" data-en="Performance" data-es="Rendimiento">Performance</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:18px;margin-bottom:20px">' +
+        stat('Total Return', fmt.pct(totalReturnPct)) +
+        stat('Annualized (est.)', annualizedPct != null ? fmt.pct(annualizedPct) : '—') +
+        stat('Target Return', targetPct != null ? fmt.pct(targetPct) : '—') +
+        stat('Next Distribution (est.)', nextEst ? fmt.date(nextEst.toISOString()) : '—') +
+      '</div>' +
+      (trackPct != null
+        ? '<div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:6px">' +
+            '<span style="color:var(--muted)">Tracking vs ' + fmt.pct(targetPct) + ' annual target</span>' +
+            '<span style="color:var(--red);font-weight:700">' + trackPct.toFixed(0) + '%</span></div>' +
+          '<div class="progress-wrap" style="height:8px;margin-bottom:22px"><div class="progress-fill" style="width:' + trackPct.toFixed(1) + '%"></div></div>'
+        : '') +
+      '<div style="font-size:.66rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:700;margin-bottom:10px">Distributions Over Time</div>' +
+      '<div style="height:200px;position:relative"><canvas id="det-cashflow-chart"></canvas></div>';
+
+    // Cash-flow chart: each distribution as a bar by date.
+    const canvas = document.getElementById('det-cashflow-chart');
+    if (canvas && typeof Chart !== 'undefined') {
+      try { const ex = Chart.getChart(canvas); if (ex) ex.destroy(); } catch (e) {}
+      if (sortedAsc.length) {
+        new Chart(canvas.getContext('2d'), {
+          type: 'bar',
+          data: {
+            labels: sortedAsc.map(d => new Date(d.paid_at).toLocaleDateString('en-US', { month: 'short', year: '2-digit' })),
+            datasets: [{
+              data: sortedAsc.map(d => Number(d.amount || 0)),
+              backgroundColor: '#C0392B', borderWidth: 0, borderRadius: 2, maxBarThickness: 38
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => '$' + Number(c.parsed.y).toLocaleString() } } },
+            scales: {
+              y: { grid: { color: '#f0f0f0' }, ticks: { color: '#888', font: { size: 10 }, callback: v => '$' + (v >= 1000 ? (v / 1000) + 'k' : v) } },
+              x: { grid: { display: false }, ticks: { color: '#888', font: { size: 10 } } }
+            }
+          }
+        });
+      } else {
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#9B9590'; ctx.font = "italic 14px 'Cormorant Garamond', serif"; ctx.textAlign = 'center';
+        ctx.fillText('No distributions yet', canvas.width / 2, canvas.height / 2);
+      }
+    }
   }
 
   // Replace the Portfolio Allocation pie chart with real data.
