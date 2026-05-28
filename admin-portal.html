@@ -983,49 +983,56 @@
       document.getElementById('__onix_cd_sub').textContent  = docs.length + ' document' + (docs.length === 1 ? '' : 's') + ' on file';
 
       var body = document.getElementById('__onix_cd_body');
-      if (!docs.length) {
-        body.innerHTML = '<div style="padding:18px;color:#9B9590;font-style:italic;font-size:.86rem;text-align:center">No documents on file yet. Upload one above.</div>';
-      } else {
-        var grouped = {};
-        docs.forEach(function(d){
-          var cat = d.category || 'other';
-          (grouped[cat] = grouped[cat] || []).push(d);
-        });
-        var linkStyle = 'font-size:.66rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#C0392B;text-decoration:none;border:1px solid #C0392B;padding:6px 12px;border-radius:2px;cursor:pointer;background:transparent';
-        var html = '';
-        CATEGORY_ORDER.forEach(function(cat){
-          var list = grouped[cat];
-          if (!list || !list.length) return;
-          html +=
-            '<div style="margin-bottom:18px">' +
-              '<div style="font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;color:#1A1A1A;font-weight:700;margin-bottom:8px">' +
-                esc(CATEGORY_LABEL[cat] || cat) + ' <span style="color:#9B9590;font-weight:600;margin-left:6px">(' + list.length + ')</span>' +
-              '</div>' +
-              '<div style="display:flex;flex-direction:column;gap:6px">' +
-                list.map(function(d){
-                  var meta = (function(){
-                    try { return new Date(d.uploaded_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
-                    catch(_) { return ''; }
-                  })();
-                  var source = d.storage_path ? 'Uploaded' : (d.dropbox_url ? 'Dropbox' : '');
-                  var action = d.storage_path
-                    ? '<a href="#" data-storage-path="' + esc(d.storage_path) + '" style="' + linkStyle + '">View ↗</a>'
-                    : (d.dropbox_url
-                        ? '<a href="' + esc(d.dropbox_url) + '" target="_blank" rel="noopener" style="' + linkStyle + '">View ↗</a>'
-                        : '<span style="font-size:.66rem;color:#9B9590">No link</span>');
-                  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:#F8F7F5;border-left:3px solid #C0392B">' +
-                    '<div style="min-width:0">' +
-                      '<div style="font-size:.84rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(d.name) + '</div>' +
-                      '<div style="font-size:.7rem;color:#9B9590;margin-top:2px">' + meta + (source ? ' · ' + source : '') + '</div>' +
-                    '</div>' +
-                    action +
-                  '</div>';
-                }).join('') +
-              '</div>' +
+      var grouped = {};
+      docs.forEach(function(d){
+        var cat = d.category || 'other';
+        (grouped[cat] = grouped[cat] || []).push(d);
+      });
+      var linkStyle = 'font-size:.66rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#C0392B;text-decoration:none;border:1px solid #C0392B;padding:6px 12px;border-radius:2px;cursor:pointer;background:transparent';
+      // Always render a section per category so the admin always sees every
+      // type the client could have on file. Empty categories show a quiet
+      // 'No documents uploaded yet' line.
+      var html = '';
+      CATEGORY_ORDER.forEach(function(cat){
+        var list = grouped[cat] || [];
+        html +=
+          '<div style="margin-bottom:18px">' +
+            '<div style="font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;color:#1A1A1A;font-weight:700;margin-bottom:8px">' +
+              esc(CATEGORY_LABEL[cat] || cat) +
+              (list.length ? ' <span style="color:#9B9590;font-weight:600;margin-left:6px">(' + list.length + ')</span>' : '') +
             '</div>';
-        });
-        body.innerHTML = html;
-      }
+        if (!list.length) {
+          html +=
+            '<div style="padding:10px 14px;background:#F8F7F5;border-left:3px solid #E8E8E8;color:#9B9590;font-style:italic;font-size:.78rem">' +
+              'No documents uploaded yet.' +
+            '</div>';
+        } else {
+          html +=
+            '<div style="display:flex;flex-direction:column;gap:6px">' +
+              list.map(function(d){
+                var meta = (function(){
+                  try { return new Date(d.uploaded_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
+                  catch(_) { return ''; }
+                })();
+                var source = d.storage_path ? 'Uploaded' : (d.dropbox_url ? 'Dropbox' : '');
+                var action = d.storage_path
+                  ? '<a href="#" data-storage-path="' + esc(d.storage_path) + '" style="' + linkStyle + '">View ↗</a>'
+                  : (d.dropbox_url
+                      ? '<a href="' + esc(d.dropbox_url) + '" target="_blank" rel="noopener" style="' + linkStyle + '">View ↗</a>'
+                      : '<span style="font-size:.66rem;color:#9B9590">No link</span>');
+                return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:#F8F7F5;border-left:3px solid #C0392B">' +
+                  '<div style="min-width:0">' +
+                    '<div style="font-size:.84rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(d.name) + '</div>' +
+                    '<div style="font-size:.7rem;color:#9B9590;margin-top:2px">' + meta + (source ? ' · ' + source : '') + '</div>' +
+                  '</div>' +
+                  action +
+                '</div>';
+              }).join('') +
+            '</div>';
+        }
+        html += '</div>';
+      });
+      body.innerHTML = html;
       // Clear any stale upload-feedback line
       var msg = document.getElementById('__onix_cd_upload_msg');
       if (msg) msg.textContent = '';
