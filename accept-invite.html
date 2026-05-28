@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Onix Finance — Accept Invitation</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=DM+Sans:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --red:#C0392B;--dark:#1A1A1A;--bg:#F8F7F5;--border:#E8E8E8;
+  --muted:#6B6560;--light:#9B9590;--red-light:#FDF0EE;
+  --success:#3B8B3B;--success-bg:#EBF5EB;
+  --serif:'Cormorant Garamond',Georgia,serif;--sans:'DM Sans',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);color:var(--dark);min-height:100vh;background:var(--bg);
+     display:flex;align-items:center;justify-content:center;padding:24px}
+.card{width:100%;max-width:440px;background:#fff;border:1px solid var(--border);
+      border-top:3px solid var(--red);padding:44px 40px}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:30px}
+.brand-mark{font-size:1.3rem;font-weight:900;letter-spacing:5px;text-transform:uppercase}
+.brand-mark span{color:var(--red)}
+.eyebrow{font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:var(--red);font-weight:600;margin-bottom:12px}
+h1{font-family:var(--serif);font-style:italic;font-weight:500;font-size:2.1rem;line-height:1.05;margin-bottom:10px}
+.sub{color:var(--light);font-size:.9rem;margin-bottom:28px;line-height:1.6}
+.field-label{display:block;font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:8px}
+.field-input{width:100%;padding:13px 14px;border:1px solid var(--border);background:#fff;font-size:.9rem;font-family:var(--sans);color:var(--dark);outline:none;border-radius:2px;transition:border-color .15s}
+.field-input:focus{border-color:var(--red)}
+.field-input:disabled{background:#f4f4f4;color:var(--muted);cursor:not-allowed}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:15px;font-size:.78rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;border-radius:2px;border:1px solid var(--red);background:var(--red);color:#fff;cursor:pointer;transition:background .15s}
+.btn:hover{background:#a93226}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+.msg{display:none;font-size:.85rem;padding:12px 14px;margin-bottom:18px;line-height:1.5}
+.msg.err{display:block;color:var(--red);background:var(--red-light);border-left:3px solid var(--red)}
+.msg.ok{display:block;color:var(--success);background:var(--success-bg);border-left:3px solid var(--success)}
+.hint{font-size:.72rem;color:var(--light);margin-top:8px}
+.foot{margin-top:26px;text-align:center;font-size:.72rem;color:#bbb;font-style:italic}
+.center{text-align:center}
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <svg width="36" height="36" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Onix Finance">
+        <rect x="3" y="3" width="42" height="42" rx="2" stroke="#1A1A1A" stroke-width="1.5"/>
+        <path d="M24 11 L37 24 L24 37 L11 24 Z" fill="#C0392B"/>
+        <path d="M24 17 L31 24 L24 31 L17 24 Z" fill="#1A1A1A"/>
+      </svg>
+      <span class="brand-mark">ONIX<span>.</span></span>
+    </div>
+
+    <div id="loading" class="center" style="padding:20px 0">
+      <div class="sub" style="margin:0">Verifying your invitation…</div>
+    </div>
+
+    <div id="content" style="display:none">
+      <p class="eyebrow">Team Invitation</p>
+      <h1 id="headline">Set your password</h1>
+      <p class="sub" id="subline">Create a password to activate your Onix Finance account.</p>
+
+      <div id="msg" class="msg"></div>
+
+      <form id="form">
+        <label class="field-label">Email</label>
+        <input id="email" type="email" class="field-input" disabled style="margin-bottom:18px">
+
+        <label class="field-label">New Password</label>
+        <input id="password" type="password" class="field-input" placeholder="At least 8 characters" autocomplete="new-password" required style="margin-bottom:6px">
+        <div class="hint">Minimum 8 characters.</div>
+
+        <label class="field-label" style="margin-top:18px">Confirm Password</label>
+        <input id="confirm" type="password" class="field-input" placeholder="Re-enter password" autocomplete="new-password" required style="margin-bottom:24px">
+
+        <button id="submit" type="submit" class="btn">
+          <span id="submit-label">Activate Account</span>
+        </button>
+      </form>
+    </div>
+
+    <div id="invalid" style="display:none">
+      <p class="eyebrow">Team Invitation</p>
+      <h1 id="invalid-headline">Invitation unavailable</h1>
+      <p class="sub" id="invalid-msg">This invitation link is no longer valid.</p>
+      <a class="btn" href="login.html" style="text-decoration:none">Go to Sign In</a>
+    </div>
+
+    <p class="foot">Private &amp; Confidential — Onix Finance, LLC</p>
+  </div>
+
+<script>
+const SUPABASE_URL = 'https://ckayfqplkpplgojdhjlu.supabase.co';
+const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNrYXlmcXBsa3BwbGdvamRoamx1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwOTUzNDUsImV4cCI6MjA5MzY3MTM0NX0.E5lmNud0ERUqaxy829d1dB3AqGw9EEFjHFSB7zDJdFE';
+const FN = SUPABASE_URL + '/functions/v1/accept-team-invite';
+
+const params = new URLSearchParams(location.search);
+const token = params.get('token') || '';
+
+const $ = (id) => document.getElementById(id);
+function showInvalid(headline, msg) {
+  $('loading').style.display = 'none';
+  $('content').style.display = 'none';
+  $('invalid').style.display = 'block';
+  if (headline) $('invalid-headline').textContent = headline;
+  if (msg) $('invalid-msg').textContent = msg;
+}
+function showMsg(text, kind) {
+  const el = $('msg');
+  el.textContent = text;
+  el.className = 'msg ' + (kind === 'ok' ? 'ok' : 'err');
+}
+
+async function init() {
+  if (!token) { showInvalid('Invalid link', 'This invitation link is missing its token.'); return; }
+  try {
+    const res = await fetch(FN + '?token=' + encodeURIComponent(token), {
+      headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY }
+    });
+    const data = await res.json();
+    if (!data.valid) {
+      const reason = ({
+        not_found: 'This invitation could not be found.',
+        accepted:  'This invitation has already been accepted. Please sign in.',
+        revoked:   'This invitation was revoked. Ask an Onix admin to resend it.',
+        expired:   'This invitation has expired. Ask an Onix admin to resend it.'
+      })[data.reason] || 'This invitation link is no longer valid.';
+      showInvalid('Invitation unavailable', reason);
+      return;
+    }
+    $('email').value = data.email || '';
+    $('loading').style.display = 'none';
+    $('content').style.display = 'block';
+  } catch (e) {
+    showInvalid('Something went wrong', 'Could not verify the invitation. Please try again later.');
+  }
+}
+
+$('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const pw = $('password').value;
+  const confirm = $('confirm').value;
+  if (pw.length < 8) { showMsg('Password must be at least 8 characters.', 'err'); return; }
+  if (pw !== confirm) { showMsg('Passwords do not match.', 'err'); return; }
+
+  const btn = $('submit');
+  btn.disabled = true;
+  $('submit-label').innerHTML = '<span class="spinner"></span>';
+  try {
+    const res = await fetch(FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY },
+      body: JSON.stringify({ token, password: pw })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      showMsg(data.error || 'Could not activate your account.', 'err');
+      btn.disabled = false;
+      $('submit-label').textContent = 'Activate Account';
+      return;
+    }
+    showMsg('Account activated! Redirecting you to sign in…', 'ok');
+    setTimeout(() => { location.href = 'login.html'; }, 1800);
+  } catch (e) {
+    showMsg('Network error. Please try again.', 'err');
+    btn.disabled = false;
+    $('submit-label').textContent = 'Activate Account';
+  }
+});
+
+init();
+</script>
+</body>
+</html>
