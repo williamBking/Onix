@@ -26,12 +26,15 @@
     const s = document.createElement('style');
     s.id = 'onix-admin-styles';
     s.textContent = `
-      /* Mobile: let the live admin tables scroll horizontally instead of
-         blowing out the page width, and stack the dashboard KPI grids. */
+      /* Mobile: kill horizontal overflow (the "zoomed in" symptom), make the
+         drawer full-height, scroll wide tables, and stack the KPI grids. */
+      html,body{max-width:100%;overflow-x:hidden}
       @media(max-width:680px){
+        .sidebar{height:100vh;height:100dvh;overflow-y:auto}
         .${LIVE_MARKER} .oac-table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:nowrap}
         .${LIVE_MARKER} [style*="grid-template-columns:repeat(4"]{grid-template-columns:1fr 1fr !important}
         .${LIVE_MARKER} [style*="grid-template-columns:repeat(3"]{grid-template-columns:1fr !important}
+        .${LIVE_MARKER} [style*="padding:32px 40px"]{padding:18px 16px !important}
       }
       #onix-admin-toggle{position:fixed;bottom:20px;right:20px;z-index:99998;background:#C0392B;color:#fff;padding:12px 18px;border:none;border-radius:2px;font:600 .75rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.18)}
       #onix-admin-toggle:hover{background:#a93226}
