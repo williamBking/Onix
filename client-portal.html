@@ -51,6 +51,9 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
 
 /* App shell */
 .app{min-height:100vh;display:grid;grid-template-columns:248px 1fr}
+/* Dark stripe fills the sidebar column for the full page height so there's no
+   cream gap below the (sticky, 100vh) sidebar on tall pages. */
+@media(min-width:1025px){.app{background:linear-gradient(to right,#1A1A1A 248px,var(--bg) 248px)}}
 .sidebar{background:var(--dark);color:#fff;padding:28px 0;position:sticky;top:0;height:100vh;overflow-y:auto;display:flex;flex-direction:column}
 .sidebar-brand{padding:0 24px 24px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:24px}
 .sidebar-logo{font-size:1.1rem;font-weight:900;letter-spacing:4px;color:#fff;text-transform:uppercase}
@@ -177,8 +180,8 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
 /* Investment detail back-nav */
 .back-link{display:inline-flex;align-items:center;gap:8px;font-size:.78rem;color:var(--muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:28px;transition:color .14s}
 .back-link:hover{color:var(--red)}
-@media(max-width:960px){
-  .app{grid-template-columns:1fr}
+@media(max-width:1024px){
+  .app{grid-template-columns:1fr;background:none}
   .sidebar{position:fixed;left:-260px;top:0;width:260px;height:100vh;height:100dvh;overflow-y:auto;z-index:300;transition:left .25s}
   .sidebar.open{left:0}
   .mobile-menu-btn{display:flex !important}
