@@ -55,7 +55,9 @@ async function requireAdmin() {
   const session = await getSession()
   if (!session) { window.location.replace('login.html'); return null }
   const profile = await getProfile(session.user.id)
-  if (!profile || profile.role !== 'admin') {
+  // Must be an admin AND not removed/rejected. A team member that has been
+  // removed has status='rejected', which locks them out here.
+  if (!profile || profile.role !== 'admin' || profile.status === 'rejected') {
     localStorage.removeItem('onix-user')
     await _supabase.auth.signOut()
     window.location.replace('login.html')
