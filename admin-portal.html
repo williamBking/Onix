@@ -1206,8 +1206,12 @@
   });
 
   /* =====================================================================
-     DOCUMENTS VIEW — replace the bundle's Documents page with a 3-level
-     browser:  Root (Investments / Onix Docs)  →  Names  →  Files
+     DOCUMENTS VIEW — Supabase-backed 3-level browser:
+       Root (Investments / Onix Docs)  →  Holders  →  Files
+     Top "+ Upload" button opens a modal to file an upload into any
+     scope/holder/category in one shot. Holder and file lists have
+     sort controls. Files live in storage bucket `admin-documents`,
+     metadata in public.admin_documents.
      ===================================================================== */
   window.addEventListener('load', function(){
 
@@ -1259,101 +1263,179 @@
         '#__onix_docs_root .od-doc .od-doc-link.danger{color:#9B9590}',
         '#__onix_docs_root .od-doc .od-doc-link.danger:hover{color:#C0392B}',
         '#__onix_docs_root .od-empty{padding:18px 16px;font-size:.82rem;color:#9B9590;font-style:italic;background:#F8F7F5;border-left:3px solid #E8E8E8}',
+        /* Toolbar (sort + new-holder controls) above name/file lists */
+        '#__onix_docs_root .od-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}',
+        '#__onix_docs_root .od-toolbar .od-sort{display:inline-flex;align-items:center;gap:8px;font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:#6B6560;font-weight:700}',
+        '#__onix_docs_root .od-toolbar select{padding:7px 28px 7px 11px;border:1px solid #E8E8E8;border-radius:2px;font:600 .76rem/1 "DM Sans",sans-serif;background:#fff;cursor:pointer;color:#1A1A1A;letter-spacing:.02em;text-transform:none;appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'8\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%236B6560\' stroke-width=\'2.5\'><polyline points=\'6 9 12 15 18 9\'/></svg>");background-repeat:no-repeat;background-position:right 9px center}',
+        '#__onix_docs_root .od-toolbar select:focus{outline:none;border-color:#C0392B}',
+        '#__onix_docs_root .od-empty-state{padding:36px;text-align:center;color:#9B9590;background:#F8F7F5;border:1px dashed #E8E8E8}',
+        '#__onix_docs_root .od-empty-state .od-empty-title{font-family:"Cormorant Garamond",Georgia,serif;font-style:italic;font-size:1.3rem;color:#6B6560;margin-bottom:6px}',
+        '#__onix_docs_root .od-empty-state .od-empty-cta{margin-top:14px;display:inline-block;padding:8px 16px;background:#C0392B;color:#fff;font:700 .68rem/1 "DM Sans",sans-serif;letter-spacing:.1em;text-transform:uppercase;border:none;border-radius:2px;cursor:pointer}',
+        '#__onix_docs_root .od-empty-state .od-empty-cta:hover{background:#a93226}',
+        /* Upload modal */
+        '#__onix_docs_modal{position:fixed;inset:0;z-index:99998;display:none;align-items:flex-start;justify-content:center;background:rgba(20,20,20,.55);backdrop-filter:blur(3px);overflow:auto;padding:48px 16px;font-family:"DM Sans",sans-serif}',
+        '#__onix_docs_modal.open{display:flex}',
+        '#__onix_docs_modal .odm-card{background:#fff;width:560px;max-width:100%;border-top:3px solid #C0392B;box-shadow:0 24px 60px rgba(0,0,0,.3);padding:28px 32px 24px;color:#1A1A1A;animation:__onix_pop .2s cubic-bezier(.2,.8,.2,1)}',
+        '#__onix_docs_modal .odm-eyebrow{font-size:.66rem;letter-spacing:.18em;text-transform:uppercase;color:#C0392B;font-weight:700;margin-bottom:6px}',
+        '#__onix_docs_modal h2{font-family:"Cormorant Garamond",Georgia,serif;font-style:italic;font-weight:500;font-size:1.85rem;line-height:1.05;letter-spacing:-.005em;margin:0 0 4px}',
+        '#__onix_docs_modal .odm-sub{color:#9B9590;font-size:.84rem;margin-bottom:18px}',
+        '#__onix_docs_modal label{display:block;font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:#6B6560;font-weight:700;margin-bottom:6px;margin-top:14px}',
+        '#__onix_docs_modal label:first-of-type{margin-top:0}',
+        '#__onix_docs_modal .odm-scope{display:grid;grid-template-columns:1fr 1fr;gap:10px}',
+        '#__onix_docs_modal .odm-scope-btn{padding:14px 12px;text-align:left;background:#F8F7F5;border:1px solid #E8E8E8;cursor:pointer;border-radius:2px;font:inherit;transition:all .14s;display:flex;flex-direction:column;gap:4px;color:#1A1A1A}',
+        '#__onix_docs_modal .odm-scope-btn:hover{border-color:#C0392B;background:#FDF0EE}',
+        '#__onix_docs_modal .odm-scope-btn.sel{border-color:#C0392B;background:#FDF0EE;box-shadow:inset 0 0 0 1px #C0392B}',
+        '#__onix_docs_modal .odm-scope-btn b{font-size:.84rem;font-weight:700;letter-spacing:.01em}',
+        '#__onix_docs_modal .odm-scope-btn span{font-size:.7rem;color:#6B6560;line-height:1.35}',
+        '#__onix_docs_modal input[type=text],#__onix_docs_modal select{width:100%;padding:10px 12px;border:1px solid #E8E8E8;background:#fff;font:.88rem/1.3 "DM Sans",sans-serif;color:#1A1A1A;outline:none;border-radius:2px;box-sizing:border-box;transition:border-color .14s}',
+        '#__onix_docs_modal input[type=text]:focus,#__onix_docs_modal select:focus{border-color:#C0392B}',
+        '#__onix_docs_modal input[type=file]{font:.82rem/1.3 "DM Sans",sans-serif;color:#1A1A1A;width:100%}',
+        '#__onix_docs_modal .odm-radio{display:flex;gap:8px;flex-wrap:wrap}',
+        '#__onix_docs_modal .odm-radio button{flex:1;min-width:120px;padding:9px 12px;background:#fff;border:1px solid #E8E8E8;cursor:pointer;border-radius:2px;font:600 .76rem/1.3 "DM Sans",sans-serif;color:#1A1A1A;text-align:left;transition:all .14s}',
+        '#__onix_docs_modal .odm-radio button:hover{border-color:#C0392B;color:#C0392B}',
+        '#__onix_docs_modal .odm-radio button.sel{background:#C0392B;color:#fff;border-color:#C0392B}',
+        '#__onix_docs_modal .odm-err{color:#C0392B;font-size:.78rem;margin-top:10px;min-height:1em}',
+        '#__onix_docs_modal .odm-actions{margin-top:20px;display:flex;justify-content:flex-end;gap:10px;padding-top:16px;border-top:1px solid #f0f0f0}',
+        '#__onix_docs_modal .odm-actions button{padding:10px 18px;font:700 .72rem/1 "DM Sans",sans-serif;letter-spacing:.08em;text-transform:uppercase;border-radius:2px;border:1px solid transparent;cursor:pointer;transition:all .14s}',
+        '#__onix_docs_modal .odm-cancel{background:transparent;color:#888;border-color:#E8E8E8}',
+        '#__onix_docs_modal .odm-cancel:hover{border-color:#C0392B;color:#C0392B}',
+        '#__onix_docs_modal .odm-submit{background:#C0392B;color:#fff;border-color:#C0392B}',
+        '#__onix_docs_modal .odm-submit:hover{background:#a93226}',
+        '#__onix_docs_modal .odm-submit:disabled{opacity:.5;cursor:not-allowed;background:#C0392B}',
       ].join('\n');
       document.head.appendChild(s);
     }
 
-    // --- Data store ------------------------------------------------------
-    var STORE_KEY = 'onix-admin-docs';
-    function loadStore(){ try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); } catch(_){ return {}; } }
-    function saveStore(s){ localStorage.setItem(STORE_KEY, JSON.stringify(s)); }
-    function fmtSize(b){ if (b<1024) return b+' B'; if (b<1048576) return (b/1024).toFixed(1)+' KB'; return (b/1048576).toFixed(1)+' MB'; }
-    function fmtDate(iso){ var d = new Date(iso); return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
-    function uid(){ return 'f-'+Math.random().toString(36).slice(2,9); }
+    // --- Supabase data layer --------------------------------------------
+    // Files live in storage bucket `admin-documents`, metadata in
+    // public.admin_documents. RLS is admin-only on both.
+    var BUCKET = 'admin-documents';
+    var rowsCache = [];     // last fetched admin_documents rows
+    var lastFetchAt = 0;
 
-    // Schema:
-    // store = {
-    //   investments: { 'Bari Caffè': { pitchDeck:[file,...], reportsFinancials:[file,...] }, ... },
-    //   onix:        { 'Investor Reports': { reports:[file,...] }, 'Owner Corp. Docs': { docs:[file,...] } }
-    // }
-    function seed(){
-      var s = loadStore();
-      if (s.__seeded) return s;
-      var f = function(name, kb, dateIso){ return {id:uid(), name:name, size:kb*1024, uploadedAt:dateIso}; };
-      s.investments = {
-        'Bari Caffè': {
-          pitchDeck: [f('Bari Caffè — Investor Deck v3.pdf', 4200, '2024-08-12T00:00:00Z')],
-          reportsFinancials: [
-            f('Q3 2024 Financials.pdf', 680, '2024-10-14T00:00:00Z'),
-            f('Q4 2024 Financials.pdf', 720, '2025-01-15T00:00:00Z'),
-            f('FY2024 P&L.xlsx', 240, '2025-02-02T00:00:00Z')
-          ]
-        },
-        'La Grange': {
-          pitchDeck: [f('La Grange — Pitch Deck.pdf', 5100, '2024-10-03T00:00:00Z')],
-          reportsFinancials: [
-            f('Q4 2024 Operating Report.pdf', 540, '2025-01-10T00:00:00Z'),
-            f('Rent Roll — Mar 2025.xlsx', 180, '2025-03-08T00:00:00Z')
-          ]
-        },
-        'Montrose': {
-          pitchDeck: [f('Montrose — Acquisition Memo.pdf', 2800, '2025-02-18T00:00:00Z')],
-          reportsFinancials: [
-            f('Pro Forma 2025-2027.xlsx', 320, '2025-02-18T00:00:00Z')
-          ]
-        }
-      };
-      s.onix = {
-        'Investor Reports': {
-          reports: [
-            f('Q1 2025 Investor Letter.pdf', 480, '2025-04-08T00:00:00Z'),
-            f('Q4 2024 Investor Letter.pdf', 460, '2025-01-12T00:00:00Z'),
-            f('FY2024 Annual Report.pdf', 1800, '2025-02-28T00:00:00Z')
-          ]
-        },
-        'Owner Corp. Docs': {
-          docs: [
-            f('Onix Finance LLC — Operating Agreement.pdf', 920, '2022-03-01T00:00:00Z'),
-            f('Certificate of Formation.pdf', 220, '2022-03-01T00:00:00Z'),
-            f('EIN Confirmation.pdf', 110, '2022-03-15T00:00:00Z')
-          ]
-        }
-      };
-      s.__seeded = true;
-      saveStore(s);
-      return s;
+    function fmtSize(b){
+      if (b == null) return '';
+      if (b < 1024) return b + ' B';
+      if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+      return (b/1048576).toFixed(1) + ' MB';
+    }
+    function fmtDate(iso){
+      try { return new Date(iso).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
+      catch(_) { return ''; }
     }
 
-    // --- Navigation state ------------------------------------------------
+    async function fetchDocs(force){
+      if (!window.OnixDB || !window.OnixDB.client) return rowsCache;
+      if (!force && rowsCache.length && (Date.now() - lastFetchAt) < 2000) return rowsCache;
+      var r = await OnixDB.client.from('admin_documents').select('*');
+      if (r.error) { console.error('[onix-docs] fetch failed:', r.error); return rowsCache; }
+      rowsCache = r.data || [];
+      lastFetchAt = Date.now();
+      return rowsCache;
+    }
+
+    // Fixed structure for Onix Docs (two holders, fixed categories)
+    var ONIX_HOLDERS = ['Investor Reports', 'Owner Corp. Docs'];
+    function onixCategoryFor(name){
+      return name === 'Investor Reports' ? 'reports' : 'docs';
+    }
+    function categoryTitle(cat){
+      return cat === 'pitchDeck'         ? 'Pitch Deck'
+           : cat === 'reportsFinancials' ? 'Reports & Financials'
+           : cat === 'reports'           ? 'Investor Reports'
+           : cat === 'docs'              ? 'Owner Corp. Docs'
+           : cat;
+    }
+    function acceptFor(cat){
+      return cat === 'pitchDeck'         ? 'application/pdf,.ppt,.pptx,.key'
+           : cat === 'reportsFinancials' ? 'application/pdf,.xls,.xlsx,.csv'
+           : 'application/pdf';
+    }
+    function categoriesFor(scope, holderName){
+      if (scope === 'investments') return [
+        {key:'pitchDeck',        title:'Pitch Deck',           accept:acceptFor('pitchDeck'),        empty:'No pitch deck uploaded yet.'},
+        {key:'reportsFinancials',title:'Reports & Financials', accept:acceptFor('reportsFinancials'),empty:'No reports or financials uploaded yet.'}
+      ];
+      // Onix: a single category per holder
+      return [{key:onixCategoryFor(holderName), title:categoryTitle(onixCategoryFor(holderName)), accept:acceptFor('reports'), empty:'No documents uploaded yet.'}];
+    }
+
+    // Group rows into { investments:{holder:{cat:[rows]}}, onix:{...} }
+    function groupRows(rows){
+      var g = { investments:{}, onix:{} };
+      rows.forEach(function(r){
+        var bucket = g[r.scope] || (g[r.scope] = {});
+        var h = bucket[r.holder_name] || (bucket[r.holder_name] = {});
+        (h[r.category] = h[r.category] || []).push(r);
+      });
+      // Ensure both Onix holders always show, even when empty
+      ONIX_HOLDERS.forEach(function(name){
+        if (!g.onix[name]) g.onix[name] = {};
+        var cat = onixCategoryFor(name);
+        if (!g.onix[name][cat]) g.onix[name][cat] = [];
+      });
+      return g;
+    }
+
+    // --- Navigation + sort state ----------------------------------------
     var nav = { level:'root', cat:null, name:null }; // cat: 'investments'|'onix'
+    var nameSort = 'name-az';   // name-az | name-za | count-desc | count-asc | recent
+    var fileSort = 'date-desc'; // date-desc | date-asc | name-az | name-za | size-desc | size-asc
 
-    // Categories for files page (depend on cat)
-    function categoriesFor(cat){
-      if (cat === 'investments') return [
-        {key:'pitchDeck', title:'Pitch Deck', accept:'application/pdf,.ppt,.pptx,.key', empty:'No pitch deck uploaded yet.'},
-        {key:'reportsFinancials', title:'Reports & Financials', accept:'application/pdf,.xls,.xlsx,.csv', empty:'No reports or financials uploaded yet.'}
-      ];
-      return [ // onix
-        // For Onix Docs, the "name" itself determines the section.
-      ];
+    function sortHolders(holders, grouped, cat){
+      var entries = holders.map(function(h){
+        var v = grouped[cat][h] || {};
+        var count = Object.keys(v).reduce(function(n,k){ return n + (v[k] || []).length; }, 0);
+        var newest = 0;
+        Object.keys(v).forEach(function(k){
+          (v[k] || []).forEach(function(r){
+            var t = new Date(r.uploaded_at || 0).getTime();
+            if (t > newest) newest = t;
+          });
+        });
+        return { name:h, count:count, newest:newest };
+      });
+      entries.sort(function(a,b){
+        switch (nameSort){
+          case 'name-za':    return b.name.localeCompare(a.name);
+          case 'count-desc': return b.count - a.count || a.name.localeCompare(b.name);
+          case 'count-asc':  return a.count - b.count || a.name.localeCompare(b.name);
+          case 'recent':     return b.newest - a.newest;
+          default:           return a.name.localeCompare(b.name);
+        }
+      });
+      return entries;
     }
 
-    function onixNameToCategory(name){
-      if (name === 'Investor Reports') return {key:'reports', title:'Investor Reports', accept:'application/pdf', empty:'No investor reports uploaded yet.'};
-      return {key:'docs', title:'Owner Corp. Docs', accept:'application/pdf', empty:'No corporate documents uploaded yet.'};
+    function sortFiles(files){
+      var arr = files.slice();
+      arr.sort(function(a,b){
+        switch (fileSort){
+          case 'date-asc':   return new Date(a.uploaded_at) - new Date(b.uploaded_at);
+          case 'name-az':    return (a.name||'').localeCompare(b.name||'');
+          case 'name-za':    return (b.name||'').localeCompare(a.name||'');
+          case 'size-desc':  return (b.size_bytes||0) - (a.size_bytes||0);
+          case 'size-asc':   return (a.size_bytes||0) - (b.size_bytes||0);
+          default:           return new Date(b.uploaded_at) - new Date(a.uploaded_at); // date-desc
+        }
+      });
+      return arr;
     }
 
     // --- Rendering -------------------------------------------------------
-    function totalCount(cat, name){
-      var s = loadStore();
-      var node = (s[cat] || {})[name] || {};
-      return Object.keys(node).reduce(function(n,k){ return n + (node[k]||[]).length; }, 0);
+    function escape(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]; }); }
+    function escapeAttr(s){ return escape(s); }
+
+    function totalCount(g, cat, name){
+      var node = (g[cat] || {})[name] || {};
+      return Object.keys(node).reduce(function(n,k){ return n + (node[k] || []).length; }, 0);
     }
 
-    function render(){
+    async function render(){
       var root = document.getElementById('__onix_docs_root');
       if (!root) return;
-      var s = seed();
+      var rows = await fetchDocs();
+      var g = groupRows(rows);
 
       // Breadcrumb
       var crumb = '<div class="od-crumb">';
@@ -1371,43 +1453,83 @@
       var body = '';
 
       if (nav.level === 'root') {
-        var invNames = Object.keys(s.investments || {});
-        var onixNames = Object.keys(s.onix || {});
+        var invHolders = Object.keys(g.investments || {});
+        var onixHolders = Object.keys(g.onix || {});
         body += '<div class="od-grid-2">';
         body += renderCatCard('investments',
           'Investments',
           'Pitch decks, reports & financials per holding.',
-          invNames.length + ' holdings');
+          invHolders.length + ' holding' + (invHolders.length === 1 ? '' : 's'));
         body += renderCatCard('onix',
           'Onix Docs',
           'Investor reports & owner corporation documents.',
-          onixNames.length + ' sections');
+          onixHolders.length + ' section' + (onixHolders.length === 1 ? '' : 's'));
         body += '</div>';
       } else if (nav.level === 'names') {
-        var bucket = s[nav.cat] || {};
-        var names = Object.keys(bucket);
-        body += '<div class="od-name-list">';
-        names.forEach(function(n){
-          var count = totalCount(nav.cat, n);
-          var sub = nav.cat === 'investments' ? 'Investment' : 'Onix';
-          body += '<button class="od-name" data-name="' + escapeAttr(n) + '">' +
-                  '<span class="od-name-main"><span class="od-name-title">' + escape(n) + '</span>' +
-                  '<span class="od-name-sub">' + sub + '</span></span>' +
-                  '<span><span class="od-name-count">' + count + ' ' + (count===1?'doc':'docs') + '</span><span class="od-name-arrow">→</span></span>' +
-                  '</button>';
-        });
-        body += '</div>';
+        var holders = Object.keys(g[nav.cat] || {});
+        // Toolbar
+        body += '<div class="od-toolbar">' +
+                  '<div class="od-sort"><span>Sort</span>' +
+                    '<select id="od-name-sort">' +
+                      '<option value="name-az"' + (nameSort==='name-az'?' selected':'') + '>Name · A to Z</option>' +
+                      '<option value="name-za"' + (nameSort==='name-za'?' selected':'') + '>Name · Z to A</option>' +
+                      '<option value="count-desc"' + (nameSort==='count-desc'?' selected':'') + '>Document count · most</option>' +
+                      '<option value="count-asc"' + (nameSort==='count-asc'?' selected':'') + '>Document count · least</option>' +
+                      '<option value="recent"' + (nameSort==='recent'?' selected':'') + '>Recent activity</option>' +
+                    '</select>' +
+                  '</div>' +
+                  (nav.cat === 'investments'
+                    ? '<button class="od-up" data-new-holder>+ Add holder</button>'
+                    : '') +
+                '</div>';
+
+        if (!holders.length) {
+          body += '<div class="od-empty-state">' +
+                    '<div class="od-empty-title">Nothing here yet</div>' +
+                    '<div>Upload a document to create the first ' + (nav.cat === 'investments' ? 'investment holder' : 'section') + '.</div>' +
+                    '<button class="od-empty-cta" data-open-upload>+ Upload Document</button>' +
+                  '</div>';
+        } else {
+          var sorted = sortHolders(holders, g, nav.cat);
+          body += '<div class="od-name-list">';
+          sorted.forEach(function(h){
+            var sub = nav.cat === 'investments' ? 'Investment' : 'Onix';
+            body += '<button class="od-name" data-name="' + escapeAttr(h.name) + '">' +
+                    '<span class="od-name-main"><span class="od-name-title">' + escape(h.name) + '</span>' +
+                    '<span class="od-name-sub">' + sub + '</span></span>' +
+                    '<span><span class="od-name-count">' + h.count + ' ' + (h.count===1?'doc':'docs') + '</span><span class="od-name-arrow">→</span></span>' +
+                    '</button>';
+          });
+          body += '</div>';
+        }
       } else if (nav.level === 'files') {
-        var node = (s[nav.cat] || {})[nav.name] || {};
-        var cats = nav.cat === 'investments'
-          ? categoriesFor('investments')
-          : [ onixNameToCategory(nav.name) ];
+        var node = (g[nav.cat] || {})[nav.name] || {};
+        var cats = categoriesFor(nav.cat, nav.name);
+
+        // Toolbar (file-level sort applies across the categories shown here)
+        body += '<div class="od-toolbar">' +
+                  '<div class="od-sort"><span>Sort within sections</span>' +
+                    '<select id="od-file-sort">' +
+                      '<option value="date-desc"' + (fileSort==='date-desc'?' selected':'') + '>Newest first</option>' +
+                      '<option value="date-asc"' + (fileSort==='date-asc'?' selected':'') + '>Oldest first</option>' +
+                      '<option value="name-az"' + (fileSort==='name-az'?' selected':'') + '>Name · A to Z</option>' +
+                      '<option value="name-za"' + (fileSort==='name-za'?' selected':'') + '>Name · Z to A</option>' +
+                      '<option value="size-desc"' + (fileSort==='size-desc'?' selected':'') + '>Size · largest</option>' +
+                      '<option value="size-asc"' + (fileSort==='size-asc'?' selected':'') + '>Size · smallest</option>' +
+                    '</select>' +
+                  '</div>' +
+                  '<button class="od-up" data-open-upload data-prefill-holder="' + escapeAttr(nav.name) + '" data-prefill-scope="' + escapeAttr(nav.cat) + '">' +
+                    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>' +
+                    ' Upload to ' + escape(nav.name) +
+                  '</button>' +
+                '</div>';
+
         cats.forEach(function(c){
-          var files = node[c.key] || [];
+          var files = sortFiles(node[c.key] || []);
           body += '<div class="od-section">';
           body += '<div class="od-section-hd">';
           body += '<div class="od-section-title">' + escape(c.title) + '<span class="od-count">(' + files.length + ')</span></div>';
-          body += '<button class="od-up" data-up="' + c.key + '" data-accept="' + escapeAttr(c.accept) + '">' +
+          body += '<button class="od-up" data-open-upload data-prefill-scope="' + escapeAttr(nav.cat) + '" data-prefill-holder="' + escapeAttr(nav.name) + '" data-prefill-category="' + escapeAttr(c.key) + '">' +
                   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>' +
                   ' Upload</button>';
           body += '</div>';
@@ -1417,10 +1539,10 @@
             files.forEach(function(f){
               body += '<div class="od-doc"><div>' +
                       '<div class="od-doc-name">' + escape(f.name) + '</div>' +
-                      '<div class="od-doc-meta">' + fmtSize(f.size) + ' · ' + fmtDate(f.uploadedAt) + '</div>' +
+                      '<div class="od-doc-meta">' + fmtSize(f.size_bytes) + ' · ' + fmtDate(f.uploaded_at) + '</div>' +
                       '</div><div class="od-doc-actions">' +
-                      '<button class="od-doc-link" data-dl="' + f.id + '" data-key="' + c.key + '">Download ↓</button>' +
-                      '<button class="od-doc-link danger" data-del="' + f.id + '" data-key="' + c.key + '">Delete</button>' +
+                      '<button class="od-doc-link" data-view="' + escapeAttr(f.storage_path) + '">View ↗</button>' +
+                      '<button class="od-doc-link danger" data-del="' + escapeAttr(f.id) + '" data-path="' + escapeAttr(f.storage_path) + '">Delete</button>' +
                       '</div></div>';
             });
           }
@@ -1444,11 +1566,7 @@
         '</button>';
     }
 
-    function escape(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
-    function escapeAttr(s){ return escape(s).replace(/'/g,'&#39;'); }
-
     function bindEvents(root){
-      // Breadcrumb
       root.querySelectorAll('[data-go]').forEach(function(b){
         b.addEventListener('click', function(){
           var t = b.getAttribute('data-go');
@@ -1457,89 +1575,225 @@
           render();
         });
       });
-      // Category cards
       root.querySelectorAll('[data-cat]').forEach(function(b){
         b.addEventListener('click', function(){
           nav = {level:'names', cat:b.getAttribute('data-cat'), name:null};
           render();
         });
       });
-      // Names
       root.querySelectorAll('[data-name]').forEach(function(b){
         b.addEventListener('click', function(){
           nav = {level:'files', cat:nav.cat, name:b.getAttribute('data-name')};
           render();
         });
       });
-      // Upload buttons
-      root.querySelectorAll('[data-up]').forEach(function(b){
+      // Sort dropdowns
+      var ns = root.querySelector('#od-name-sort');
+      if (ns) ns.addEventListener('change', function(){ nameSort = ns.value; render(); });
+      var fs = root.querySelector('#od-file-sort');
+      if (fs) fs.addEventListener('change', function(){ fileSort = fs.value; render(); });
+      // Add-holder button on the names page
+      var newHolderBtn = root.querySelector('[data-new-holder]');
+      if (newHolderBtn) newHolderBtn.addEventListener('click', function(){
+        openUploadModal({ scope: nav.cat });
+      });
+      // Upload buttons (prefilled or empty-state CTA)
+      root.querySelectorAll('[data-open-upload]').forEach(function(b){
         b.addEventListener('click', function(){
-          var key = b.getAttribute('data-up');
-          var accept = b.getAttribute('data-accept') || '';
-          var inp = document.createElement('input');
-          inp.type = 'file';
-          inp.accept = accept;
-          inp.style.display = 'none';
-          inp.addEventListener('change', function(){
-            var file = inp.files && inp.files[0];
-            if (!file) return;
-            var s = loadStore();
-            s[nav.cat] = s[nav.cat] || {};
-            s[nav.cat][nav.name] = s[nav.cat][nav.name] || {};
-            s[nav.cat][nav.name][key] = s[nav.cat][nav.name][key] || [];
-            var url = URL.createObjectURL(file);
-            var entry = {id:uid(), name:file.name, size:file.size, uploadedAt:new Date().toISOString(), _url:url};
-            // Keep a session-only blob index keyed by file id (not in localStorage)
-            window.__onix_blobs = window.__onix_blobs || {};
-            window.__onix_blobs[entry.id] = url;
-            // Don't persist _url in storage
-            var persisted = {id:entry.id, name:entry.name, size:entry.size, uploadedAt:entry.uploadedAt};
-            s[nav.cat][nav.name][key].push(persisted);
-            saveStore(s);
-            render();
+          openUploadModal({
+            scope:    b.getAttribute('data-prefill-scope')    || nav.cat || null,
+            holder:   b.getAttribute('data-prefill-holder')   || nav.name || null,
+            category: b.getAttribute('data-prefill-category') || null
           });
-          document.body.appendChild(inp);
-          inp.click();
-          setTimeout(function(){ inp.remove(); }, 1000);
         });
       });
-      // Download
-      root.querySelectorAll('[data-dl]').forEach(function(b){
-        b.addEventListener('click', function(){
-          var id = b.getAttribute('data-dl');
-          var url = (window.__onix_blobs || {})[id];
-          if (!url) {
-            alert('This file was seeded for demo and has no real binary attached. Upload a file to enable download.');
-            return;
-          }
-          var a = document.createElement('a');
-          a.href = url; a.download = b.closest('.od-doc').querySelector('.od-doc-name').textContent;
-          a.click();
+      // View / Delete
+      root.querySelectorAll('[data-view]').forEach(function(b){
+        b.addEventListener('click', async function(){
+          var path = b.getAttribute('data-view');
+          var orig = b.textContent;
+          b.textContent = 'Opening…';
+          var r = await OnixDB.client.storage.from(BUCKET).createSignedUrl(path, 3600);
+          b.textContent = orig;
+          if (r.error || !r.data) { alert('Could not open file: ' + (r.error && r.error.message || 'unknown')); return; }
+          window.open(r.data.signedUrl, '_blank', 'noopener');
         });
       });
-      // Delete
       root.querySelectorAll('[data-del]').forEach(function(b){
-        b.addEventListener('click', function(){
-          var id = b.getAttribute('data-del');
-          var key = b.getAttribute('data-key');
+        b.addEventListener('click', async function(){
           if (!confirm('Delete this file?')) return;
-          var s = loadStore();
-          var arr = ((s[nav.cat]||{})[nav.name]||{})[key] || [];
-          var idx = arr.findIndex(function(f){ return f.id === id; });
-          if (idx >= 0) arr.splice(idx, 1);
-          saveStore(s);
-          if (window.__onix_blobs && window.__onix_blobs[id]) {
-            try { URL.revokeObjectURL(window.__onix_blobs[id]); } catch(_){}
-            delete window.__onix_blobs[id];
-          }
-          render();
+          var id = b.getAttribute('data-del');
+          var path = b.getAttribute('data-path');
+          b.disabled = true; b.textContent = 'Deleting…';
+          var del = await OnixDB.client.from('admin_documents').delete().eq('id', id);
+          if (del.error) { alert('Could not delete: ' + del.error.message); b.disabled = false; b.textContent = 'Delete'; return; }
+          // Best-effort storage cleanup (RLS allows admin to remove)
+          OnixDB.client.storage.from(BUCKET).remove([path]).catch(function(){});
+          render(); // re-fetch + re-render
         });
       });
     }
 
+    // --- Upload modal ---------------------------------------------------
+    function ensureUploadModal(){
+      if (document.getElementById('__onix_docs_modal')) return;
+      var m = document.createElement('div');
+      m.id = '__onix_docs_modal';
+      m.innerHTML =
+        '<div class="odm-card" role="dialog" aria-modal="true">' +
+          '<div class="odm-eyebrow">Documents</div>' +
+          '<h2>Upload Document</h2>' +
+          '<div class="odm-sub">Sort the file into a scope, holder, and section.</div>' +
+          '<label>Scope</label>' +
+          '<div class="odm-scope">' +
+            '<button type="button" class="odm-scope-btn" data-scope="investments"><b>Investments</b><span>Pitch decks, reports & financials per holding</span></button>' +
+            '<button type="button" class="odm-scope-btn" data-scope="onix"><b>Onix Docs</b><span>Investor reports & owner corp. documents</span></button>' +
+          '</div>' +
+          '<div id="odm-onix-holder" style="display:none">' +
+            '<label>Section</label>' +
+            '<div class="odm-radio">' +
+              '<button type="button" data-onix-holder="Investor Reports">Investor Reports</button>' +
+              '<button type="button" data-onix-holder="Owner Corp. Docs">Owner Corp. Docs</button>' +
+            '</div>' +
+          '</div>' +
+          '<div id="odm-inv-holder" style="display:none">' +
+            '<label>Holding / Investment Name</label>' +
+            '<input type="text" id="odm-holder-input" list="odm-holder-suggest" placeholder="e.g. Bari Caffè">' +
+            '<datalist id="odm-holder-suggest"></datalist>' +
+          '</div>' +
+          '<div id="odm-inv-cat" style="display:none">' +
+            '<label>Document Type</label>' +
+            '<div class="odm-radio">' +
+              '<button type="button" data-inv-cat="pitchDeck">Pitch Deck</button>' +
+              '<button type="button" data-inv-cat="reportsFinancials">Reports & Financials</button>' +
+            '</div>' +
+          '</div>' +
+          '<label>File</label>' +
+          '<input type="file" id="odm-file" accept="application/pdf,image/*,.ppt,.pptx,.key,.xls,.xlsx,.csv,.doc,.docx">' +
+          '<div class="odm-err" id="odm-err"></div>' +
+          '<div class="odm-actions">' +
+            '<button class="odm-cancel" type="button" id="odm-cancel">Cancel</button>' +
+            '<button class="odm-submit" type="button" id="odm-submit" disabled>Upload</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(m);
+      m.addEventListener('click', function(e){ if (e.target === m) closeUploadModal(); });
+      m.querySelector('#odm-cancel').addEventListener('click', closeUploadModal);
+
+      var state = { scope:null, holder:null, category:null };
+
+      function setScope(s){
+        state.scope = s;
+        state.holder = null;
+        state.category = null;
+        m.querySelectorAll('[data-scope]').forEach(function(b){ b.classList.toggle('sel', b.getAttribute('data-scope') === s); });
+        m.querySelector('#odm-onix-holder').style.display = s === 'onix' ? '' : 'none';
+        m.querySelector('#odm-inv-holder').style.display = s === 'investments' ? '' : 'none';
+        m.querySelector('#odm-inv-cat').style.display = s === 'investments' ? '' : 'none';
+        m.querySelectorAll('[data-onix-holder].sel, [data-inv-cat].sel').forEach(function(b){ b.classList.remove('sel'); });
+        m.querySelector('#odm-holder-input').value = '';
+        refreshSubmit();
+      }
+      function setOnixHolder(name){
+        state.holder = name;
+        state.category = onixCategoryFor(name);
+        m.querySelectorAll('[data-onix-holder]').forEach(function(b){ b.classList.toggle('sel', b.getAttribute('data-onix-holder') === name); });
+        refreshSubmit();
+      }
+      function setInvCategory(key){
+        state.category = key;
+        m.querySelectorAll('[data-inv-cat]').forEach(function(b){ b.classList.toggle('sel', b.getAttribute('data-inv-cat') === key); });
+        refreshSubmit();
+      }
+      function refreshSubmit(){
+        var f = m.querySelector('#odm-file').files && m.querySelector('#odm-file').files[0];
+        var ok = !!state.scope && !!state.holder && !!state.category && !!f;
+        m.querySelector('#odm-submit').disabled = !ok;
+      }
+      m.querySelectorAll('[data-scope]').forEach(function(b){ b.addEventListener('click', function(){ setScope(b.getAttribute('data-scope')); }); });
+      m.querySelectorAll('[data-onix-holder]').forEach(function(b){ b.addEventListener('click', function(){ setOnixHolder(b.getAttribute('data-onix-holder')); }); });
+      m.querySelectorAll('[data-inv-cat]').forEach(function(b){ b.addEventListener('click', function(){ setInvCategory(b.getAttribute('data-inv-cat')); }); });
+      m.querySelector('#odm-holder-input').addEventListener('input', function(){
+        state.holder = (m.querySelector('#odm-holder-input').value || '').trim() || null;
+        refreshSubmit();
+      });
+      m.querySelector('#odm-file').addEventListener('change', refreshSubmit);
+
+      m.querySelector('#odm-submit').addEventListener('click', async function(){
+        var fileEl = m.querySelector('#odm-file');
+        var file = fileEl.files && fileEl.files[0];
+        var errEl = m.querySelector('#odm-err');
+        errEl.textContent = '';
+        if (!file || !state.scope || !state.holder || !state.category) { errEl.textContent = 'Please complete every field.'; return; }
+        var btn = m.querySelector('#odm-submit');
+        btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Uploading…';
+        var safeHolder = String(state.holder).replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80);
+        var safeName   = String(file.name).replace(/[^a-zA-Z0-9._-]+/g, '_');
+        var path = state.scope + '/' + safeHolder + '/' + state.category + '/' + Date.now() + '-' + safeName;
+        var up = await OnixDB.client.storage.from(BUCKET).upload(path, file, { upsert:false, contentType: file.type || undefined });
+        if (up.error) { errEl.textContent = 'Upload failed: ' + up.error.message; btn.disabled = false; btn.textContent = orig; return; }
+        var ins = await OnixDB.client.from('admin_documents').insert({
+          scope:        state.scope,
+          holder_name:  state.holder,
+          category:     state.category,
+          name:         file.name,
+          size_bytes:   file.size,
+          content_type: file.type || null,
+          storage_path: path
+        });
+        if (ins.error) {
+          errEl.textContent = 'Saved file but DB insert failed: ' + ins.error.message;
+          OnixDB.client.storage.from(BUCKET).remove([path]).catch(function(){});
+          btn.disabled = false; btn.textContent = orig;
+          return;
+        }
+        closeUploadModal();
+        // Navigate to the destination so the new file is in view + refresh
+        nav = { level:'files', cat: state.scope, name: state.holder };
+        await fetchDocs(true);
+        render();
+      });
+
+      // Expose setters so openUploadModal can prefill
+      m.__setScope         = setScope;
+      m.__setOnixHolder    = setOnixHolder;
+      m.__setInvCategory   = setInvCategory;
+      m.__setInvHolderText = function(t){ m.querySelector('#odm-holder-input').value = t || ''; state.holder = t || null; refreshSubmit(); };
+      m.__refreshHolderSuggestions = function(){
+        var dl = m.querySelector('#odm-holder-suggest');
+        if (!dl) return;
+        var holders = Array.from(new Set(rowsCache.filter(function(r){ return r.scope === 'investments'; }).map(function(r){ return r.holder_name; }))).sort();
+        dl.innerHTML = holders.map(function(h){ return '<option value="' + escapeAttr(h) + '"></option>'; }).join('');
+      };
+      m.__resetState = function(){ state = { scope:null, holder:null, category:null }; m.querySelectorAll('.sel').forEach(function(b){ b.classList.remove('sel'); }); m.querySelector('#odm-onix-holder').style.display='none'; m.querySelector('#odm-inv-holder').style.display='none'; m.querySelector('#odm-inv-cat').style.display='none'; m.querySelector('#odm-holder-input').value=''; m.querySelector('#odm-file').value=''; m.querySelector('#odm-submit').disabled = true; m.querySelector('#odm-err').textContent=''; };
+    }
+
+    function openUploadModal(prefill){
+      ensureUploadModal();
+      var m = document.getElementById('__onix_docs_modal');
+      m.__resetState();
+      m.__refreshHolderSuggestions();
+      if (prefill && prefill.scope) m.__setScope(prefill.scope);
+      if (prefill && prefill.holder) {
+        if (prefill.scope === 'onix') m.__setOnixHolder(prefill.holder);
+        else m.__setInvHolderText(prefill.holder);
+      }
+      if (prefill && prefill.category && prefill.scope === 'investments') m.__setInvCategory(prefill.category);
+      m.classList.add('open');
+      setTimeout(function(){
+        if (prefill && prefill.scope === 'investments') {
+          var inp = m.querySelector('#odm-holder-input'); if (inp && !inp.value) inp.focus();
+        }
+      }, 60);
+    }
+
+    function closeUploadModal(){
+      var m = document.getElementById('__onix_docs_modal');
+      if (m) m.classList.remove('open');
+    }
+
     // --- Detect & take over the Documents view --------------------------
     function isDocumentsView() {
-      // The bundle's Documents view has a page heading that reads "Documents"
       var hs = document.querySelectorAll('.main h1, .main h2, main h1, main h2, .page-hd h1, .page-hd h2');
       for (var i = 0; i < hs.length; i++) {
         var t = (hs[i].textContent || '').trim();
@@ -1555,7 +1809,6 @@
         // Not on Documents — clean up if we previously injected
         var existing = document.getElementById('__onix_docs_root');
         if (existing) {
-          // Re-show siblings we hid
           var view = existing.closest('.view') || existing.parentElement;
           if (view) {
             [].slice.call(view.children).forEach(function(c){
@@ -1569,15 +1822,34 @@
         }
         return;
       }
-      // We're on Documents. Find the view container the heading lives in.
+      // We're on Documents.
       var view = heading.closest('.view') || heading.closest('section') || heading.parentElement.parentElement;
       if (!view) return;
       if (view.querySelector('#__onix_docs_root')) return; // already injected
 
+      // Wire the bundle's "+ Upload" button (if present) to our modal.
+      var pageHd = heading.closest('.page-hd') || heading.parentElement;
+      if (pageHd) {
+        var uploadBtn = null;
+        [].slice.call(pageHd.querySelectorAll('button')).forEach(function(b){
+          var t = (b.textContent || '').trim();
+          if (/^\+\s*(Upload|Subir)/i.test(t) && !b.dataset.onixWired) {
+            uploadBtn = b;
+          }
+        });
+        if (uploadBtn) {
+          uploadBtn.dataset.onixWired = '1';
+          uploadBtn.addEventListener('click', function(e){
+            e.preventDefault();
+            e.stopPropagation();
+            openUploadModal({ scope: nav.cat, holder: nav.name });
+          });
+        }
+      }
+
       // Hide all children except the page header (the one containing the h1)
-      var headerWrap = heading.closest('.page-hd') || heading.parentElement;
       [].slice.call(view.children).forEach(function(c){
-        if (c === headerWrap) return;
+        if (c === pageHd) return;
         if (c.style.display !== 'none') {
           c.dataset.onixHidden = '1';
           c.style.display = 'none';
@@ -1588,15 +1860,13 @@
       var root = document.createElement('div');
       root.id = '__onix_docs_root';
       root.style.marginTop = '8px';
-      headerWrap.parentElement.insertBefore(root, headerWrap.nextSibling);
-      // Reset to top-level view
+      pageHd.parentElement.insertBefore(root, pageHd.nextSibling);
       nav = {level:'root', cat:null, name:null};
       render();
     }
 
     // Watch for route changes — bundle toggles .view.active
     var mo = new MutationObserver(function(){
-      // Debounce
       if (window.__onix_docs_t) clearTimeout(window.__onix_docs_t);
       window.__onix_docs_t = setTimeout(takeover, 60);
     });
