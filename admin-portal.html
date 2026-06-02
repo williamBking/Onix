@@ -2725,9 +2725,18 @@
   });
 
   /* =====================================================================
-     DOCUMENTS TAB — Upload button popup
+     DOCUMENTS TAB — Upload button popup  [DISABLED]
+     This was an earlier localStorage-only flow that built its own
+     overlay (__onix_docupload_overlay) and registered a capture-phase
+     click handler that intercepted ANY "Upload" button text inside the
+     Documents view — including the new Supabase-backed modal's own
+     Upload submit button, causing a second popup to appear. The whole
+     thing is superseded by the Supabase-backed Documents IIFE earlier
+     in this file; bail out immediately so neither the modal nor the
+     interceptor are registered.
      ===================================================================== */
   window.addEventListener('load', function(){
+    return; // legacy upload modal disabled — see Supabase Documents IIFE above
     var DOC_KEY = 'onix-docs-uploaded';
     function loadDocs(){ try{return JSON.parse(localStorage.getItem(DOC_KEY)||'[]');}catch(_){return[];} }
     function saveDocs(a){ localStorage.setItem(DOC_KEY, JSON.stringify(a)); }
