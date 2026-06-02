@@ -1360,27 +1360,34 @@
   }
 
   function renderPayments(payments) {
+    const paid = (payments || []).filter(p => p.status === 'paid' || p.paid_at);
+
+    const historyRowsHtml = paid.length
+      ? paid.slice(0, 24).map(p => `
+          <tr>
+            <td>${fmt.date(p.paid_at || p.due_date)}</td>
+            <td style="font-weight:600">${fmt.money(p.amount_due)}</td>
+            <td>${fmt.money(p.principal)}</td>
+            <td>${fmt.money(p.interest)}</td>
+            <td>${fmt.money(p.balance_after)}</td>
+            <td><span class="pay-status paid"></span><span>Paid</span></td>
+          </tr>`).join('')
+      : '<tr><td colspan="6" style="color:var(--light);font-style:italic;text-align:center;padding:18px">No payments recorded yet</td></tr>';
+
     // Lending tab: Payment History card
-    const histCard = findCardByTitle(document.querySelector('#view-loans'), txt => /Payment History/i.test(txt));
-    if (histCard) {
-      const tbody = histCard.querySelector('tbody');
-      if (tbody) {
-        const paid = (payments || []).filter(p => p.status === 'paid' || p.paid_at).slice(0, 12);
-        if (!paid.length) {
-          tbody.innerHTML = '<tr><td colspan="6" style="color:var(--light);font-style:italic;text-align:center;padding:18px">No payments recorded yet</td></tr>';
-        } else {
-          tbody.innerHTML = paid.map(p => `
-            <tr>
-              <td>${fmt.date(p.paid_at || p.due_date)}</td>
-              <td style="font-weight:600">${fmt.money(p.amount_due)}</td>
-              <td>${fmt.money(p.principal)}</td>
-              <td>${fmt.money(p.interest)}</td>
-              <td>${fmt.money(p.balance_after)}</td>
-              <td><span class="pay-status paid"></span><span>Paid</span></td>
-            </tr>`).join('');
-        }
-      }
+    const lendHist = findCardByTitle(document.querySelector('#view-loans'), txt => /Payment History/i.test(txt));
+    if (lendHist) {
+      const tbody = lendHist.querySelector('tbody');
+      if (tbody) tbody.innerHTML = historyRowsHtml;
     }
+
+    // Payments tab: Payment History card (was 5 hardcoded demo rows)
+    const payHist = findCardByTitle(document.querySelector('#view-payments'), txt => /Payment History/i.test(txt));
+    if (payHist) {
+      const tbody = payHist.querySelector('tbody');
+      if (tbody) tbody.innerHTML = historyRowsHtml;
+    }
+
     // Payments view: Upcoming Payments table (#upcoming-rows)
     const upTbody = document.getElementById('upcoming-rows');
     if (upTbody) {
@@ -1397,6 +1404,64 @@
             </tr>`).join('')
         : '<tr><td colspan="4" style="color:var(--light);font-style:italic;text-align:center;padding:18px">No upcoming payments scheduled</td></tr>';
     }
+
+    // Payments tab: Payment Breakdown (chart + the two summary boxes)
+    renderPaymentBreakdown(paid);
+  }
+
+  // Render the Payment Breakdown card on the Payments tab using real paid
+  // payments — totals of principal vs interest. Replaces the demo
+  // [2698, 1520] hardcoded chart, and neutralizes the legacy
+  // initBreakdownChart() in client-portal.html that would otherwise
+  // overwrite the chart on every Payments-tab visit.
+  function renderPaymentBreakdown(paidPayments) {
+    const totalPrincipal = paidPayments.reduce((s, p) => s + Number(p.principal || 0), 0);
+    const totalInterest  = paidPayments.reduce((s, p) => s + Number(p.interest  || 0), 0);
+
+    // Update the two summary boxes (Principal / Interest amounts)
+    const card = findCardByTitle(document.querySelector('#view-payments'), txt => /Payment Breakdown/i.test(txt));
+    if (card) {
+      card.querySelectorAll('div[style*="background"]').forEach(box => {
+        const eyebrow = box.querySelector('[data-en]');
+        const label = eyebrow ? (eyebrow.textContent || '').trim().toLowerCase() : '';
+        const val = box.querySelector('div[style*="font-weight:700"]');
+        if (!val) return;
+        if (label === 'principal') val.textContent = fmt.money(totalPrincipal);
+        else if (label === 'interest') val.textContent = fmt.money(totalInterest);
+      });
+    }
+
+    // Update / create the doughnut chart
+    const canvas = document.getElementById('breakdownChart');
+    if (canvas && typeof Chart !== 'undefined') {
+      try { const ex = Chart.getChart(canvas); if (ex) ex.destroy(); } catch (e) {}
+      if (totalPrincipal + totalInterest <= 0) {
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#9B9590';
+        ctx.font = "italic 14px 'Cormorant Garamond', serif";
+        ctx.textAlign = 'center';
+        ctx.fillText('No payments yet', canvas.width / 2, canvas.height / 2);
+      } else {
+        new Chart(canvas.getContext('2d'), {
+          type: 'doughnut',
+          data: {
+            labels: ['Principal', 'Interest'],
+            datasets: [{ data: [totalPrincipal, totalInterest], backgroundColor: ['#C0392B', '#EDE8E0'], borderWidth: 0 }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false, cutout: '68%',
+            plugins: {
+              legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 }, color: '#555' } },
+              tooltip: { callbacks: { label: c => c.label + ': ' + fmt.money(c.parsed) } }
+            }
+          }
+        });
+      }
+    }
+
+    // Stop the legacy demo function from clobbering our chart on tab clicks.
+    window.initBreakdownChart = function(){};
   }
 
   // ---------- Distribution History (Investments tab) ----------
