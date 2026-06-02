@@ -1302,6 +1302,17 @@
         '#__onix_docs_modal .odm-submit{background:#C0392B;color:#fff;border-color:#C0392B}',
         '#__onix_docs_modal .odm-submit:hover{background:#a93226}',
         '#__onix_docs_modal .odm-submit:disabled{opacity:.5;cursor:not-allowed;background:#C0392B}',
+        /* Holder picker chips — show every existing investment holder so
+           admins do not have to retype the name every time. */
+        '#__onix_docs_modal .odm-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}',
+        '#__onix_docs_modal .odm-chip{padding:6px 12px;background:#F8F7F5;border:1px solid #E8E8E8;border-radius:14px;font:600 .74rem/1 "DM Sans",sans-serif;color:#1A1A1A;cursor:pointer;transition:all .14s}',
+        '#__onix_docs_modal .odm-chip:hover{border-color:#C0392B;color:#C0392B}',
+        '#__onix_docs_modal .odm-chip.sel{background:#C0392B;color:#fff;border-color:#C0392B}',
+        '#__onix_docs_modal .odm-chips-empty{font-size:.74rem;color:#9B9590;font-style:italic;padding:4px 0}',
+        '#__onix_docs_modal .odm-or{font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;color:#9B9590;font-weight:700;margin:6px 0 6px}',
+        /* Transient success banner inside the modal after a successful upload */
+        '#__onix_docs_modal .odm-success{display:none;padding:12px 14px;background:#EBF5EB;color:#2D6A2D;font-size:.84rem;font-weight:600;border-left:3px solid #3B8B3B;margin-top:14px;animation:__onix_pop .2s cubic-bezier(.2,.8,.2,1)}',
+        '#__onix_docs_modal .odm-success.show{display:block}',
       ].join('\n');
       document.head.appendChild(s);
     }
@@ -1658,8 +1669,9 @@
           '</div>' +
           '<div id="odm-inv-holder" style="display:none">' +
             '<label>Holding / Investment Name</label>' +
-            '<input type="text" id="odm-holder-input" list="odm-holder-suggest" placeholder="e.g. Bari Caffè">' +
-            '<datalist id="odm-holder-suggest"></datalist>' +
+            '<div id="odm-holder-chips" class="odm-chips"></div>' +
+            '<div class="odm-or">Or add a new one</div>' +
+            '<input type="text" id="odm-holder-input" placeholder="e.g. Bari Caffè">' +
           '</div>' +
           '<div id="odm-inv-cat" style="display:none">' +
             '<label>Document Type</label>' +
@@ -1671,8 +1683,9 @@
           '<label>File</label>' +
           '<input type="file" id="odm-file" accept="application/pdf,image/*,.ppt,.pptx,.key,.xls,.xlsx,.csv,.doc,.docx">' +
           '<div class="odm-err" id="odm-err"></div>' +
+          '<div class="odm-success" id="odm-success"></div>' +
           '<div class="odm-actions">' +
-            '<button class="odm-cancel" type="button" id="odm-cancel">Cancel</button>' +
+            '<button class="odm-cancel" type="button" id="odm-cancel">Close</button>' +
             '<button class="odm-submit" type="button" id="odm-submit" disabled>Upload</button>' +
           '</div>' +
         '</div>';
@@ -1714,7 +1727,9 @@
       m.querySelectorAll('[data-onix-holder]').forEach(function(b){ b.addEventListener('click', function(){ setOnixHolder(b.getAttribute('data-onix-holder')); }); });
       m.querySelectorAll('[data-inv-cat]').forEach(function(b){ b.addEventListener('click', function(){ setInvCategory(b.getAttribute('data-inv-cat')); }); });
       m.querySelector('#odm-holder-input').addEventListener('input', function(){
-        state.holder = (m.querySelector('#odm-holder-input').value || '').trim() || null;
+        var v = (m.querySelector('#odm-holder-input').value || '').trim();
+        state.holder = v || null;
+        m.__highlightHolderChip(v);
         refreshSubmit();
       });
       m.querySelector('#odm-file').addEventListener('change', refreshSubmit);
@@ -1723,7 +1738,9 @@
         var fileEl = m.querySelector('#odm-file');
         var file = fileEl.files && fileEl.files[0];
         var errEl = m.querySelector('#odm-err');
+        var sucEl = m.querySelector('#odm-success');
         errEl.textContent = '';
+        sucEl.classList.remove('show');
         if (!file || !state.scope || !state.holder || !state.category) { errEl.textContent = 'Please complete every field.'; return; }
         var btn = m.querySelector('#odm-submit');
         btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Uploading…';
@@ -1747,25 +1764,73 @@
           btn.disabled = false; btn.textContent = orig;
           return;
         }
-        closeUploadModal();
-        // Navigate to the destination so the new file is in view + refresh
-        nav = { level:'files', cat: state.scope, name: state.holder };
+        // Stay in the modal. Show an inline success banner, refresh data so
+        // the new holder chip / file row shows up immediately, and re-render
+        // the current view (without jumping the admin to the files page).
         await fetchDocs(true);
+        m.__refreshHolderSuggestions();
         render();
+        sucEl.textContent = '✓ Uploaded "' + file.name + '" to ' + state.holder + ' / ' + categoryTitle(state.category) + '. Add another or close.';
+        sucEl.classList.add('show');
+        // Reset the file input + leave scope/holder/category set so they can
+        // immediately drop another doc into the same destination.
+        fileEl.value = '';
+        btn.textContent = orig;
+        refreshSubmit();
       });
 
       // Expose setters so openUploadModal can prefill
       m.__setScope         = setScope;
       m.__setOnixHolder    = setOnixHolder;
       m.__setInvCategory   = setInvCategory;
-      m.__setInvHolderText = function(t){ m.querySelector('#odm-holder-input').value = t || ''; state.holder = t || null; refreshSubmit(); };
-      m.__refreshHolderSuggestions = function(){
-        var dl = m.querySelector('#odm-holder-suggest');
-        if (!dl) return;
-        var holders = Array.from(new Set(rowsCache.filter(function(r){ return r.scope === 'investments'; }).map(function(r){ return r.holder_name; }))).sort();
-        dl.innerHTML = holders.map(function(h){ return '<option value="' + escapeAttr(h) + '"></option>'; }).join('');
+      m.__setInvHolderText = function(t){
+        m.querySelector('#odm-holder-input').value = t || '';
+        state.holder = t || null;
+        m.__highlightHolderChip(t);
+        refreshSubmit();
       };
-      m.__resetState = function(){ state = { scope:null, holder:null, category:null }; m.querySelectorAll('.sel').forEach(function(b){ b.classList.remove('sel'); }); m.querySelector('#odm-onix-holder').style.display='none'; m.querySelector('#odm-inv-holder').style.display='none'; m.querySelector('#odm-inv-cat').style.display='none'; m.querySelector('#odm-holder-input').value=''; m.querySelector('#odm-file').value=''; m.querySelector('#odm-submit').disabled = true; m.querySelector('#odm-err').textContent=''; };
+      m.__highlightHolderChip = function(name){
+        var chips = m.querySelector('#odm-holder-chips');
+        if (!chips) return;
+        chips.querySelectorAll('.odm-chip').forEach(function(b){
+          b.classList.toggle('sel', b.getAttribute('data-holder-chip') === name);
+        });
+      };
+      m.__refreshHolderSuggestions = function(){
+        var chips = m.querySelector('#odm-holder-chips');
+        if (!chips) return;
+        var holders = Array.from(new Set(rowsCache.filter(function(r){ return r.scope === 'investments'; }).map(function(r){ return r.holder_name; }))).sort();
+        if (!holders.length) {
+          chips.innerHTML = '<div class="odm-chips-empty">No investment holders yet — add the first one below.</div>';
+          return;
+        }
+        chips.innerHTML = holders.map(function(h){
+          return '<button type="button" class="odm-chip" data-holder-chip="' + escapeAttr(h) + '">' + escape(h) + '</button>';
+        }).join('');
+        chips.querySelectorAll('[data-holder-chip]').forEach(function(b){
+          b.addEventListener('click', function(){
+            var name = b.getAttribute('data-holder-chip');
+            m.querySelector('#odm-holder-input').value = name;
+            state.holder = name;
+            m.__highlightHolderChip(name);
+            refreshSubmit();
+          });
+        });
+        m.__highlightHolderChip(state.holder);
+      };
+      m.__resetState = function(){
+        state = { scope:null, holder:null, category:null };
+        m.querySelectorAll('.sel').forEach(function(b){ b.classList.remove('sel'); });
+        m.querySelector('#odm-onix-holder').style.display='none';
+        m.querySelector('#odm-inv-holder').style.display='none';
+        m.querySelector('#odm-inv-cat').style.display='none';
+        m.querySelector('#odm-holder-input').value='';
+        m.querySelector('#odm-file').value='';
+        m.querySelector('#odm-submit').disabled = true;
+        m.querySelector('#odm-err').textContent='';
+        var sucEl = m.querySelector('#odm-success');
+        if (sucEl) { sucEl.textContent = ''; sucEl.classList.remove('show'); }
+      };
     }
 
     function openUploadModal(prefill){
