@@ -898,6 +898,27 @@
   }
 
   // ---------- Open Raises ----------
+  // Update the small count badges on the client sidebar (e.g. the hardcoded
+  // "3" next to Investment Opportunities). Matches each sidebar item by its
+  // data-en label, patches the .sidebar-item-badge inside it, and hides the
+  // badge when the count is zero.
+  function paintClientSidebarBadges(data) {
+    const counts = {
+      'Investment Opportunities': (data.raises || []).length
+    };
+    document.querySelectorAll('.sidebar-item-badge').forEach(badge => {
+      const parent = badge.closest('button, a');
+      if (!parent) return;
+      const labelEl = parent.querySelector('[data-en]');
+      const key = labelEl ? labelEl.getAttribute('data-en') : '';
+      if (!(key in counts)) return;
+      const n = counts[key];
+      const desired = String(n);
+      if (badge.textContent !== desired) badge.textContent = desired;
+      badge.style.display = n > 0 ? '' : 'none';
+    });
+  }
+
   function renderRaises(raises, userId) {
     const grid = document.querySelector('#view-raises .row-3');
     if (!grid) return;
@@ -2053,6 +2074,7 @@
     }
     renderInvestments(investments, distributions);
     renderRaises(raises, userId);
+    paintClientSidebarBadges({ raises });
     renderPayments(payments);
     renderDistributions(distributions);
     renderUpcomingEvents(payments, distributions);
