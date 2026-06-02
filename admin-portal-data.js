@@ -2790,11 +2790,13 @@
 
   async function loadCalendarData() {
     const c = OnixDB.client;
-    const [eventsRes, bdayRes, loansRes, paymentsRes, clientsRes, allLoansRes] = await Promise.all([
+    const [eventsRes, bdayRes, loansRes, paymentsRes, nextDueRes, clientsRes, allLoansRes] = await Promise.all([
       c.from('calendar_events').select('*'),
       c.from('profiles').select('id, full_name, date_of_birth').not('date_of_birth', 'is', null),
       c.from('loans').select('id, loan_id_display, maturity_date, profiles(full_name)').eq('status', 'active').not('maturity_date', 'is', null),
       c.from('loan_payments').select('id, due_date, amount_due, loans(loan_id_display, profiles(full_name))').eq('status', 'pending').not('due_date', 'is', null),
+      // Loans whose next_due_date is set get a "Payment due" event automatically
+      c.from('loans').select('id, loan_id_display, next_due_date, monthly_payment, profiles(full_name)').eq('status', 'active').not('next_due_date', 'is', null),
       c.from('profiles').select('id, full_name, email').eq('role', 'client').order('full_name', { ascending: true }),
       c.from('loans').select('id, loan_id_display, profiles(full_name)').order('created_at', { ascending: false })
     ]);
@@ -2802,6 +2804,7 @@
     if (bdayRes.error)     console.error('[onix-cal] birthdays fetch failed:',bdayRes.error);
     if (loansRes.error)    console.error('[onix-cal] loans fetch failed:',    loansRes.error);
     if (paymentsRes.error) console.error('[onix-cal] payments fetch failed:', paymentsRes.error);
+    if (nextDueRes.error)  console.error('[onix-cal] next-due fetch failed:', nextDueRes.error);
 
     calEvents = [];
     (eventsRes.data || []).forEach(e => calEvents.push({
@@ -2833,6 +2836,27 @@
       subtitle: (p.loans && (p.loans.loan_id_display || (p.loans.profiles && p.loans.profiles.full_name))) || '',
       type: 'payment', date: p.due_date, source: 'payment', readOnly: true
     }));
+    // Loan-level next-payment-due dates (set by admin during Edit Loan after
+    // approval). Skip if there's already a loan_payments row for that same
+    // loan+date — keeps the calendar from showing duplicate payment chips.
+    const haveLoanPaymentOn = new Set(
+      (paymentsRes.data || []).map(p => (p.loans && p.loans.id ? p.loans.id : '') + '|' + p.due_date)
+    );
+    (nextDueRes.data || []).forEach(l => {
+      const key = l.id + '|' + l.next_due_date;
+      if (haveLoanPaymentOn.has(key)) return;
+      const amt = l.monthly_payment != null ? fmt.money(l.monthly_payment) + ' ' : '';
+      calEvents.push({
+        id: 'loan-next-due-' + l.id,
+        title: amt + 'payment due · ' + (l.loan_id_display || ''),
+        subtitle: (l.profiles && l.profiles.full_name) || '',
+        type: 'payment',
+        date: l.next_due_date,
+        source: 'loan-next-due',
+        loanId: l.id,
+        readOnly: true
+      });
+    });
     calClients = clientsRes.data || [];
     calLoans   = allLoansRes.data || [];
   }
