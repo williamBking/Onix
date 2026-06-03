@@ -209,9 +209,11 @@
     setTimeout(inject, 1300);
   });
 
-  /* Clients table — split the "Role" column into separate Borrower / LP
-     columns with checkbox indicators. Re-runs whenever the Clients view is
-     shown, so it survives view switches and language toggles. */
+  /* Clients table — formerly split the "Role" column into Borrower / LP
+     checkbox columns. Superseded by the Borrowers / LPs section split
+     below. We keep this IIFE around but turn splitRoleColumn into a no-op
+     so the columns are no longer injected. The CSS class definitions are
+     also harmless if never matched. */
   window.addEventListener('load', function(){
     var ROLE_STYLES_ID = '__onix_role_styles';
     if (!document.getElementById(ROLE_STYLES_ID)) {
@@ -236,6 +238,10 @@
     var CHECK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 
     function splitRoleColumn() {
+      // No-op: the clients table is now split into Borrowers / LPs as
+      // separate sections (see splitClientsBySection below).
+      return;
+      // The dead code below is left intentionally unreached for reference.
       var view = document.getElementById('view-clients');
       if (!view) return;
       // Only act on the active view; otherwise skip
@@ -313,6 +319,148 @@
       var root = document.querySelector('.main') || document.body;
       mo.observe(root, {subtree:true, childList:true, attributes:true, attributeFilter:['class']});
     }, 1400);
+  });
+
+  /* Clients view: split the single combined table into two stacked sections
+     — Borrowers (clients with any loans, plus new/unclassified clients) and
+     LPs / Investors (clients with any investments). Overlap is allowed: a
+     client with both loans and investments shows in both sections.
+     Drops the "Role" column entirely (was being split into checkbox columns).
+     Re-runs whenever paintClientsView repaints the view. */
+  window.addEventListener('load', function(){
+    function findMainClientsTable(view){
+      var tables = view.querySelectorAll('table');
+      for (var i = 0; i < tables.length; i++) {
+        var head = tables[i].querySelector('thead');
+        if (!head) continue;
+        var txt = head.textContent || '';
+        if (/Loans/i.test(txt) && /Investments/i.test(txt)) return tables[i];
+      }
+      return null;
+    }
+    function colIndex(headers, name){
+      for (var i = 0; i < headers.length; i++) {
+        if (new RegExp('^' + name + '$', 'i').test(headers[i].textContent.trim())) return i;
+      }
+      return -1;
+    }
+    function countFromCell(td){
+      if (!td) return 0;
+      var t = (td.textContent || '').trim();
+      var n = parseInt(t, 10);
+      return isNaN(n) ? 0 : n;
+    }
+    function sectionWrap(title, subtitle, table){
+      var wrap = document.createElement('div');
+      wrap.setAttribute('data-clients-section', title);
+      wrap.style.cssText = 'margin-bottom:32px';
+      var hd = document.createElement('div');
+      hd.style.cssText = 'margin-bottom:14px';
+      hd.innerHTML =
+        '<div style="font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;color:#1A1A1A;font-weight:700">' + title + '</div>' +
+        '<div style="font-size:.82rem;color:#888;margin-top:3px">' + subtitle + '</div>';
+      wrap.appendChild(hd);
+      wrap.appendChild(table);
+      return wrap;
+    }
+
+    function splitClientsBySection(){
+      var view = document.getElementById('view-clients');
+      if (!view) return;
+      if (!view.classList.contains('active')) return;
+
+      var mainTable = findMainClientsTable(view);
+      if (!mainTable) return;
+      // Bail if it's already our split layout (avoid infinite loop with the observer)
+      if (mainTable.dataset.sectionsBuilt === '1' || mainTable.closest('[data-clients-section]')) return;
+
+      var headers = [].slice.call(mainTable.querySelectorAll('thead th'));
+      var roleIdx = colIndex(headers, 'role');
+      var loansIdx = colIndex(headers, 'loans');
+      var invIdx   = colIndex(headers, 'investments');
+
+      function cloneHeader(){
+        var thead = mainTable.querySelector('thead').cloneNode(true);
+        if (roleIdx >= 0) {
+          var ths = thead.querySelectorAll('th');
+          if (ths[roleIdx]) ths[roleIdx].remove();
+        }
+        return thead;
+      }
+      function makeTableShell(){
+        var t = document.createElement('table');
+        // Copy classes/styling from the original so it looks consistent
+        if (mainTable.className) t.className = mainTable.className;
+        if (mainTable.getAttribute('style')) t.setAttribute('style', mainTable.getAttribute('style'));
+        t.appendChild(cloneHeader());
+        t.appendChild(document.createElement('tbody'));
+        return t;
+      }
+      function rowFor(tr){
+        var clone = tr.cloneNode(true);
+        if (roleIdx >= 0) {
+          var cells = clone.children;
+          if (cells[roleIdx]) cells[roleIdx].remove();
+        }
+        return clone;
+      }
+      function emptyRow(cols, msg){
+        var tr = document.createElement('tr');
+        var td = document.createElement('td');
+        td.colSpan = cols;
+        td.style.cssText = 'padding:18px;color:#888;font-style:italic;text-align:center';
+        td.textContent = msg;
+        tr.appendChild(td);
+        return tr;
+      }
+
+      var bTable = makeTableShell();
+      var lTable = makeTableShell();
+      var bTbody = bTable.querySelector('tbody');
+      var lTbody = lTable.querySelector('tbody');
+
+      var rows = [].slice.call(mainTable.querySelectorAll('tbody tr'));
+      // Only operate on real client rows (skip the "No clients yet." colspan row)
+      var realRows = rows.filter(function(r){ return r.querySelector('[data-cl-view]') || r.dataset.profileId; });
+
+      realRows.forEach(function(tr){
+        var loans = loansIdx >= 0 ? countFromCell(tr.children[loansIdx]) : 0;
+        var invs  = invIdx   >= 0 ? countFromCell(tr.children[invIdx])   : 0;
+        var inBorrowers = loans > 0 || (loans === 0 && invs === 0); // new/unclassified default to Borrowers
+        var inLps       = invs > 0;
+        if (inBorrowers) bTbody.appendChild(rowFor(tr));
+        if (inLps)       lTbody.appendChild(rowFor(tr));
+      });
+
+      var colCount = headers.length - (roleIdx >= 0 ? 1 : 0);
+      if (!bTbody.children.length) bTbody.appendChild(emptyRow(colCount, 'No borrowers yet.'));
+      if (!lTbody.children.length) lTbody.appendChild(emptyRow(colCount, 'No LPs / investors yet.'));
+
+      var bSection = sectionWrap('Borrowers',       'Clients receiving loan capital',     bTable);
+      var lSection = sectionWrap('LPs / Investors', 'Capital providers (LPs)',            lTable);
+
+      mainTable.dataset.sectionsBuilt = '1';
+      var parent = mainTable.parentElement;
+      parent.insertBefore(bSection, mainTable);
+      parent.insertBefore(lSection, mainTable);
+      mainTable.style.display = 'none';
+    }
+
+    // Initial run + watch for paintClientsView re-rendering the view.
+    var mo = new MutationObserver(function(muts){
+      // If the view's innerHTML was replaced (paintClientsView re-paint),
+      // our injected sections + the data-sectionsBuilt marker are gone.
+      // Re-run if we no longer see our section markers.
+      var view = document.getElementById('view-clients');
+      if (!view || !view.classList.contains('active')) return;
+      if (view.querySelector('[data-clients-section]')) return;
+      splitClientsBySection();
+    });
+    setTimeout(function(){
+      splitClientsBySection();
+      var root = document.querySelector('.main') || document.body;
+      mo.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+    }, 1600);
   });
 
   /* Client profile modal — intercept the row's "View" button on the Clients
