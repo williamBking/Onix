@@ -48,10 +48,29 @@
   function setKpi(labelText, value, subText) {
     const cells = kpiCellsByLabel(labelText);
     cells.forEach(({ val, sub }) => {
-      if (val && value != null) val.textContent = value;
+      if (val && value != null) {
+        val.textContent = value;
+        // Drop stale i18n attrs so the EN/ES MutationObserver doesn't
+        // overwrite the live value with the bundled demo string.
+        val.removeAttribute('data-en');
+        val.removeAttribute('data-es');
+      }
       if (sub && subText !== undefined) {
-        if (typeof subText === 'string') sub.textContent = subText;
-        else if (subText && subText.html) sub.innerHTML = subText.html;
+        if (typeof subText === 'string') {
+          sub.textContent = subText;
+          sub.removeAttribute('data-en');
+          sub.removeAttribute('data-es');
+        } else if (subText && (subText.en != null || subText.es != null)) {
+          // Bilingual sub: keep the EN/ES toggle working.
+          sub.setAttribute('data-en', subText.en || '');
+          sub.setAttribute('data-es', subText.es || '');
+          const lang = (window.OnixLang && OnixLang.getLang && OnixLang.getLang()) || 'en';
+          sub.textContent = (lang === 'es' ? subText.es : subText.en) || subText.en || '';
+        } else if (subText && subText.html) {
+          sub.innerHTML = subText.html;
+          sub.removeAttribute('data-en');
+          sub.removeAttribute('data-es');
+        }
       }
     });
   }
@@ -887,10 +906,13 @@
             .reduce((s, i) => s + Number(i.amount_invested || 0) * Number(i.expected_return), 0) / totalInvested
       : null;
 
-    const subText = ventureCount === 0 ? 'No active investments'
-                  : ventureCount === 1 ? 'Across 1 company'
-                  : `Across ${ventureCount} companies`;
-    setKpi('Total Invested', fmt.money(totalInvested), subText);
+    const subEn = ventureCount === 0 ? 'No active investments'
+                : ventureCount === 1 ? 'Across 1 company'
+                : `Across ${ventureCount} companies`;
+    const subEs = ventureCount === 0 ? 'Sin inversiones activas'
+                : ventureCount === 1 ? 'En 1 empresa'
+                : `En ${ventureCount} empresas`;
+    setKpi('Total Invested', fmt.money(totalInvested), { en: subEn, es: subEs });
 
     if (projectedDollars > 0) {
       setKpi('ROI Expected',
