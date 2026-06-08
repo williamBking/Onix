@@ -213,7 +213,11 @@
         var flagUpdate = selectedType === 'borrower'
           ? { is_borrower: true,  is_lp: false, phone: phone || null }
           : { is_borrower: false, is_lp: true,  phone: phone || null };
-        await OnixDB.client.from('profiles').update(flagUpdate).eq('email', email);
+        var upd = await OnixDB.client.from('profiles').update(flagUpdate).eq('email', email);
+        if (upd && upd.error) {
+          console.error('[onix-newclient] flag update failed:', upd.error);
+          window.__onix_showToast('Account created but role flag failed to set: ' + upd.error.message, '#B8651A');
+        }
 
         submitBtn.disabled = false;
         submitBtn.textContent = origLabel;
@@ -238,14 +242,17 @@
         // freshly-painted table replaces the old one.
       });
 
-      // Click delegation — catches the button regardless of when it mounts
+      // Click delegation — catches the trigger whether it's a <button> or
+      // an <a> (the in-view "+ New Client" rendered by paintClientsView is
+      // actually an <a>). Capture-phase + stopImmediatePropagation so the
+      // old form-based modal in admin-portal-data.js doesn't also open.
       document.addEventListener('click', function(e){
         var t = e.target;
-        var btn = t && t.closest && t.closest('button');
+        var btn = t && t.closest && t.closest('button, a');
         if (!btn) return;
         if (!/\+\s*(New|Nuevo)\s*(Client|Cliente)/i.test(btn.textContent || '')) return;
         e.preventDefault();
-        e.stopPropagation();
+        e.stopImmediatePropagation();
         m.classList.add('show');
         setTimeout(function(){ var fi = m.querySelector('input[name="first"]'); if (fi) fi.focus(); }, 80);
       }, true);
