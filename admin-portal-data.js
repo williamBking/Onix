@@ -2798,7 +2798,7 @@
       // Loans whose next_due_date is set get a "Payment due" event automatically
       c.from('loans').select('id, loan_id_display, next_due_date, monthly_payment, profiles(full_name)').eq('status', 'active').not('next_due_date', 'is', null),
       c.from('profiles').select('id, full_name, email').eq('role', 'client').order('full_name', { ascending: true }),
-      c.from('loans').select('id, loan_id_display, profiles(full_name)').order('created_at', { ascending: false })
+      c.from('loans').select('id, loan_id_display, user_id, profiles(full_name)').order('created_at', { ascending: false })
     ]);
     if (eventsRes.error)   console.error('[onix-cal] events fetch failed:',   eventsRes.error);
     if (bdayRes.error)     console.error('[onix-cal] birthdays fetch failed:',bdayRes.error);
@@ -3011,13 +3011,20 @@
       calClients.map(c =>
         '<option value="' + esc(c.id) + '">' + esc(c.full_name || c.email || c.id) + '</option>'
       ).join('');
-    const loanOpts = '<option value="">— No loan —</option>' +
-      calLoans.map(l =>
+    // Build the loan options for a specific client (or all loans if blank).
+    function loanOptionsFor(clientId) {
+      const list = clientId ? calLoans.filter(l => l.user_id === clientId) : calLoans;
+      const empty = clientId
+        ? '<option value="">— No loan —</option>'
+        : '<option value="">— No loan (select a client first to filter) —</option>';
+      return empty + list.map(l =>
         '<option value="' + esc(l.id) + '">' +
           esc(l.loan_id_display || l.id.slice(0, 8)) +
-          ((l.profiles && l.profiles.full_name) ? ' · ' + esc(l.profiles.full_name) : '') +
+          (!clientId && l.profiles && l.profiles.full_name ? ' · ' + esc(l.profiles.full_name) : '') +
         '</option>'
       ).join('');
+    }
+    const loanOpts = loanOptionsFor('');
 
     panel.innerHTML =
       '<h2>Add Calendar Event</h2>' +
@@ -3042,6 +3049,17 @@
       '</form>';
 
     panel.querySelector('#cal-add-cancel').addEventListener('click', () => bg.classList.remove('open'));
+
+    // Filter the Related Loan dropdown to only loans belonging to the
+    // currently-selected client. Clears the loan selection on client change.
+    const clientSel = panel.querySelector('select[name="related_profile_id"]');
+    const loanSel   = panel.querySelector('select[name="related_loan_id"]');
+    if (clientSel && loanSel) {
+      clientSel.addEventListener('change', () => {
+        loanSel.innerHTML = loanOptionsFor(clientSel.value || '');
+      });
+    }
+
     panel.querySelector('#cal-add-form').addEventListener('submit', async e => {
       e.preventDefault();
       const form = e.target;
