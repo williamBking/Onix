@@ -1109,6 +1109,14 @@ document.addEventListener('DOMContentLoaded', function(){
 document.addEventListener('click', function(e){
   var btn = e.target && e.target.closest && e.target.closest('button');
   if (!btn) return;
+  // The Supabase-driven raise cards put data-raise-details / data-raise-interest
+  // on their own buttons and wire dedicated listeners in client-portal-data.js
+  // (renderRaises). Skip this legacy capture-phase intercept for those so the
+  // real cp-raise-modal (with live data + raise_documents) actually opens
+  // instead of the hardcoded OPP_DATA fallback.
+  if (btn.hasAttribute('data-raise-details') || btn.hasAttribute('data-raise-interest')) {
+    return;
+  }
   var txt = (btn.textContent||'').trim();
   if (/view\s+details/i.test(txt)) {
     var card = btn.closest('.opp-card');
@@ -1121,9 +1129,6 @@ document.addEventListener('click', function(e){
     var card2 = btn.closest('.opp-card');
     var name2 = card2 ? (card2.querySelector('.opp-name')||{}).textContent||'' : '';
     var min2  = card2 ? (card2.querySelector('.opp-stat-val:last-of-type, .opp-stat-val')||{}).textContent||'' : '';
-    // The data-driven cards put the raise id on the Express Interest button
-    // itself (data-raise-interest="UUID"). Thread it into the modal so submit
-    // can actually persist to Supabase instead of just showing a toast.
     var raiseId = btn.getAttribute('data-raise-interest') || '';
     e.preventDefault(); e.stopPropagation();
     buildInterestModal();
