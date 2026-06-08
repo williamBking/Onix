@@ -101,17 +101,14 @@
       m.innerHTML = ''
         + '<div class="om-card" role="dialog" aria-modal="true" aria-labelledby="om-title">'
         + '  <div class="om-eyebrow">Onboarding</div>'
-        + '  <h2 id="om-title">Add a new contact</h2>'
-        + '  <p class="om-sub">Select a type — we’ll route them to the right page.</p>'
-        + '  <div class="om-types" role="radiogroup" aria-label="Contact type">'
-        + '    <button class="om-type" data-type="investor" role="radio" aria-checked="false">'
-        + '      <b>Investor</b><span>LP / capital provider</span><span class="om-tgt">→ Investors</span>'
-        + '    </button>'
-        + '    <button class="om-type" data-type="lender" role="radio" aria-checked="false">'
-        + '      <b>Lender</b><span>Provides debt capital</span><span class="om-tgt">→ Clients</span>'
-        + '    </button>'
+        + '  <h2 id="om-title">Add a new client</h2>'
+        + '  <p class="om-sub">Choose where this client belongs — we will create their account and route them to the right section.</p>'
+        + '  <div class="om-types" role="radiogroup" aria-label="Client type" style="grid-template-columns:repeat(2,1fr)">'
         + '    <button class="om-type" data-type="borrower" role="radio" aria-checked="false">'
-        + '      <b>Borrower</b><span>Receives loan capital</span><span class="om-tgt">→ Clients</span>'
+        + '      <b>Borrower</b><span>Receives loan capital</span><span class="om-tgt">→ Borrowers section</span>'
+        + '    </button>'
+        + '    <button class="om-type" data-type="investor" role="radio" aria-checked="false">'
+        + '      <b>Investor</b><span>LP / capital provider</span><span class="om-tgt">→ LPs / Investors section</span>'
         + '    </button>'
         + '  </div>'
         + '  <form id="om-form" autocomplete="off">'
@@ -163,34 +160,82 @@
         if (e.key === 'Escape' && m.classList.contains('show')) close();
       });
 
-      form.addEventListener('submit', function(e){
+      // Generate a readable temp password the admin can hand off.
+      function makeTempPassword(){
+        var letters = 'ABCDEFGHJKMNPQRSTUVWXYZ';
+        var lower   = 'abcdefghijkmnpqrstuvwxyz';
+        var digits  = '23456789';
+        function pick(s,n){ var o=''; for(var i=0;i<n;i++) o+=s[Math.floor(Math.random()*s.length)]; return o; }
+        return 'Onix-' + pick(letters,2) + pick(lower,3) + pick(digits,4);
+      }
+      function esc(s){ return String(s||'').replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+
+      form.addEventListener('submit', async function(e){
         e.preventDefault();
         if (!selectedType) return;
+        if (!window.OnixDB || !OnixDB.client) {
+          alert('Supabase is not ready yet — please try again in a moment.');
+          return;
+        }
         var fd = new FormData(form);
-        var entity = {
-          id: 'NEW-' + Date.now().toString(36).toUpperCase().slice(-6),
-          type: selectedType,
-          firstName: (fd.get('first')||'').toString().trim(),
-          lastName: (fd.get('last')||'').toString().trim(),
-          email: (fd.get('email')||'').toString().trim(),
-          phone: (fd.get('phone')||'').toString().trim(),
-          createdAt: new Date().toISOString(),
-          status: selectedType === 'investor' ? 'PENDING' : 'NEW'
-        };
-        // Investors -> investors page; lender/borrower -> clients page with role
-        var key = selectedType === 'investor' ? 'onix-investors' : 'onix-clients';
-        var list = [];
-        try { list = JSON.parse(localStorage.getItem(key) || '[]'); } catch(_){}
-        if (selectedType !== 'investor') entity.role = selectedType.toUpperCase();
-        list.push(entity);
-        localStorage.setItem(key, JSON.stringify(list));
+        var first = (fd.get('first')||'').toString().trim();
+        var last  = (fd.get('last')||'').toString().trim();
+        var email = (fd.get('email')||'').toString().trim().toLowerCase();
+        var phone = (fd.get('phone')||'').toString().trim();
+        var fullName = (first + ' ' + last).trim();
+        var label = selectedType === 'borrower' ? 'Borrower' : 'Investor';
+        var section = selectedType === 'borrower' ? 'Borrowers' : 'LPs / Investors';
 
-        var dest = selectedType === 'investor' ? 'Investors' : 'Clients';
-        var label = selectedType.charAt(0).toUpperCase() + selectedType.slice(1);
-        toast.innerHTML = entity.firstName + ' ' + entity.lastName + ' added as <b>' + label + '</b> → ' + dest + ' page';
-        toast.classList.add('show');
-        setTimeout(function(){ toast.classList.remove('show'); }, 3600);
+        submitBtn.disabled = true;
+        var origLabel = submitBtn.textContent;
+        submitBtn.textContent = 'Creating…';
+
+        var tempPw = makeTempPassword();
+
+        // 1. Create the auth user + profile via the admin RPC (role=client,
+        //    status=active so they can sign in immediately).
+        var rpcRes = await OnixDB.client.rpc('admin_create_client', {
+          p_email:     email,
+          p_password:  tempPw,
+          p_full_name: fullName,
+          p_role:      'client',
+          p_status:    'active'
+        });
+        if (rpcRes.error) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = origLabel;
+          window.__onix_showToast('Could not add client: ' + (rpcRes.error.message || 'unknown error'), '#C0392B');
+          return;
+        }
+
+        // 2. Mark them as a Borrower or LP so the Clients page splits put
+        //    them in the right section automatically.
+        var flagUpdate = selectedType === 'borrower'
+          ? { is_borrower: true,  is_lp: false, phone: phone || null }
+          : { is_borrower: false, is_lp: true,  phone: phone || null };
+        await OnixDB.client.from('profiles').update(flagUpdate).eq('email', email);
+
+        submitBtn.disabled = false;
+        submitBtn.textContent = origLabel;
         close();
+
+        // 3. Sticky toast with temp password — admin needs time to copy it.
+        window.__onix_showToast(
+          '<b>' + esc(fullName) + '</b> added as ' + label + ' → ' + section + ' section.<br>' +
+          'Share this temporary password so they can sign in:<br>' +
+          '<span style="font-family:monospace;font-size:.9rem;background:#fff;color:#C0392B;padding:2px 8px;border-radius:2px;display:inline-block;margin-top:6px;user-select:all">' + esc(tempPw) + '</span>' +
+          '<div style="font-size:.7rem;color:#bbb;margin-top:8px;font-style:italic">Click the password to select it. Close this when you have it copied.</div>',
+          '#3B8B3B',
+          { sticky: true }
+        );
+
+        // 4. Trigger a clients refresh so the new row appears in the right section.
+        document.querySelectorAll('[data-clients-section]').forEach(function(s){ s.remove(); });
+        var mainTable = document.querySelector('#view-clients table.tbl[data-sections-built="1"]');
+        if (mainTable) mainTable.removeAttribute('data-sections-built');
+        if (typeof window.__onixAdminRefresh === 'function') window.__onixAdminRefresh();
+        // The MutationObserver in splitClientsBySection re-splits when the
+        // freshly-painted table replaces the old one.
       });
 
       // Click delegation — catches the button regardless of when it mounts
@@ -426,8 +471,16 @@
       realRows.forEach(function(tr){
         var loans = loansIdx >= 0 ? countFromCell(tr.children[loansIdx]) : 0;
         var invs  = invIdx   >= 0 ? countFromCell(tr.children[invIdx])   : 0;
-        var inBorrowers = loans > 0 || (loans === 0 && invs === 0); // new/unclassified default to Borrowers
-        var inLps       = invs > 0;
+        // paintClientsView writes the Role cell as "Borrower" / "LP" /
+        // "Borrower + LP" / "—" based on profiles.is_borrower and is_lp,
+        // so we can read it directly to honor admin's explicit choice.
+        var roleText = roleIdx >= 0 && tr.children[roleIdx] ? (tr.children[roleIdx].textContent || '') : '';
+        var hasB = /borrower/i.test(roleText);
+        var hasL = /\blp\b|investor|lender/i.test(roleText);
+        var inBorrowers = hasB || loans > 0;
+        var inLps       = hasL || invs  > 0;
+        // Completely unclassified (no flag, no activity) → default to Borrowers
+        if (!inBorrowers && !inLps) inBorrowers = true;
         if (inBorrowers) bTbody.appendChild(rowFor(tr));
         if (inLps)       lTbody.appendChild(rowFor(tr));
       });
@@ -4297,7 +4350,7 @@
   <!-- Onix Supabase live admin layer -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="supabase.js?v=11"></script>
-  <script defer src="admin-portal-data.js?v=44"></script>
+  <script defer src="admin-portal-data.js?v=45"></script>
   <!-- Shared i18n helper: wires EN/ES toggle via event delegation so it
        works even for late-injected DOM (the admin bundle ships its own
        lang script but binds once at load and misses the buttons). -->

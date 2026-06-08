@@ -3112,6 +3112,11 @@
     refreshAll();
   }
 
+  // Expose refreshAll so other scripts (e.g. the New Client overlay in
+  // admin-portal.html) can request a re-fetch + repaint after they create
+  // data without going through this IIFE's own submit forms.
+  window.__onixAdminRefresh = refreshAll;
+
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootstrap);
   else bootstrap();
 })();
