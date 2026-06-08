@@ -452,26 +452,33 @@
     const stored = localStorage.getItem(STORE_KEY);
     let current = loans.find(l => l.id === stored) || loans[0];
 
-    renderLoanSelector(loans, current.id, (nextId) => {
+    // Shared selection handler — runs whichever picker fires (My Loan or
+    // Payments) and keeps the OTHER picker's value in sync.
+    function onPick(nextId) {
       const next = loans.find(l => l.id === nextId);
       if (!next) return;
       current = next;
       localStorage.setItem(STORE_KEY, nextId);
       renderLoan(next, payments);
-      // Keep the Payments tab in sync — it should show the same loan as
-      // whatever the user just picked on the My Loan tab.
       renderPayments(payments, next);
-    });
+      document.querySelectorAll('[data-onix-loan-select]').forEach(sel => {
+        if (sel.value !== nextId) sel.value = nextId;
+      });
+    }
+
+    renderLoanSelector(loans, current.id, onPick, '#view-loans');
+    renderLoanSelector(loans, current.id, onPick, '#view-payments');
 
     renderLoan(current, payments);
     renderPayments(payments, current);
   }
 
-  // Inject (or update) a labeled <select> at the top of the Lending view that
-  // lists every active loan by its loan_id_display. Hidden when there's only
-  // one loan — no need to clutter the UI.
-  function renderLoanSelector(loans, currentLoanId, onChange) {
-    const view = document.querySelector('#view-loans');
+  // Inject (or update) a labeled <select> at the top of a view that lists
+  // every active loan by its loan_id_display. Hidden when there's only one
+  // loan — no need to clutter the UI. Used on both the My Loan and Payments
+  // tabs; viewSelector picks which.
+  function renderLoanSelector(loans, currentLoanId, onChange, viewSelector) {
+    const view = document.querySelector(viewSelector || '#view-loans');
     if (!view) return;
 
     let host = view.querySelector('[data-onix-loan-picker]');
