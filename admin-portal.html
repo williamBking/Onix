@@ -2336,24 +2336,45 @@
     }
     window.__onix_injectSharedStyles = injectSharedStyles;
 
-    /* Shared toast */
-    function showToast(msg, color){
+    /* Shared toast — pass { sticky: true } in opts to keep it open with an
+       X to dismiss (used for temp-password handoffs so admin has time to
+       copy). Default behavior auto-hides after 3.4s. */
+    function showToast(msg, color, opts){
+      opts = opts || {};
       var t = document.getElementById('__onix_toast');
       if (!t) {
         t = document.createElement('div');
         t.id = '__onix_toast';
-        t.style.cssText = 'position:fixed;left:50%;top:24px;transform:translateX(-50%) translateY(-12px);background:#1A1A1A;color:#fff;padding:14px 22px;border-left:3px solid #3B8B3B;border-radius:2px;font:500 .85rem/1.4 "DM Sans",-apple-system,sans-serif;box-shadow:0 12px 32px rgba(0,0,0,.4);z-index:99999;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;max-width:420px;white-space:pre-wrap';
+        t.style.cssText = 'position:fixed;left:50%;top:24px;transform:translateX(-50%) translateY(-12px);background:#1A1A1A;color:#fff;padding:14px 22px;border-left:3px solid #3B8B3B;border-radius:2px;font:500 .85rem/1.4 "DM Sans",-apple-system,sans-serif;box-shadow:0 12px 32px rgba(0,0,0,.4);z-index:99999;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;max-width:460px;white-space:pre-wrap';
         document.body.appendChild(t);
       }
       t.style.borderLeftColor = color || '#3B8B3B';
-      t.innerHTML = msg;
-      t.style.opacity = '1';
-      t.style.transform = 'translateX(-50%) translateY(0)';
-      clearTimeout(window.__onix_toast_t);
-      window.__onix_toast_t = setTimeout(function(){
+
+      function hide(){
         t.style.opacity = '0';
         t.style.transform = 'translateX(-50%) translateY(-12px)';
-      }, 3400);
+        t.style.pointerEvents = 'none';
+      }
+
+      clearTimeout(window.__onix_toast_t);
+
+      if (opts.sticky) {
+        t.innerHTML =
+          '<div style="display:flex;align-items:flex-start;gap:14px">' +
+            '<div style="flex:1">' + msg + '</div>' +
+            '<button type="button" id="__onix_toast_close" aria-label="Close" ' +
+              'style="background:none;border:none;color:#fff;opacity:.7;font-size:18px;line-height:1;cursor:pointer;padding:0 0 0 4px;flex-shrink:0">×</button>' +
+          '</div>';
+        t.style.pointerEvents = 'auto';
+        var btn = document.getElementById('__onix_toast_close');
+        if (btn) btn.addEventListener('click', hide);
+      } else {
+        t.innerHTML = msg;
+        t.style.pointerEvents = 'none';
+        window.__onix_toast_t = setTimeout(hide, 3400);
+      }
+      t.style.opacity = '1';
+      t.style.transform = 'translateX(-50%) translateY(0)';
     }
     window.__onix_showToast = showToast;
 
@@ -3384,10 +3405,14 @@
           var detail=''; try { detail=(await resp.error.context.json()).error; } catch(_){}
           throw new Error(detail || resp.error.message || 'Approve failed');
         }
+        // Sticky toast — admin needs time to copy the temp password before
+        // it disappears, so it stays up until they click ×.
         window.__onix_showToast(
           'Approved <b>'+esc(email)+'</b>. Share this temporary password so they can sign in:<br>' +
-          '<span style="font-family:monospace;font-size:.9rem;background:#fff;color:#C0392B;padding:2px 8px;border-radius:2px;display:inline-block;margin-top:6px">'+esc(tempPw)+'</span>',
-          '#3B8B3B'
+          '<span style="font-family:monospace;font-size:.9rem;background:#fff;color:#C0392B;padding:2px 8px;border-radius:2px;display:inline-block;margin-top:6px;user-select:all">'+esc(tempPw)+'</span>' +
+          '<div style="font-size:.7rem;color:#bbb;margin-top:8px;font-style:italic">Click the password to select it. Close this when you have it copied.</div>',
+          '#3B8B3B',
+          { sticky: true }
         );
         loadPending();
         renderActiveTeam();   // show the newly-approved member in the team list
