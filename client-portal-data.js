@@ -458,9 +458,13 @@
       current = next;
       localStorage.setItem(STORE_KEY, nextId);
       renderLoan(next, payments);
+      // Keep the Payments tab in sync — it should show the same loan as
+      // whatever the user just picked on the My Loan tab.
+      renderPayments(payments, next);
     });
 
     renderLoan(current, payments);
+    renderPayments(payments, current);
   }
 
   // Inject (or update) a labeled <select> at the top of the Lending view that
@@ -1359,8 +1363,31 @@
     return null;
   }
 
-  function renderPayments(payments) {
-    const paid = (payments || []).filter(p => p.status === 'paid' || p.paid_at);
+  function renderPayments(payments, selectedLoan) {
+    // Filter to the selected loan so the Payments tab agrees with My Loan.
+    // When no loan is selected (e.g. client has no active loans), show all.
+    const scoped = selectedLoan
+      ? (payments || []).filter(p => p.loan_id === selectedLoan.id)
+      : (payments || []);
+    const paid = scoped.filter(p => p.status === 'paid' || p.paid_at);
+
+    // Update the Payments tab's eyebrow so it's clear which loan is shown.
+    const eyebrow = document.querySelector('#view-payments .page-hd .eyebrow');
+    if (eyebrow) {
+      if (selectedLoan && selectedLoan.loan_id_display) {
+        const baseEn = 'Payment Schedule · ' + selectedLoan.loan_id_display;
+        const baseEs = 'Calendario de Pagos · ' + selectedLoan.loan_id_display;
+        eyebrow.setAttribute('data-en', baseEn);
+        eyebrow.setAttribute('data-es', baseEs);
+        const lang = (window.OnixLang && OnixLang.getLang && OnixLang.getLang()) || 'en';
+        eyebrow.textContent = lang === 'es' ? baseEs : baseEn;
+      } else {
+        eyebrow.setAttribute('data-en', 'Payment Schedule');
+        eyebrow.setAttribute('data-es', 'Calendario de Pagos');
+        const lang = (window.OnixLang && OnixLang.getLang && OnixLang.getLang()) || 'en';
+        eyebrow.textContent = lang === 'es' ? 'Calendario de Pagos' : 'Payment Schedule';
+      }
+    }
 
     const historyRowsHtml = paid.length
       ? paid.slice(0, 24).map(p => `
@@ -1389,9 +1416,10 @@
     }
 
     // Payments view: Upcoming Payments table (#upcoming-rows)
+    // Use the same loan-scoped list so it agrees with My Loan + Payment History.
     const upTbody = document.getElementById('upcoming-rows');
     if (upTbody) {
-      const upcoming = (payments || []).filter(p => p.status !== 'paid' && !p.paid_at)
+      const upcoming = scoped.filter(p => p.status !== 'paid' && !p.paid_at)
         .sort((a,b) => (a.due_date || '').localeCompare(b.due_date || ''))
         .slice(0, 6);
       upTbody.innerHTML = upcoming.length
@@ -2133,14 +2161,17 @@
     // via a separate filter on the loan picker if the team wants that.
     const activeLoans = (loans || []).filter(l => l.status !== 'paid' && l.status !== 'closed');
     if (activeLoans.length) {
+      // renderLoanView also calls renderPayments(payments, selectedLoan)
+      // so the Payments tab is filtered to the same loan as My Loan.
       renderLoanView(activeLoans, payments);
     } else {
       renderNoLoan();
+      // No active loans — render the Payments tab in its global empty state.
+      renderPayments(payments, null);
     }
     renderInvestments(investments, distributions);
     renderRaises(raises, userId);
     paintClientSidebarBadges({ raises });
-    renderPayments(payments);
     renderDistributions(distributions);
     renderUpcomingEvents(payments, distributions);
     renderPerformanceChart(investments, distributions);
