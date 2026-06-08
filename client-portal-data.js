@@ -868,20 +868,29 @@
 
   function renderInvestmentKpis(investments) {
     const list = investments || [];
-    const totalInvested = list.filter(i => i.status !== 'exited').reduce((s, i) => s + Number(i.amount_invested || 0), 0);
-    const ventureCount  = list.filter(i => i.status !== 'exited').length;
+    const activeRows = list.filter(i => i.status !== 'exited');
+    const totalInvested = activeRows.reduce((s, i) => s + Number(i.amount_invested || 0), 0);
+    // Count UNIQUE companies, not rows — a client may have multiple
+    // investments in the same venture (e.g. two top-ups into Bari Caffè).
+    const uniqueVentures = new Set(
+      activeRows
+        .map(i => (i.venture_name || '').trim().toLowerCase())
+        .filter(n => n)
+    );
+    const ventureCount = uniqueVentures.size;
     // Weighted projected annual return (sum of amount * expected_return%) / total
-    const projectedDollars = list
-      .filter(i => i.status !== 'exited' && i.expected_return != null)
+    const projectedDollars = activeRows
+      .filter(i => i.expected_return != null)
       .reduce((s, i) => s + (Number(i.amount_invested || 0) * Number(i.expected_return) / 100), 0);
     const blendedReturn = totalInvested > 0
-      ? list.filter(i => i.status !== 'exited' && i.expected_return != null)
+      ? activeRows.filter(i => i.expected_return != null)
             .reduce((s, i) => s + Number(i.amount_invested || 0) * Number(i.expected_return), 0) / totalInvested
       : null;
 
-    setKpi('Total Invested',
-      fmt.money(totalInvested),
-      ventureCount === 1 ? 'Across 1 company' : `Across ${ventureCount} companies`);
+    const subText = ventureCount === 0 ? 'No active investments'
+                  : ventureCount === 1 ? 'Across 1 company'
+                  : `Across ${ventureCount} companies`;
+    setKpi('Total Invested', fmt.money(totalInvested), subText);
 
     if (projectedDollars > 0) {
       setKpi('ROI Expected',
