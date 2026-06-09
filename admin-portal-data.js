@@ -2696,6 +2696,8 @@
       .cal-event{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:2px;font-size:.7rem;line-height:1.25}
       .cal-event-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
       .cal-event-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+      .cal-event-rec{font-size:.65rem;opacity:.85;flex-shrink:0;font-weight:700}
+      .cal-rec-badge{display:inline-block;padding:1px 6px;background:#F4E8E5;color:#C0392B;border-radius:2px;font-size:.66rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;margin-left:2px}
       .cal-overflow{font-size:.62rem;color:#888;font-weight:700;padding:1px 4px}
       .cal-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:18px;padding:14px 18px;background:#fff;border:1px solid #E8E8E8}
       .cal-legend-item{display:flex;align-items:center;gap:6px;font-size:.74rem;color:#1A1A1A}
@@ -2810,7 +2812,8 @@
     (eventsRes.data || []).forEach(e => calEvents.push({
       id: e.id, title: e.title, type: e.event_type, date: e.event_date,
       description: e.description, source: 'manual',
-      profileId: e.related_profile_id, loanId: e.related_loan_id
+      profileId: e.related_profile_id, loanId: e.related_loan_id,
+      recurrence: e.recurrence || 'none'
     }));
     (bdayRes.data || []).forEach(p => {
       const parts = p.date_of_birth.split('-'); // YYYY-MM-DD
@@ -2879,10 +2882,73 @@
     const today           = new Date();
     const todayStr        = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
 
+    // Compute the date range of the 42 visible cells so we can expand
+    // recurring events into all in-range occurrences.
+    const gridStart = new Date(calYear, calMonth, 1 - startDow);
+    const gridEnd   = new Date(calYear, calMonth, 1 - startDow + 41);
+    const toDateStr = d => d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+
     const byDate = {};
+    const pushOcc = (ev, dateStr) => {
+      (byDate[dateStr] = byDate[dateStr] || []).push(ev);
+    };
+
     calEvents.forEach(e => {
       if (!e.date) return;
-      (byDate[e.date] = byDate[e.date] || []).push(e);
+      const rec = e.recurrence || 'none';
+      if (rec === 'none') {
+        pushOcc(e, e.date);
+        return;
+      }
+      // Parse the original event date as a local date so we don't drift by a
+      // day in timezones with a negative UTC offset.
+      const [by, bm, bd] = e.date.split('-').map(Number);
+      const base = new Date(by, bm - 1, bd);
+
+      // Weekly + biweekly: step in days.
+      if (rec === 'weekly' || rec === 'biweekly') {
+        const stepDays = rec === 'weekly' ? 7 : 14;
+        // Find the first occurrence at or before gridStart, then walk forward.
+        const cur = new Date(base);
+        if (cur < gridStart) {
+          const msPerDay = 24 * 60 * 60 * 1000;
+          const diffDays = Math.ceil((gridStart - cur) / msPerDay);
+          const skipSteps = Math.ceil(diffDays / stepDays);
+          cur.setDate(cur.getDate() + skipSteps * stepDays);
+        }
+        while (cur <= gridEnd) {
+          pushOcc({ ...e, date: toDateStr(cur), occurrenceOf: e.id, isOccurrence: cur.getTime() !== base.getTime() }, toDateStr(cur));
+          cur.setDate(cur.getDate() + stepDays);
+        }
+        return;
+      }
+
+      // Monthly cadences: step in months while preserving the original day-of-month.
+      const monthsMap = { monthly: 1, bimonthly: 2, '6months': 6, '12months': 12, '36months': 36, '48months': 48 };
+      const stepMonths = monthsMap[rec];
+      if (!stepMonths) {
+        pushOcc(e, e.date);
+        return;
+      }
+      const baseDom = base.getDate();
+      // Walk forward month-by-month from the base date until past gridEnd.
+      let cy2 = base.getFullYear();
+      let cm2 = base.getMonth();
+      while (true) {
+        // Clamp the day-of-month to the actual length of the target month.
+        const lastOfTarget = new Date(cy2, cm2 + 1, 0).getDate();
+        const dom = Math.min(baseDom, lastOfTarget);
+        const occ = new Date(cy2, cm2, dom);
+        if (occ > gridEnd) break;
+        if (occ >= gridStart) {
+          const ds = toDateStr(occ);
+          pushOcc({ ...e, date: ds, occurrenceOf: e.id, isOccurrence: occ.getTime() !== base.getTime() }, ds);
+        }
+        cm2 += stepMonths;
+        while (cm2 > 11) { cm2 -= 12; cy2 += 1; }
+      }
     });
 
     const dowHtml = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
@@ -2910,9 +2976,11 @@
       const events  = byDate[dateStr] || [];
       const eventsHtml = events.slice(0, 3).map(ev => {
         const color = (CAL_TYPES[ev.type] || CAL_TYPES.other).color;
+        const recMark = (ev.recurrence && ev.recurrence !== 'none')
+          ? '<span class="cal-event-rec" title="Recurring (' + esc(ev.recurrence) + ')">↻</span>' : '';
         return '<div class="cal-event" style="background:' + color + '22;color:' + color + '">' +
                  '<span class="cal-event-dot" style="background:' + color + '"></span>' +
-                 '<span class="cal-event-title">' + esc(ev.title) + '</span>' +
+                 '<span class="cal-event-title">' + esc(ev.title) + '</span>' + recMark +
                '</div>';
       }).join('');
       const overflow = events.length > 3 ? '<div class="cal-overflow">+' + (events.length - 3) + ' more</div>' : '';
@@ -2947,16 +3015,56 @@
     return bg;
   }
 
+  // Does a recurring event fall on a given target date? Returns true if so.
+  function recurringHitsDate(ev, target) {
+    const rec = ev.recurrence || 'none';
+    if (rec === 'none' || !ev.date) return ev.date === target;
+    const [by, bm, bd] = ev.date.split('-').map(Number);
+    const [ty, tm, td] = target.split('-').map(Number);
+    const base = new Date(by, bm - 1, bd);
+    const tgt  = new Date(ty, tm - 1, td);
+    if (tgt < base) return false;
+    if (rec === 'weekly' || rec === 'biweekly') {
+      const stepDays = rec === 'weekly' ? 7 : 14;
+      const msPerDay = 24 * 60 * 60 * 1000;
+      const diff = Math.round((tgt - base) / msPerDay);
+      return diff >= 0 && diff % stepDays === 0;
+    }
+    const monthsMap = { monthly: 1, bimonthly: 2, '6months': 6, '12months': 12, '36months': 36, '48months': 48 };
+    const step = monthsMap[rec];
+    if (!step) return false;
+    const monthsApart = (ty - by) * 12 + (tm - bm);
+    if (monthsApart < 0 || monthsApart % step !== 0) return false;
+    // Day-of-month must match the base — except we clamp to the last day of
+    // shorter months (e.g. Jan 31 → Feb 28).
+    const lastOfTarget = new Date(ty, tm, 0).getDate();
+    const expected = Math.min(bd, lastOfTarget);
+    return td === expected;
+  }
+
   function openDayPanel(dateStr) {
     const bg = ensureCalBg('cal-day-bg');
     const panel = bg.querySelector('.cal-panel');
-    const events = calEvents.filter(e => e.date === dateStr);
+    const events = calEvents.filter(e => recurringHitsDate(e, dateStr));
     const [y, m, d] = dateStr.split('-').map(Number);
     const pretty = new Date(y, m - 1, d).toLocaleDateString('en-US',
       { weekday:'long', year:'numeric', month:'long', day:'numeric' });
 
+    const recLabel = {
+      weekly: 'repeats weekly',
+      biweekly: 'repeats every 2 weeks',
+      monthly: 'repeats monthly',
+      bimonthly: 'repeats every 2 months',
+      '6months': 'repeats every 6 months',
+      '12months': 'repeats every 12 months',
+      '36months': 'repeats every 36 months',
+      '48months': 'repeats every 48 months'
+    };
+
     const rowsHtml = events.length ? events.map(ev => {
       const t = CAL_TYPES[ev.type] || CAL_TYPES.other;
+      const recBadge = (ev.recurrence && ev.recurrence !== 'none')
+        ? ' · <span class="cal-rec-badge">↻ ' + esc(recLabel[ev.recurrence] || ev.recurrence) + '</span>' : '';
       return '<div class="cal-row" style="border-left-color:' + t.color + '">' +
         '<div>' +
           '<div class="t">' + esc(ev.title) + '</div>' +
@@ -2964,10 +3072,12 @@
             (ev.subtitle    ? ' · ' + esc(ev.subtitle)    : '') +
             (ev.description ? ' · ' + esc(ev.description) : '') +
             (ev.readOnly    ? ' · <em>auto</em>' : '') +
+            recBadge +
           '</div>' +
         '</div>' +
         '<div class="actions">' +
-          (ev.readOnly ? '' : '<button class="danger" data-cal-delete="' + esc(ev.id) + '">Delete</button>') +
+          (ev.readOnly ? '' : '<button class="danger" data-cal-delete="' + esc(ev.id) + '">Delete' +
+            (ev.recurrence && ev.recurrence !== 'none' ? ' series' : '') + '</button>') +
         '</div>' +
       '</div>';
     }).join('') : '<div class="cal-empty">No events scheduled for this day.</div>';
@@ -2987,7 +3097,12 @@
     });
     panel.querySelectorAll('[data-cal-delete]').forEach(btn => btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-cal-delete');
-      if (!confirm('Delete this event?')) return;
+      const target = calEvents.find(e => e.id === id);
+      const isRecurring = target && target.recurrence && target.recurrence !== 'none';
+      const prompt = isRecurring
+        ? 'Delete this entire recurring series? All future occurrences will disappear from the calendar.'
+        : 'Delete this event?';
+      if (!confirm(prompt)) return;
       btn.disabled = true; btn.textContent = 'Deleting…';
       const r = await OnixDB.client.from('calendar_events').delete().eq('id', id);
       if (r.error) { alert('Delete failed: ' + r.error.message); btn.disabled = false; btn.textContent = 'Delete'; return; }
@@ -3026,6 +3141,21 @@
     }
     const loanOpts = loanOptionsFor('');
 
+    const RECURRENCE_OPTS = [
+      ['none',      'Does not repeat'],
+      ['weekly',    'Every week'],
+      ['biweekly',  'Every two weeks'],
+      ['monthly',   'Every month'],
+      ['bimonthly', 'Every two months'],
+      ['6months',   'Every 6 months'],
+      ['12months',  'Every 12 months'],
+      ['36months',  'Every 36 months'],
+      ['48months',  'Every 48 months']
+    ];
+    const recOpts = RECURRENCE_OPTS.map(([v, l]) =>
+      '<option value="' + v + '">' + l + '</option>'
+    ).join('');
+
     panel.innerHTML =
       '<h2>Add Calendar Event</h2>' +
       '<form id="cal-add-form" class="cal-form">' +
@@ -3035,6 +3165,8 @@
         '<input name="title" type="text" required placeholder="e.g. Q2 2026 LP Letter">' +
         '<label class="k">Date</label>' +
         '<input name="event_date" type="date" required value="' + esc(defaultDate) + '">' +
+        '<label class="k">Recurrence</label>' +
+        '<select name="recurrence" required>' + recOpts + '</select>' +
         '<label class="k">Description (optional)</label>' +
         '<textarea name="description" rows="2"></textarea>' +
         '<label class="k">Related Client (optional)</label>' +
@@ -3070,6 +3202,7 @@
         event_type: fd.get('event_type'),
         title: (fd.get('title') || '').trim(),
         event_date: fd.get('event_date'),
+        recurrence: fd.get('recurrence') || 'none',
         description: (fd.get('description') || '').trim() || null,
         related_profile_id: fd.get('related_profile_id') || null,
         related_loan_id:    fd.get('related_loan_id')    || null
@@ -3091,7 +3224,8 @@
       calEvents.push({
         id: ins.data.id, title: ins.data.title, type: ins.data.event_type,
         date: ins.data.event_date, description: ins.data.description, source: 'manual',
-        profileId: ins.data.related_profile_id, loanId: ins.data.related_loan_id
+        profileId: ins.data.related_profile_id, loanId: ins.data.related_loan_id,
+        recurrence: ins.data.recurrence || 'none'
       });
       const [yy, mm] = ins.data.event_date.split('-').map(Number);
       calYear = yy; calMonth = mm - 1;
