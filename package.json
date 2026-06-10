@@ -1,0 +1,17 @@
+{
+  "name": "onix-ous-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Express middleman between the Onix Finance frontend (GitHub Pages) and the OUS Pasiva REST API. Holds the OUS bearer token server-side and refreshes it on a timer so the browser never sees the OUS credentials.",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-fetch": "^2.7.0"
+  }
+}
