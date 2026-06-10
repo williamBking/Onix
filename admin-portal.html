@@ -8,6 +8,21 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>Onix Finance — Admin Console</title>
+  <!-- Eliminate horizontal scroll on the dashboard (and elsewhere). The
+       bundled HTML uses repeat(N,1fr) grids whose children default to
+       min-width:auto, which can force the row wider than the viewport when
+       a chart canvas or wide table is inside. Allow grid items to shrink. -->
+  <style>
+    html, body { overflow-x: hidden !important; }
+    .main { overflow-x: hidden; min-width: 0; }
+    .row-2, .row-3, .kpi-grid, .col-4, .col-3, .col-2 { min-width: 0; }
+    .row-2 > *, .row-3 > *, .kpi-grid > * { min-width: 0; }
+    .card, .dash-card { min-width: 0; overflow: hidden; }
+    .card canvas { max-width: 100% !important; }
+    /* Any table wider than its card scrolls inside the card, not the page. */
+    .card table.tbl { width: 100%; table-layout: auto; }
+    .card > table.tbl, .card .tbl-wrap { display: block; overflow-x: auto; max-width: 100%; }
+  </style>
   <script>
   /* Auth gate — bounce to login if no admin session */
   (function(){
