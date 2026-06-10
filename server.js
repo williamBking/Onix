@@ -1,0 +1,402 @@
+/**
+ * Onix Finance — OUS Pasiva proxy
+ * ================================================================
+ * A tiny Express server that sits between the public Onix frontend
+ * (served from GitHub Pages) and the OUS Pasiva REST API.
+ *
+ * Why this exists:
+ *   - The browser must NEVER see the OUS login / password — we keep
+ *     the credentials here in env vars and only expose a few proxied
+ *     endpoints to the frontend.
+ *   - OUS Pasiva tokens expire on the hour, so this server logs in
+ *     once on boot and refreshes the token every 55 minutes.
+ *
+ * Endpoints exposed to the Onix frontend:
+ *   GET  /healthz                              — Railway health check
+ *   GET  /api/catalogos                        — no body
+ *   GET|POST /api/creditos-cierre-saldos       — body: { fecha_cierre }
+ *   GET|POST /api/creditos/por-vencer          — body: { dias }
+ *
+ * Required environment variables (set these in Railway → Variables):
+ *   OUS_LOGIN     — OUS Pasiva username
+ *   OUS_PASSWORD  — OUS Pasiva password
+ *   OUS_API_URL   — http://54.165.232.64:7070/api   (no trailing slash)
+ *
+ * Optional environment variables:
+ *   PORT          — Railway sets this automatically (defaults to 3000 locally)
+ *   ALLOWED_ORIGINS — comma-separated allowlist for CORS. Defaults to
+ *                   the GH Pages site + the eventual custom domain.
+ *
+ * Dependencies (see package.json):
+ *   express, node-fetch
+ *
+ * Constraint reminder: only express + node-fetch are allowed. If you
+ * find yourself reaching for axios / cors / dotenv etc., stop — the
+ * tiny helpers below cover everything we need.
+ * ================================================================
+ */
+
+'use strict';
+
+const express = require('express');
+const fetch   = require('node-fetch');
+
+// ---------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------
+
+const OUS_LOGIN    = process.env.OUS_LOGIN    || '';
+const OUS_PASSWORD = process.env.OUS_PASSWORD || '';
+const OUS_API_URL  = (process.env.OUS_API_URL || '').replace(/\/+$/, '');
+
+const PORT = Number(process.env.PORT) || 3000;
+
+// Comma-separated allowlist. Empty entries are ignored. The defaults
+// cover the current GitHub Pages site and the planned custom domain
+// (see README §9). Add http://localhost:8000 here while developing
+// the frontend locally if needed.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ||
+  'https://williambking.github.io,https://portal.onixfinance.com'
+).split(',').map(s => s.trim()).filter(Boolean);
+
+// Refresh well before OUS's 60-minute expiry so we never serve a
+// just-expired token to the frontend.
+const TOKEN_REFRESH_MS = 55 * 60 * 1000;
+
+// If the boot login fails (wrong creds, OUS down), retry on this
+// cadence. Routes 503 in the meantime.
+const BOOT_RETRY_MS = 60 * 1000;
+
+if (!OUS_LOGIN || !OUS_PASSWORD || !OUS_API_URL) {
+  console.error('[ous-proxy] FATAL: OUS_LOGIN, OUS_PASSWORD, and OUS_API_URL must all be set.');
+  console.error('[ous-proxy] Got OUS_LOGIN=' + JSON.stringify(OUS_LOGIN ? '(set)' : '') +
+                ' OUS_PASSWORD=' + JSON.stringify(OUS_PASSWORD ? '(set)' : '') +
+                ' OUS_API_URL=' + JSON.stringify(OUS_API_URL));
+  // We still start the server so Railway can reach /healthz and you
+  // can see the misconfiguration in the dashboard instead of a
+  // crash-looping container.
+}
+
+// ---------------------------------------------------------------
+// OUS auth state (kept in memory; one process = one token)
+// ---------------------------------------------------------------
+
+const state = {
+  token: null,           // current OUS bearer token, or null when logged out
+  acquiredAt: null,      // epoch ms when we last got the token (for /healthz)
+  lastError: null,       // last login error message, or null on success
+  refreshTimer: null,    // setInterval handle for the 55-min refresh loop
+  bootTimer: null        // setTimeout handle for the retry-on-boot loop
+};
+
+/**
+ * Log in to OUS Pasiva and store the token.
+ *
+ * ======================================================================
+ *  ADJUST THIS FUNCTION WHEN YOU HAVE THE OUS PASIVA DOCS.
+ *  The defaults below assume a very common Latin-American banking-API
+ *  shape — they are an educated guess until the vendor sends us a curl
+ *  example. Three things you may need to change:
+ *
+ *    1. LOGIN_PATH — '/login' is the most common; some APIs use
+ *       '/auth/login', '/api/auth', or '/v1/sessions'. Strip the leading
+ *       '/api' from OUS_API_URL if the login endpoint lives at the root.
+ *    2. LOGIN_BODY — { login, password } is common; alternatives are
+ *       { usuario, contrasena }, { user, pass }, { username, password }.
+ *       Some APIs want form-encoded instead of JSON.
+ *    3. tokenFromResponse() — the most common shape is { token: '...' };
+ *       alternatives include { access_token: '...' }, { jwt: '...' },
+ *       or a raw 'Authorization: Bearer X' response header.
+ * ======================================================================
+ */
+async function loginToOUS() {
+  // ---- ADJUST THESE THREE LINES IF NEEDED -------------------------
+  const LOGIN_PATH = '/login';
+  const LOGIN_BODY = { login: OUS_LOGIN, password: OUS_PASSWORD };
+  const tokenFromResponse = (json, headers) =>
+    json.token || json.access_token || json.jwt || headers.get('authorization') || null;
+  // ----------------------------------------------------------------
+
+  const url = OUS_API_URL + LOGIN_PATH;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify(LOGIN_BODY)
+  });
+
+  // Read the body once. Try JSON first, fall back to text so we can
+  // log something useful when OUS returns HTML on error.
+  const rawText = await res.text();
+  let json = {};
+  try { json = JSON.parse(rawText); } catch { /* not JSON */ }
+
+  if (!res.ok) {
+    throw new Error('OUS login HTTP ' + res.status + ': ' + (rawText || '').slice(0, 300));
+  }
+
+  let token = tokenFromResponse(json, res.headers);
+  // If the token came via an Authorization header it may be prefixed
+  // with "Bearer "; strip it so we can re-add it consistently below.
+  if (typeof token === 'string') token = token.replace(/^Bearer\s+/i, '').trim();
+  if (!token) {
+    throw new Error('OUS login succeeded but no token in response. Body was: ' +
+      JSON.stringify(json).slice(0, 300));
+  }
+
+  state.token      = token;
+  state.acquiredAt = Date.now();
+  state.lastError  = null;
+  console.log('[ous-proxy] OUS login OK at ' + new Date(state.acquiredAt).toISOString() +
+              ' — token length=' + token.length);
+}
+
+/**
+ * Try to log in, recording any failure on `state.lastError`.
+ * Returns true on success, false on failure (never throws).
+ */
+async function tryLogin(label) {
+  try {
+    await loginToOUS();
+    return true;
+  } catch (err) {
+    state.token     = null;
+    state.lastError = err && err.message ? err.message : String(err);
+    console.error('[ous-proxy] ' + label + ' login failed:', state.lastError);
+    return false;
+  }
+}
+
+/**
+ * Boot loop: try once immediately, then retry every BOOT_RETRY_MS
+ * until we get a token. Once successful, the 55-min refresh interval
+ * takes over.
+ */
+async function startAuthLoop() {
+  const ok = await tryLogin('initial');
+  if (ok) {
+    scheduleRefresh();
+    return;
+  }
+  // Failed — schedule a retry. clearTimeout-safe so multiple calls
+  // don't pile up duplicate timers.
+  if (state.bootTimer) clearTimeout(state.bootTimer);
+  state.bootTimer = setTimeout(startAuthLoop, BOOT_RETRY_MS);
+}
+
+function scheduleRefresh() {
+  if (state.refreshTimer) clearInterval(state.refreshTimer);
+  state.refreshTimer = setInterval(async () => {
+    const ok = await tryLogin('refresh');
+    if (!ok) {
+      // Refresh failed but we keep serving the old token until OUS
+      // rejects it (handled by the 401 retry in callOUS below).
+      console.warn('[ous-proxy] keeping previous token until next refresh tick');
+    }
+  }, TOKEN_REFRESH_MS);
+}
+
+// ---------------------------------------------------------------
+// OUS request helper — adds the bearer header, retries once on 401
+// ---------------------------------------------------------------
+
+async function callOUS(path, { method = 'GET', body = null } = {}) {
+  if (!state.token) {
+    const err = new Error('OUS proxy is not logged in yet');
+    err.code = 'NOT_LOGGED_IN';
+    throw err;
+  }
+  const url = OUS_API_URL + (path.startsWith('/') ? path : '/' + path);
+
+  const doFetch = async () => {
+    const init = {
+      method,
+      headers: {
+        'Authorization': 'Bearer ' + state.token,
+        'Accept': 'application/json'
+      }
+    };
+    if (body != null) {
+      init.headers['Content-Type'] = 'application/json';
+      init.body = JSON.stringify(body);
+    }
+    return fetch(url, init);
+  };
+
+  let res = await doFetch();
+
+  // Token may have expired mid-flight — try one re-login and retry.
+  if (res.status === 401) {
+    console.warn('[ous-proxy] got 401 from OUS — re-logging in and retrying');
+    const ok = await tryLogin('reactive');
+    if (ok) res = await doFetch();
+  }
+
+  const rawText = await res.text();
+  let json;
+  try { json = JSON.parse(rawText); } catch { json = { raw: rawText }; }
+  return { status: res.status, body: json };
+}
+
+// ---------------------------------------------------------------
+// Express app
+// ---------------------------------------------------------------
+
+const app = express();
+
+// Accept JSON bodies on every route. The two data endpoints below
+// honor the prompt's "GET … accepts a body" wording, so we use
+// express.json() which works for both GET and POST.
+app.use(express.json({ limit: '64kb' }));
+
+// CORS middleware. Allowlist comes from ALLOWED_ORIGINS env var (or
+// the default GH Pages + custom-domain pair). OPTIONS preflight is
+// answered immediately so the browser is happy.
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.indexOf(origin) !== -1) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+  res.setHeader('Access-Control-Max-Age', '600');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  next();
+});
+
+// Tiny request logger so Railway's log tail is readable.
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    console.log('[ous-proxy] ' + req.method + ' ' + req.originalUrl +
+                ' ' + res.statusCode + ' (' + (Date.now() - start) + 'ms)');
+  });
+  next();
+});
+
+// -------- Health check ----------------------------------------
+app.get('/healthz', (req, res) => {
+  res.json({
+    ok: true,
+    ous_logged_in: !!state.token,
+    token_acquired_at: state.acquiredAt ? new Date(state.acquiredAt).toISOString() : null,
+    last_login_error: state.lastError,
+    allowed_origins: ALLOWED_ORIGINS,
+    uptime_s: Math.round(process.uptime())
+  });
+});
+
+// -------- Guard: 503 the data routes when not logged in --------
+function requireOUSLogin(req, res, next) {
+  if (!state.token) {
+    return res.status(503).json({
+      error: 'OUS proxy is not logged in yet',
+      detail: state.lastError || 'Initial login still pending or failing.'
+    });
+  }
+  next();
+}
+
+// -------- Helper: send a proxied response to the frontend ------
+async function proxyAndForward(res, path, opts) {
+  try {
+    const r = await callOUS(path, opts);
+    // Mirror the OUS status code so the frontend can detect 404s
+    // (e.g. "no records for that date") naturally.
+    res.status(r.status).json(r.body);
+  } catch (err) {
+    if (err && err.code === 'NOT_LOGGED_IN') {
+      return res.status(503).json({ error: 'OUS proxy is not logged in yet' });
+    }
+    console.error('[ous-proxy] proxy error for ' + path + ':', err && err.message);
+    res.status(502).json({ error: 'Upstream OUS request failed', detail: err && err.message });
+  }
+}
+
+// =============================================================
+// The three proxied endpoints the frontend calls.
+// =============================================================
+
+// GET /api/catalogos
+//   No body; returns the upstream JSON verbatim.
+app.get('/api/catalogos', requireOUSLogin, (req, res) =>
+  proxyAndForward(res, '/catalogos'));
+
+// GET|POST /api/creditos-cierre-saldos
+//   Body: { fecha_cierre: 'YYYY-MM-DD' }
+//   We accept GET (with body or ?fecha_cierre=) and POST (with body)
+//   so the frontend can use whichever fits its existing fetch call.
+function creditosCierreSaldos(req, res) {
+  const fecha_cierre = (req.body && req.body.fecha_cierre) || req.query.fecha_cierre;
+  if (!fecha_cierre) {
+    return res.status(400).json({ error: 'fecha_cierre is required' });
+  }
+  return proxyAndForward(res, '/creditos-cierre-saldos', {
+    method: 'POST',
+    body: { fecha_cierre }
+  });
+}
+app.get('/api/creditos-cierre-saldos',  requireOUSLogin, creditosCierreSaldos);
+app.post('/api/creditos-cierre-saldos', requireOUSLogin, creditosCierreSaldos);
+
+// GET|POST /api/creditos/por-vencer
+//   Body: { dias: <integer> }
+function creditosPorVencer(req, res) {
+  const diasRaw = (req.body && req.body.dias) != null ? req.body.dias : req.query.dias;
+  const dias = Number(diasRaw);
+  if (!Number.isFinite(dias) || dias < 0) {
+    return res.status(400).json({ error: 'dias must be a non-negative integer' });
+  }
+  return proxyAndForward(res, '/creditos/por-vencer', {
+    method: 'POST',
+    body: { dias }
+  });
+}
+app.get('/api/creditos/por-vencer',  requireOUSLogin, creditosPorVencer);
+app.post('/api/creditos/por-vencer', requireOUSLogin, creditosPorVencer);
+
+// 404 for anything else under /api to make typos obvious in the
+// browser DevTools network tab.
+app.use('/api', (req, res) =>
+  res.status(404).json({ error: 'Unknown OUS proxy endpoint: ' + req.method + ' ' + req.path }));
+
+// ---------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------
+
+app.listen(PORT, () => {
+  console.log('[ous-proxy] listening on :' + PORT);
+  console.log('[ous-proxy] OUS_API_URL=' + (OUS_API_URL || '(unset)'));
+  console.log('[ous-proxy] allowed origins=' + ALLOWED_ORIGINS.join(', '));
+  // Kick off the auth loop after the HTTP listener is up so /healthz
+  // is reachable while we're still fetching the first token.
+  startAuthLoop().catch(err =>
+    console.error('[ous-proxy] startAuthLoop crashed unexpectedly:', err));
+});
+
+// ---------------------------------------------------------------
+// Notes you'll want once this is in production
+// ---------------------------------------------------------------
+//
+// 1. SECURITY — this server's CORS allowlist blocks browsers from
+//    other origins, but anyone who finds the Railway URL can still
+//    hit it from curl or Postman. If the OUS data is sensitive,
+//    add a Supabase admin-JWT check before requireOUSLogin: verify
+//    the Bearer token in the incoming Authorization header against
+//    Supabase's JWKS (https://<project>.supabase.co/auth/v1/keys)
+//    and reject anything where app_metadata.role !== 'admin'.
+//    Doing this purely with node-fetch + a small jose import would
+//    keep the dependency footprint tiny.
+//
+// 2. WHEN THE OUS DOCS LAND — re-read loginToOUS() above. If the
+//    login path or body shape is different, update only the three
+//    lines marked "ADJUST". Everything else (refresh timer, 401
+//    re-login, CORS, etc.) stays the same.
+//
+// 3. RAILWAY DEPLOY CHECKLIST —
+//      - Add OUS_LOGIN, OUS_PASSWORD, OUS_API_URL under Variables
+//      - Railway auto-detects `npm start` from package.json
+//      - Confirm the public URL responds at /healthz
+//      - Add the URL to ALLOWED_ORIGINS' counterpart in the
+//        frontend fetch call (or set ALLOWED_ORIGINS to include
+//        any other domain you need)
