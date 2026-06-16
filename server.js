@@ -116,8 +116,15 @@ async function loginToOUS() {
   // resource that returns 401 "Token requerido").
   const LOGIN_PATH = '/auth/login';
   const LOGIN_BODY = { login: OUS_LOGIN, password: OUS_PASSWORD };
+  // Confirmed shape from OUS Pasiva (2026-06-16):
+  //   { status: 'ok', mensaje: 'Autenticación exitosa',
+  //     data: { token: '...', tipo: 'Bearer', expira_en: ... } }
+  // So the token lives at `data.token`. We also keep the top-level
+  // fallbacks for any future shape change.
   const tokenFromResponse = (json, headers) =>
-    json.token || json.access_token || json.jwt || headers.get('authorization') || null;
+    (json.data && (json.data.token || json.data.access_token || json.data.jwt)) ||
+    json.token || json.access_token || json.jwt ||
+    headers.get('authorization') || null;
   // ----------------------------------------------------------------
 
   const url = OUS_API_URL + LOGIN_PATH;
@@ -150,9 +157,12 @@ async function loginToOUS() {
   // Identify which field carried the token (helps spot when OUS
   // changes their response shape in the future).
   let tokenField = null;
-  if (json.token)        tokenField = 'token';
-  else if (json.access_token) tokenField = 'access_token';
-  else if (json.jwt)     tokenField = 'jwt';
+  if (json.data && json.data.token)         tokenField = 'data.token';
+  else if (json.data && json.data.access_token) tokenField = 'data.access_token';
+  else if (json.data && json.data.jwt)      tokenField = 'data.jwt';
+  else if (json.token)                       tokenField = 'token';
+  else if (json.access_token)                tokenField = 'access_token';
+  else if (json.jwt)                         tokenField = 'jwt';
   else if (res.headers.get('authorization')) tokenField = 'header:authorization';
 
   let token = tokenFromResponse(json, res.headers);
