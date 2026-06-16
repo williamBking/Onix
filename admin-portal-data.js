@@ -3249,6 +3249,352 @@
     }
   }
 
+  // ================================================================
+  // OUS Pasiva tab — proof of concept that exercises the Railway
+  // proxy. Three sections: live catalog reference, closing balances
+  // for a date, and credits coming due in N days. Standalone — does
+  // not interact with the Supabase-backed flows.
+  // ================================================================
+
+  const OUS_PROXY_URL = 'https://onix-production-50c3.up.railway.app';
+
+  async function ousFetch(path, body) {
+    // The proxy accepts both GET-with-query and POST-with-body for
+    // the parameterized endpoints. We use POST so query strings
+    // never end up in browser/Cloudflare logs alongside loan ids.
+    const url  = OUS_PROXY_URL + path;
+    const init = body
+      ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      : { method: 'GET' };
+    const res = await fetch(url, init);
+    const text = await res.text();
+    let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
+    if (!res.ok) {
+      const err = new Error('OUS proxy ' + res.status + ': ' + (json.error || json.detail || text.slice(0, 200)));
+      err.status = res.status;
+      err.body = json;
+      throw err;
+    }
+    return json;
+  }
+
+  function injectOUSStyles() {
+    if (document.getElementById('ous-styles')) return;
+    const s = document.createElement('style');
+    s.id = 'ous-styles';
+    s.textContent = `
+      #view-ous{padding:32px 40px;font-family:'DM Sans',sans-serif;color:#1A1A1A}
+      .ous-head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:18px;flex-wrap:wrap}
+      .ous-head h1{font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:2rem;margin:0}
+      .ous-eyebrow{font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:#C0392B;font-weight:600;margin-bottom:6px}
+      .ous-rule{width:40px;height:2px;background:#C0392B}
+      .ous-status{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border:1px solid #E8E8E8;background:#fff;font-size:.72rem;color:#1A1A1A;letter-spacing:.04em}
+      .ous-status .dot{width:8px;height:8px;border-radius:50%;background:#aaa}
+      .ous-status.ok    .dot{background:#3B8B3B}
+      .ous-status.warn  .dot{background:#C0392B}
+      .ous-card{background:#fff;border:1px solid #E8E8E8;border-top:3px solid #C0392B;padding:22px 26px;margin-bottom:22px}
+      .ous-card h2{font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:1.4rem;margin:0 0 4px}
+      .ous-card .sub{font-size:.74rem;color:#888;margin-bottom:14px}
+      .ous-controls{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:14px}
+      .ous-controls label{display:flex;flex-direction:column;gap:4px;font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:#888;font-weight:700}
+      .ous-controls input{padding:9px 11px;border:1px solid #E8E8E8;font-size:.88rem;font-family:inherit;outline:none;background:#fff;color:#1A1A1A;min-width:160px}
+      .ous-controls input:focus{border-color:#C0392B}
+      .ous-btn{background:#C0392B;color:#fff;border:1px solid #C0392B;padding:10px 18px;cursor:pointer;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border-radius:2px;height:36px}
+      .ous-btn:hover{background:#a93226}
+      .ous-btn:disabled{opacity:.6;cursor:not-allowed}
+      .ous-result{margin-top:10px;border:1px solid #E8E8E8;background:#FBFAF7;padding:12px 14px;font-size:.78rem;color:#1A1A1A;line-height:1.55;max-height:520px;overflow:auto}
+      .ous-result.err{border-color:#C0392B;background:#FDF0EE;color:#a93226}
+      .ous-result .muted{color:#888;font-style:italic}
+      .ous-chip-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+      .ous-chip{display:inline-block;padding:4px 10px;background:#F4E8E5;color:#1A1A1A;border-radius:2px;font-size:.72rem;font-weight:500}
+      .ous-chip strong{color:#C0392B;margin-right:4px}
+      .ous-kv-row{display:flex;align-items:baseline;gap:8px;margin:6px 0;font-size:.74rem}
+      .ous-kv-row .k{font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#888;font-size:.62rem;min-width:170px}
+      .ous-table{width:100%;border-collapse:collapse;font-size:.78rem;margin-top:6px}
+      .ous-table th{background:#F8F7F5;color:#888;text-transform:uppercase;letter-spacing:.08em;font-size:.62rem;font-weight:700;padding:8px 10px;text-align:left;border-bottom:1px solid #E8E8E8;white-space:nowrap}
+      .ous-table td{padding:8px 10px;border-bottom:1px solid #F0EDE8;color:#1A1A1A;vertical-align:top}
+      .ous-table tbody tr:hover{background:#FAFAFA}
+      .ous-table .num{text-align:right;font-variant-numeric:tabular-nums}
+      .ous-meta-line{font-size:.7rem;color:#888;margin-top:8px}
+      .ous-pre{white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,Menlo,monospace;font-size:.72rem;margin:0}
+    `;
+    document.head.appendChild(s);
+  }
+
+  function ensureOUSSidebarAndView() {
+    if (document.getElementById('view-ous')) return true;
+    const sidebar = document.querySelector('.sidebar');
+    const main    = document.querySelector('.main');
+    if (!sidebar || !main) return false;
+
+    if (!sidebar.querySelector('[data-view="ous"]')) {
+      // Place it right after the Calendar item if that exists, else
+      // before Reports / at the end.
+      const anchor = sidebar.querySelector('[data-view="calendar"]') ||
+                     sidebar.querySelector('[data-view="reports"]');
+      const btn = document.createElement('button');
+      btn.className = 'sidebar-item';
+      btn.setAttribute('data-view', 'ous');
+      btn.setAttribute('onclick', "showView('ous')");
+      btn.innerHTML =
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+          '<path d="M3 3v18h18"/>' +
+          '<path d="M7 14l4-4 4 4 5-5"/>' +
+        '</svg>' +
+        '<span data-en="OUS Pasiva" data-es="OUS Pasiva">OUS Pasiva</span>';
+      if (anchor && anchor.parentNode) {
+        anchor.parentNode.insertBefore(btn, anchor.nextSibling);
+      } else {
+        sidebar.appendChild(btn);
+      }
+    }
+
+    if (!document.getElementById('view-ous')) {
+      const v = document.createElement('div');
+      v.className = 'view';
+      v.id = 'view-ous';
+      const today = new Date().toISOString().slice(0, 10);
+      v.innerHTML =
+        '<div class="ous-head">' +
+          '<div>' +
+            '<div class="ous-eyebrow">External System</div>' +
+            '<h1>OUS Pasiva</h1>' +
+            '<div class="ous-rule"></div>' +
+          '</div>' +
+          '<div id="ous-status" class="ous-status">' +
+            '<span class="dot"></span><span id="ous-status-text">Checking…</span>' +
+          '</div>' +
+        '</div>' +
+
+        // ---- Catalogos ----------------------------------------------
+        '<div class="ous-card">' +
+          '<h2>Catalogs</h2>' +
+          '<div class="sub">Reference lookups live from OUS — products, segments, payment frequencies.</div>' +
+          '<div id="ous-catalogos">' +
+            '<div class="muted">Loading…</div>' +
+          '</div>' +
+          '<div class="ous-meta-line" id="ous-catalogos-meta"></div>' +
+        '</div>' +
+
+        // ---- Closing balances ---------------------------------------
+        '<div class="ous-card">' +
+          '<h2>Closing Balances</h2>' +
+          '<div class="sub">Balances on every active credit as of a closing date.</div>' +
+          '<div class="ous-controls">' +
+            '<label>Closing date<input type="date" id="ous-cierre-date" value="' + today + '"></label>' +
+            '<button class="ous-btn" id="ous-cierre-btn" type="button">Fetch</button>' +
+          '</div>' +
+          '<div id="ous-cierre-result" class="ous-result"><span class="muted">No fetch yet.</span></div>' +
+        '</div>' +
+
+        // ---- Coming due --------------------------------------------
+        '<div class="ous-card">' +
+          '<h2>Credits Coming Due</h2>' +
+          '<div class="sub">Credits scheduled to fall due within the next N days.</div>' +
+          '<div class="ous-controls">' +
+            '<label>Days ahead<input type="number" id="ous-vencer-days" value="30" min="1" max="365" step="1"></label>' +
+            '<button class="ous-btn" id="ous-vencer-btn" type="button">Fetch</button>' +
+          '</div>' +
+          '<div id="ous-vencer-result" class="ous-result"><span class="muted">No fetch yet.</span></div>' +
+        '</div>';
+      main.appendChild(v);
+
+      v.querySelector('#ous-cierre-btn').addEventListener('click', () => fetchCierreSaldos());
+      v.querySelector('#ous-vencer-btn').addEventListener('click', () => fetchPorVencer());
+    }
+    return true;
+  }
+
+  // ---------------- Catalogos ----------------------------------------
+
+  function renderCatalogos(payload) {
+    const root = document.getElementById('ous-catalogos');
+    if (!root) return;
+    const data = (payload && payload.data) || {};
+
+    // Build a chip-row for every list-shaped field in `data`. Each
+    // element is either a string ("normal", "judicial") or an object
+    // with a human label we can guess at.
+    const sections = [];
+    Object.keys(data).forEach(key => {
+      const val = data[key];
+      if (Array.isArray(val) && val.length) {
+        const chips = val.map(item => {
+          if (item == null) return '';
+          if (typeof item === 'string' || typeof item === 'number') {
+            return '<span class="ous-chip">' + esc(String(item)) + '</span>';
+          }
+          // Guess the label and id keys (Spanish API conventions).
+          const label = item.nombre || item.producto || item.periodicidad ||
+                        item.descripcion || item.label || item.name ||
+                        JSON.stringify(item);
+          const id = item.id_producto || item.id_periodicidad || item.id_segmento || item.id;
+          return '<span class="ous-chip">' +
+                   (id != null ? '<strong>' + esc(String(id)) + '</strong>' : '') +
+                   esc(String(label)) +
+                 '</span>';
+        }).join('');
+        sections.push(
+          '<div class="ous-kv-row"><span class="k">' + esc(key) + '</span>' +
+          '<div class="ous-chip-row">' + chips + '</div></div>'
+        );
+      } else if (val != null && typeof val !== 'object') {
+        sections.push(
+          '<div class="ous-kv-row"><span class="k">' + esc(key) + '</span><span>' +
+            esc(String(val)) + '</span></div>'
+        );
+      }
+    });
+
+    root.innerHTML = sections.length
+      ? sections.join('')
+      : '<div class="muted">No catalog entries returned.</div>';
+  }
+
+  // ---------------- Helpers for tabular results ----------------------
+
+  function ousRenderTable(rows) {
+    if (!Array.isArray(rows) || !rows.length) return null;
+    // Collect every key across the rows so missing fields don't break
+    // the alignment.
+    const cols = [];
+    const seen = {};
+    rows.forEach(r => {
+      if (r && typeof r === 'object') {
+        Object.keys(r).forEach(k => { if (!seen[k]) { seen[k] = true; cols.push(k); } });
+      }
+    });
+    if (!cols.length) return null;
+    const thead = '<thead><tr>' + cols.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr></thead>';
+    const tbody = '<tbody>' + rows.map(r => '<tr>' + cols.map(c => {
+      const v = r ? r[c] : '';
+      const isNumeric = v != null && v !== '' && !isNaN(Number(v));
+      return '<td class="' + (isNumeric ? 'num' : '') + '">' + esc(v == null ? '' : String(v)) + '</td>';
+    }).join('') + '</tr>').join('') + '</tbody>';
+    return '<table class="ous-table">' + thead + tbody + '</table>';
+  }
+
+  function ousShowResult(elId, html, isErr) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.classList.toggle('err', !!isErr);
+    el.innerHTML = html;
+  }
+
+  function ousExtractRows(payload) {
+    // OUS responses often look like { status: 'ok', data: { creditos: [...] } }
+    // or { status: 'ok', data: [...] }. Try the obvious shapes and
+    // fall back to scanning the data object for the first array.
+    if (!payload) return null;
+    const d = payload.data;
+    if (Array.isArray(d)) return d;
+    if (d && typeof d === 'object') {
+      if (Array.isArray(d.creditos))    return d.creditos;
+      if (Array.isArray(d.credits))     return d.credits;
+      if (Array.isArray(d.saldos))      return d.saldos;
+      if (Array.isArray(d.rows))        return d.rows;
+      // Last resort: first array we find inside `data`.
+      for (const k of Object.keys(d)) {
+        if (Array.isArray(d[k])) return d[k];
+      }
+    }
+    return null;
+  }
+
+  // ---------------- /api/creditos-cierre-saldos ----------------------
+
+  async function fetchCierreSaldos() {
+    const dateEl = document.getElementById('ous-cierre-date');
+    const btnEl  = document.getElementById('ous-cierre-btn');
+    if (!dateEl || !btnEl) return;
+    const fecha_cierre = dateEl.value;
+    if (!fecha_cierre) { ousShowResult('ous-cierre-result', 'Pick a date first.', true); return; }
+    ousShowResult('ous-cierre-result', '<span class="muted">Loading…</span>');
+    btnEl.disabled = true; const orig = btnEl.textContent; btnEl.textContent = 'Loading…';
+    try {
+      const payload = await ousFetch('/api/creditos-cierre-saldos', { fecha_cierre });
+      const rows = ousExtractRows(payload);
+      const table = ousRenderTable(rows);
+      const meta = '<div class="ous-meta-line">fecha_cierre=' + esc(fecha_cierre) +
+                   ' · ' + (rows ? rows.length + ' row(s)' : 'no rows') +
+                   ' · fetched ' + new Date().toLocaleTimeString() + '</div>';
+      ousShowResult('ous-cierre-result', (table || '<pre class="ous-pre">' + esc(JSON.stringify(payload, null, 2)) + '</pre>') + meta);
+    } catch (err) {
+      ousShowResult('ous-cierre-result', esc(err.message || String(err)), true);
+    } finally {
+      btnEl.disabled = false; btnEl.textContent = orig;
+    }
+  }
+
+  // ---------------- /api/creditos/por-vencer -------------------------
+
+  async function fetchPorVencer() {
+    const daysEl = document.getElementById('ous-vencer-days');
+    const btnEl  = document.getElementById('ous-vencer-btn');
+    if (!daysEl || !btnEl) return;
+    const dias = Number(daysEl.value);
+    if (!Number.isFinite(dias) || dias < 1) { ousShowResult('ous-vencer-result', 'Days must be ≥ 1.', true); return; }
+    ousShowResult('ous-vencer-result', '<span class="muted">Loading…</span>');
+    btnEl.disabled = true; const orig = btnEl.textContent; btnEl.textContent = 'Loading…';
+    try {
+      const payload = await ousFetch('/api/creditos/por-vencer', { dias });
+      const rows = ousExtractRows(payload);
+      const table = ousRenderTable(rows);
+      const meta = '<div class="ous-meta-line">dias=' + esc(dias) +
+                   ' · ' + (rows ? rows.length + ' row(s)' : 'no rows') +
+                   ' · fetched ' + new Date().toLocaleTimeString() + '</div>';
+      ousShowResult('ous-vencer-result', (table || '<pre class="ous-pre">' + esc(JSON.stringify(payload, null, 2)) + '</pre>') + meta);
+    } catch (err) {
+      ousShowResult('ous-vencer-result', esc(err.message || String(err)), true);
+    }  finally {
+      btnEl.disabled = false; btnEl.textContent = orig;
+    }
+  }
+
+  // ---------------- Status pill + initial load -----------------------
+
+  async function loadOUSHealth() {
+    const dot  = document.querySelector('#ous-status .dot');
+    const txt  = document.getElementById('ous-status-text');
+    const pill = document.getElementById('ous-status');
+    if (!pill) return;
+    pill.classList.remove('ok','warn');
+    try {
+      const r = await fetch(OUS_PROXY_URL + '/healthz', { cache: 'no-store' });
+      const j = await r.json();
+      if (j.ous_logged_in) {
+        pill.classList.add('ok');
+        if (txt) txt.textContent = 'Connected · token acquired ' +
+          new Date(j.token_acquired_at).toLocaleTimeString();
+      } else {
+        pill.classList.add('warn');
+        if (txt) txt.textContent = 'Proxy not logged in (see Railway logs)';
+      }
+    } catch (err) {
+      pill.classList.add('warn');
+      if (txt) txt.textContent = 'Cannot reach proxy';
+    }
+  }
+
+  async function wireOUSTab() {
+    injectOUSStyles();
+    let tries = 0;
+    const wait = () => new Promise(r => setTimeout(r, 250));
+    while (tries++ < 40 && !ensureOUSSidebarAndView()) await wait();
+    loadOUSHealth();
+    try {
+      const payload = await ousFetch('/api/catalogos');
+      renderCatalogos(payload);
+      const meta = document.getElementById('ous-catalogos-meta');
+      if (meta && payload && payload.data && payload.data.fechaCierre) {
+        meta.textContent = 'Most recent fechaCierre reported by OUS: ' + payload.data.fechaCierre;
+      }
+    } catch (err) {
+      const root = document.getElementById('ous-catalogos');
+      if (root) root.innerHTML = '<div class="ous-result err">' + esc(err.message || String(err)) + '</div>';
+    }
+  }
+
   async function bootstrap() {
     const gate = await OnixDB.requireAdmin();
     if (!gate) return;
@@ -3261,6 +3607,7 @@
     const greet = document.getElementById('oac-greeting');
     if (greet) greet.textContent = 'Signed in as ' + (gate.profile.full_name || gate.profile.email);
     wireCalendarTab();
+    wireOUSTab();
     refreshAll();
   }
 
