@@ -111,13 +111,19 @@ const state = {
  */
 async function loginToOUS() {
   // ---- ADJUST THESE THREE LINES IF NEEDED -------------------------
-  const LOGIN_PATH = '/login';
+  // Confirmed by the OUS team on 2026-06-16: the real login endpoint
+  // is POST /api/auth/login, NOT /api/login (which is a protected
+  // resource that returns 401 "Token requerido").
+  const LOGIN_PATH = '/auth/login';
   const LOGIN_BODY = { login: OUS_LOGIN, password: OUS_PASSWORD };
   const tokenFromResponse = (json, headers) =>
     json.token || json.access_token || json.jwt || headers.get('authorization') || null;
   // ----------------------------------------------------------------
 
   const url = OUS_API_URL + LOGIN_PATH;
+  console.log('[ous-proxy] login → POST ' + url +
+              ' (body fields: ' + Object.keys(LOGIN_BODY).join(', ') + ')');
+
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -130,24 +136,39 @@ async function loginToOUS() {
   let json = {};
   try { json = JSON.parse(rawText); } catch { /* not JSON */ }
 
+  // Verbose logging so the Railway log tail tells us exactly what
+  // happened on every login attempt — status, body shape, and which
+  // key (if any) we extracted the token from.
+  const contentType = res.headers.get('content-type') || '(no content-type)';
+  console.log('[ous-proxy] login ← HTTP ' + res.status + ' ' + contentType +
+              ' — body preview: ' + rawText.slice(0, 400));
+
   if (!res.ok) {
     throw new Error('OUS login HTTP ' + res.status + ': ' + (rawText || '').slice(0, 300));
   }
+
+  // Identify which field carried the token (helps spot when OUS
+  // changes their response shape in the future).
+  let tokenField = null;
+  if (json.token)        tokenField = 'token';
+  else if (json.access_token) tokenField = 'access_token';
+  else if (json.jwt)     tokenField = 'jwt';
+  else if (res.headers.get('authorization')) tokenField = 'header:authorization';
 
   let token = tokenFromResponse(json, res.headers);
   // If the token came via an Authorization header it may be prefixed
   // with "Bearer "; strip it so we can re-add it consistently below.
   if (typeof token === 'string') token = token.replace(/^Bearer\s+/i, '').trim();
   if (!token) {
-    throw new Error('OUS login succeeded but no token in response. Body was: ' +
-      JSON.stringify(json).slice(0, 300));
+    throw new Error('OUS login succeeded (HTTP ' + res.status + ') but no token in response. ' +
+      'Body was: ' + JSON.stringify(json).slice(0, 300));
   }
 
   state.token      = token;
   state.acquiredAt = Date.now();
   state.lastError  = null;
   console.log('[ous-proxy] OUS login OK at ' + new Date(state.acquiredAt).toISOString() +
-              ' — token length=' + token.length);
+              ' — token field=' + tokenField + ' length=' + token.length);
 }
 
 /**
