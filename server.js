@@ -353,35 +353,110 @@ async function proxyAndForward(res, path, opts) {
 app.get('/api/catalogos', requireOUSLogin, (req, res) =>
   proxyAndForward(res, '/catalogos'));
 
-// GET|POST /api/creditos-cierre-saldos
-//   Body: { fecha_cierre: 'YYYY-MM-DD' }
-//   We accept GET (with body or ?fecha_cierre=) and POST (with body)
-//   so the frontend can use whichever fits its existing fetch call.
+// =============================================================
+// Self-healing path probe
+// -------------------------------------------------------------
+// The integration brief gave us /creditos-cierre-saldos and
+// /creditos/por-vencer but OUS replied "Endpoint no encontrado"
+// for both. Until we lock in the real paths, each route tries a
+// short list of plausible variants in order and returns the
+// first response that isn't a 404. The chosen path is logged so
+// we can see in Railway logs which one OUS accepts, then hard-
+// code it and remove the probe.
+// =============================================================
+
+async function tryCandidatePaths(res, candidates, opts, kind) {
+  // candidates: array of { path, method = 'POST' | 'GET' }
+  let lastResp = null;
+  for (const c of candidates) {
+    try {
+      const r = await callOUS(c.path, { method: c.method || 'POST', body: opts.body });
+      // Log every attempt so the Railway log tail tells us what OUS said.
+      const isJson = r.body && typeof r.body === 'object';
+      const codigo = isJson && r.body.codigo;
+      const mensaje = isJson && r.body.mensaje;
+      console.log('[ous-proxy] probe ' + kind + ' ' + (c.method || 'POST') + ' ' + c.path +
+                  ' → HTTP ' + r.status +
+                  (codigo != null ? ' codigo=' + codigo : '') +
+                  (mensaje      ? ' mensaje=' + mensaje : ''));
+      // 404 with "Endpoint no encontrado" means the path itself is wrong — keep probing.
+      const isEndpointNotFound = r.status === 404 ||
+        (codigo === 404) || /endpoint no encontrado/i.test(String(mensaje || ''));
+      if (!isEndpointNotFound) {
+        // Found it — also surface which candidate succeeded so the
+        // frontend can spot it in a debug header without changing
+        // the JSON body shape.
+        console.log('[ous-proxy] probe ' + kind + ' MATCHED → ' + (c.method || 'POST') + ' ' + c.path);
+        res.setHeader('X-OUS-Resolved-Path',   c.path);
+        res.setHeader('X-OUS-Resolved-Method', c.method || 'POST');
+        return res.status(r.status).json(r.body);
+      }
+      lastResp = r;
+    } catch (err) {
+      console.error('[ous-proxy] probe ' + kind + ' ' + c.path + ' threw:', err.message);
+      lastResp = { status: 502, body: { error: err.message } };
+    }
+  }
+  // Nothing matched — surface the last response with a helpful note.
+  return res.status(lastResp ? lastResp.status : 502).json({
+    error: 'No candidate OUS path matched for ' + kind +
+           '. Tried: ' + candidates.map(c => (c.method || 'POST') + ' ' + c.path).join(', '),
+    last_ous_response: lastResp ? lastResp.body : null
+  });
+}
+
+// GET|POST /api/creditos-cierre-saldos — body: { fecha_cierre: 'YYYY-MM-DD' }
 function creditosCierreSaldos(req, res) {
   const fecha_cierre = (req.body && req.body.fecha_cierre) || req.query.fecha_cierre;
   if (!fecha_cierre) {
     return res.status(400).json({ error: 'fecha_cierre is required' });
   }
-  return proxyAndForward(res, '/creditos-cierre-saldos', {
-    method: 'POST',
-    body: { fecha_cierre }
-  });
+  // Caller can short-circuit the probe with ?ous_path=/foo for ad-hoc testing.
+  if (req.query.ous_path) {
+    return proxyAndForward(res, String(req.query.ous_path), { method: 'POST', body: { fecha_cierre } });
+  }
+  return tryCandidatePaths(res, [
+    { path: '/creditos/cierre-saldos' },
+    { path: '/creditos/cierre_saldos' },
+    { path: '/creditos/cierreSaldos' },
+    { path: '/creditos-cierre-saldos' },
+    { path: '/creditos/saldos-cierre' },
+    { path: '/creditos/saldo-cierre' },
+    { path: '/creditos/saldos' },
+    { path: '/cierre-saldos' },
+    { path: '/saldos' },
+    { path: '/creditos/saldos-al-cierre' },
+    { path: '/cierre-saldos', method: 'GET' },
+    { path: '/creditos/cierre-saldos', method: 'GET' }
+  ], { body: { fecha_cierre } }, 'cierre-saldos');
 }
 app.get('/api/creditos-cierre-saldos',  requireOUSLogin, creditosCierreSaldos);
 app.post('/api/creditos-cierre-saldos', requireOUSLogin, creditosCierreSaldos);
 
-// GET|POST /api/creditos/por-vencer
-//   Body: { dias: <integer> }
+// GET|POST /api/creditos/por-vencer — body: { dias: <integer> }
 function creditosPorVencer(req, res) {
   const diasRaw = (req.body && req.body.dias) != null ? req.body.dias : req.query.dias;
   const dias = Number(diasRaw);
   if (!Number.isFinite(dias) || dias < 0) {
     return res.status(400).json({ error: 'dias must be a non-negative integer' });
   }
-  return proxyAndForward(res, '/creditos/por-vencer', {
-    method: 'POST',
-    body: { dias }
-  });
+  if (req.query.ous_path) {
+    return proxyAndForward(res, String(req.query.ous_path), { method: 'POST', body: { dias } });
+  }
+  return tryCandidatePaths(res, [
+    { path: '/creditos/por-vencer' },
+    { path: '/creditos/por_vencer' },
+    { path: '/creditos/porVencer' },
+    { path: '/creditos-por-vencer' },
+    { path: '/creditos/proximos-vencimientos' },
+    { path: '/creditos/proximos-a-vencer' },
+    { path: '/creditos/vencer' },
+    { path: '/por-vencer' },
+    { path: '/vencimientos' },
+    { path: '/creditos/vencimiento' },
+    { path: '/creditos/por-vencer', method: 'GET' },
+    { path: '/por-vencer', method: 'GET' }
+  ], { body: { dias } }, 'por-vencer');
 }
 app.get('/api/creditos/por-vencer',  requireOUSLogin, creditosPorVencer);
 app.post('/api/creditos/por-vencer', requireOUSLogin, creditosPorVencer);
