@@ -317,6 +317,91 @@ app.get('/healthz', (req, res) => {
   });
 });
 
+// -------- Exhaustive connectivity diagnostic ------------------
+// Runs ~12 outbound tests in parallel from Railway and reports each
+// status + timing so we can isolate: is it Railway, is it OUS, is
+// it the specific port, is it the User-Agent, etc.
+app.get('/diagnose', async (req, res) => {
+  const tests = [
+    // --- General internet: prove Railway's outbound is healthy ---
+    { id: 'cloudflare-1.1.1.1', url: 'https://1.1.1.1', method: 'GET' },
+    { id: 'github-api',         url: 'https://api.github.com', method: 'GET' },
+    { id: 'example.com',        url: 'https://example.com', method: 'GET' },
+
+    // --- OUS on its documented port + path ---
+    { id: 'ous-7070-login-default-ua', url: 'http://54.165.232.64:7070/api/auth/login', method: 'POST',
+      body: { login: OUS_LOGIN, password: OUS_PASSWORD } },
+
+    // --- OUS with mimicked Postman User-Agent (rules out UA filtering) ---
+    { id: 'ous-7070-login-postman-ua', url: 'http://54.165.232.64:7070/api/auth/login', method: 'POST',
+      headers: { 'User-Agent': 'PostmanRuntime/7.36.0' },
+      body: { login: OUS_LOGIN, password: OUS_PASSWORD } },
+
+    // --- OUS on alternate ports (in case 7070 is firewalled but 443/80 aren't) ---
+    { id: 'ous-port-443',  url: 'https://54.165.232.64:443/api/auth/login',  method: 'POST', body: { login: OUS_LOGIN, password: OUS_PASSWORD } },
+    { id: 'ous-port-80',   url: 'http://54.165.232.64:80/api/auth/login',    method: 'POST', body: { login: OUS_LOGIN, password: OUS_PASSWORD } },
+    { id: 'ous-port-8080', url: 'http://54.165.232.64:8080/api/auth/login',  method: 'POST', body: { login: OUS_LOGIN, password: OUS_PASSWORD } },
+    { id: 'ous-port-8443', url: 'https://54.165.232.64:8443/api/auth/login', method: 'POST', body: { login: OUS_LOGIN, password: OUS_PASSWORD } },
+
+    // --- OUS with HTTPS scheme on the documented port ---
+    { id: 'ous-7070-https', url: 'https://54.165.232.64:7070/api/auth/login', method: 'POST',
+      body: { login: OUS_LOGIN, password: OUS_PASSWORD } },
+
+    // --- Bare TCP touch on the OUS port (GET, no body, short timeout) ---
+    { id: 'ous-7070-root-get', url: 'http://54.165.232.64:7070/', method: 'GET' },
+
+    // --- Catalogos without auth (any HTTP response proves the port is reachable) ---
+    { id: 'ous-7070-catalogos-noauth', url: 'http://54.165.232.64:7070/api/catalogos', method: 'GET' }
+  ];
+
+  const runTest = async (t) => {
+    const start = Date.now();
+    try {
+      const ctl = new AbortController();
+      const to  = setTimeout(() => ctl.abort(), 12000);
+      const headers = Object.assign(
+        { 'Accept': 'application/json' },
+        t.body ? { 'Content-Type': 'application/json' } : {},
+        t.headers || {}
+      );
+      const r = await fetch(t.url, {
+        method:  t.method,
+        headers: headers,
+        body:    t.body ? JSON.stringify(t.body) : undefined,
+        signal:  ctl.signal
+      });
+      clearTimeout(to);
+      const text = await r.text();
+      let bodyPreview;
+      try { bodyPreview = JSON.parse(text); } catch { bodyPreview = (text || '').slice(0, 200); }
+      return {
+        id: t.id, url: t.url, method: t.method,
+        status: r.status,
+        content_type: r.headers.get('content-type'),
+        ms: Date.now() - start,
+        body_preview: typeof bodyPreview === 'string' ? bodyPreview : JSON.stringify(bodyPreview).slice(0, 200)
+      };
+    } catch (err) {
+      return {
+        id: t.id, url: t.url, method: t.method,
+        ms: Date.now() - start,
+        error_name: err && err.name,
+        error_code: err && err.code,
+        error_message: (err && err.message || '').slice(0, 200)
+      };
+    }
+  };
+
+  // Run in parallel — total wall time should be ~12 s (the longest single timeout).
+  const results = await Promise.all(tests.map(runTest));
+  res.json({
+    proxy_uptime_s: Math.round(process.uptime()),
+    ous_logged_in:  !!state.token,
+    ran_at:         new Date().toISOString(),
+    tests:          results
+  });
+});
+
 // -------- Guard: 503 the data routes when not logged in --------
 function requireOUSLogin(req, res, next) {
   if (!state.token) {
