@@ -6,6 +6,8 @@
 <title>Onix Finance — Request Access</title>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=DM+Sans:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="i18n.js?v=2"></script>
+<style>.lang-toggle button.active{background:#C0392B;color:#fff !important;border-color:#C0392B !important}</style>
 <style>
 :root{
   --red:#C0392B;--dark:#1A1A1A;--bg:#F8F7F5;
@@ -57,7 +59,7 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
         <span style="font-size:1.5rem;font-weight:900;letter-spacing:6px;color:#fff;text-transform:uppercase">ONIX<span style="color:#C0392B">.</span></span>
       </div>
       <div class="signup-brand-rule"></div>
-      <p class="signup-brand-tagline">Private lending and investment solutions for discerning clients.</p>
+      <p class="signup-brand-tagline" data-en="Private lending and investment solutions for discerning clients." data-es="Soluciones de préstamos privados e inversión para clientes exigentes.">Private lending and investment solutions for discerning clients.</p>
       <p class="signup-brand-sub">Houston, TX &nbsp;·&nbsp; Est. 2018</p>
     </div>
     <div style="position:relative;z-index:1">
@@ -67,37 +69,45 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
 
   <div class="signup-right">
     <div class="signup-form">
-      <p class="signup-eyebrow">Request Access</p>
-      <h1 class="signup-title">Create your account</h1>
-      <p class="signup-sub">Tell us about yourself. A principal will review your request and activate your portal within 1–2 business days.</p>
+      <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+        <div class="lang-toggle" style="display:flex;gap:4px">
+          <button type="button" data-lang-set="en" class="active" style="padding:4px 10px;border-radius:2px;font-size:.68rem;font-weight:700;letter-spacing:.08em;color:var(--light);border:1px solid var(--border);background:none;cursor:pointer">EN</button>
+          <button type="button" data-lang-set="es" style="padding:4px 10px;border-radius:2px;font-size:.68rem;font-weight:700;letter-spacing:.08em;color:var(--light);border:1px solid var(--border);background:none;cursor:pointer">ES</button>
+        </div>
+      </div>
+      <p class="signup-eyebrow" data-en="Request Access" data-es="Solicitar Acceso">Request Access</p>
+      <h1 class="signup-title" data-en="Create your account" data-es="Cree su cuenta">Create your account</h1>
+      <p class="signup-sub" data-en="Tell us about yourself. A principal will review your request and activate your portal within 1–2 business days." data-es="Cuéntenos sobre usted. Un socio revisará su solicitud y activará su portal en 1–2 días hábiles.">Tell us about yourself. A principal will review your request and activate your portal within 1–2 business days.</p>
 
       <div id="signup-error" class="signup-error"></div>
       <div id="signup-success" class="signup-success">
-        <strong style="display:block;font-size:1.05rem;font-family:var(--serif);font-style:italic;margin-bottom:6px">Request received.</strong>
-        Thank you. Your account is pending approval. We'll email <span id="success-email">you</span> once it is activated, usually within 1–2 business days.
-        <div style="margin-top:18px"><a href="login.html" style="color:var(--red);font-weight:600">← Back to sign in</a></div>
+        <strong style="display:block;font-size:1.05rem;font-family:var(--serif);font-style:italic;margin-bottom:6px" data-en="Request received." data-es="Solicitud recibida.">Request received.</strong>
+        <span data-en="Thank you. Your account is pending approval. We'll email" data-es="Gracias. Su cuenta está pendiente de aprobación. Le enviaremos un correo a">Thank you. Your account is pending approval. We'll email</span>
+        <span id="success-email">you</span>
+        <span data-en="once it is activated, usually within 1–2 business days." data-es="cuando sea activada, generalmente en 1–2 días hábiles.">once it is activated, usually within 1–2 business days.</span>
+        <div style="margin-top:18px"><a href="login.html" style="color:var(--red);font-weight:600" data-en="← Back to sign in" data-es="← Volver al inicio de sesión">← Back to sign in</a></div>
       </div>
 
       <form id="signup-form" onsubmit="doSignup(event)">
-        <label class="field-label">Full Name</label>
-        <input id="full_name" type="text" class="field-input" placeholder="Carlos Mendoza" style="margin-bottom:18px" required>
+        <label class="field-label" data-en="Full Name" data-es="Nombre Completo">Full Name</label>
+        <input id="full_name" type="text" class="field-input" data-ph-en="Carlos Mendoza" data-ph-es="Carlos Mendoza" placeholder="Carlos Mendoza" style="margin-bottom:18px" required>
 
-        <label class="field-label">Email Address</label>
-        <input id="email" type="email" class="field-input" placeholder="you@example.com" style="margin-bottom:18px" required>
+        <label class="field-label" data-en="Email Address" data-es="Correo Electrónico">Email Address</label>
+        <input id="email" type="email" class="field-input" data-ph-en="you@example.com" data-ph-es="usted@ejemplo.com" placeholder="you@example.com" style="margin-bottom:18px" required>
 
-        <label class="field-label">Password</label>
-        <input id="password" type="password" class="field-input" placeholder="At least 8 characters" minlength="8" style="margin-bottom:18px" required>
+        <label class="field-label" data-en="Password" data-es="Contraseña">Password</label>
+        <input id="password" type="password" class="field-input" data-ph-en="At least 8 characters" data-ph-es="Al menos 8 caracteres" placeholder="At least 8 characters" minlength="8" style="margin-bottom:18px" required>
 
-        <label class="field-label">Confirm Password</label>
+        <label class="field-label" data-en="Confirm Password" data-es="Confirmar Contraseña">Confirm Password</label>
         <input id="password2" type="password" class="field-input" placeholder="••••••••" minlength="8" style="margin-bottom:24px" required>
 
         <button type="submit" class="btn btn-red" style="width:100%;padding:16px">
-          <span id="submit-text">Submit Request</span>
+          <span id="submit-text" data-en="Submit Request" data-es="Enviar Solicitud">Submit Request</span>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
         </button>
       </form>
 
-      <div class="signup-back">Already have an account? <a href="login.html">Sign in</a></div>
+      <div class="signup-back"><span data-en="Already have an account?" data-es="¿Ya tiene una cuenta?">Already have an account?</span> <a href="login.html" data-en="Sign in" data-es="Iniciar sesión">Sign in</a></div>
     </div>
   </div>
 </div>
