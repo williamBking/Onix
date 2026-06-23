@@ -21,38 +21,64 @@
     /* Chart.js requires position:relative on the canvas wrapper for its
        responsive resize observer to compute new dimensions correctly. Without
        it, shrinking and re-expanding the window can leave the canvas stretched
-       past its container. Every direct child div of a card that contains a
-       canvas gets position:relative defensively. */
+       past its container. position:relative on every direct child div of a
+       card lets Chart.js measure correctly. We do NOT force canvas width/height
+       — Chart.js sizes its canvas via inline styles, and overriding those
+       with !important breaks responsive behavior. */
     .card > div { position: relative; }
-    .card canvas { max-width: 100% !important; width: 100% !important; height: 100% !important; display: block; }
+    .card canvas { max-width: 100% !important; display: block; }
     /* Any table wider than its card scrolls inside the card, not the page. */
     .card table.tbl { width: 100%; table-layout: auto; }
     .card > table.tbl, .card .tbl-wrap { display: block; overflow-x: auto; max-width: 100%; }
   </style>
   <script>
-  /* Defensive resize: if a chart canvas ends up wider than its parent (e.g.
-     after the window was shrunk and re-expanded), force every Chart instance
-     to recompute its dimensions. Throttled with rAF so it doesn't spam. */
+  /* Defensive chart resize. The bundled dashboard uses Chart.js v3+, where
+     Chart.instances no longer exists — you have to look up each chart by its
+     canvas via Chart.getChart(canvas). After a window shrink/expand, some
+     charts (especially pie/doughnut) don't re-fit their card. We:
+       1. Listen for window resize / focus / visibility — call .resize() on
+          every chart we can find (throttled with rAF).
+       2. Install a ResizeObserver on each chart's parent the first time we
+          see it, so any container size change triggers a chart resize. This
+          catches cases that the window-resize event misses (sidebar collapse,
+          drawer open/close, etc.). */
   (function(){
     var pending = false;
+    function resizeAllCharts(){
+      if (typeof Chart === 'undefined' || typeof Chart.getChart !== 'function') return;
+      document.querySelectorAll('canvas').forEach(function(canvas){
+        try {
+          var ch = Chart.getChart(canvas);
+          if (ch && typeof ch.resize === 'function') ch.resize();
+        } catch(e){}
+      });
+    }
     function nudge(){
       if (pending) return;
       pending = true;
-      requestAnimationFrame(function(){
-        pending = false;
-        if (typeof Chart === 'undefined' || !Chart.instances) return;
-        Object.values(Chart.instances).forEach(function(ch){
-          try { ch.resize(); } catch(e){}
-        });
-      });
+      requestAnimationFrame(function(){ pending = false; resizeAllCharts(); });
     }
     window.addEventListener('resize', nudge);
-    // Also nudge whenever the user comes back to the tab — some browsers
-    // don't fire resize when the window was minimized then restored.
     window.addEventListener('focus', nudge);
-    document.addEventListener('visibilitychange', function(){
-      if (!document.hidden) nudge();
-    });
+    document.addEventListener('visibilitychange', function(){ if (!document.hidden) nudge(); });
+
+    // Observe each chart's parent so we react to any container size change,
+    // not just window resize. New canvases get observed as they appear.
+    if (typeof ResizeObserver !== 'undefined') {
+      var ro = new ResizeObserver(function(){ nudge(); });
+      function wireObservers(){
+        document.querySelectorAll('canvas').forEach(function(canvas){
+          var parent = canvas.parentElement;
+          if (parent && !parent.__onixRoObserved) {
+            parent.__onixRoObserved = true;
+            ro.observe(parent);
+          }
+        });
+      }
+      // Initial sweep + periodic rewire for charts mounted by the bundle later.
+      setTimeout(wireObservers, 800);
+      setInterval(wireObservers, 3000);
+    }
   })();
   </script>
   <script>
