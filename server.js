@@ -457,6 +457,8 @@ function buildQuery(params) {
 }
 
 // GET /api/creditos-cierre-saldos — { fecha_cierre: 'YYYY-MM-DD' }
+// Param goes on the query string only — Node's strict fetch refuses
+// to attach a body to GET (Postman is lenient and lets you do both).
 function creditosCierreSaldos(req, res) {
   const fecha_cierre = (req.body && req.body.fecha_cierre) || req.query.fecha_cierre;
   if (!fecha_cierre) {
@@ -465,7 +467,7 @@ function creditosCierreSaldos(req, res) {
   return proxyAndForward(
     res,
     '/creditos-cierre-saldos' + buildQuery({ fecha_cierre }),
-    { method: 'GET', body: { fecha_cierre } }
+    { method: 'GET' }
   );
 }
 app.get('/api/creditos-cierre-saldos',  requireOUSLogin, creditosCierreSaldos);
@@ -481,7 +483,7 @@ function creditosPorVencer(req, res) {
   return proxyAndForward(
     res,
     '/creditos/por-vencer' + buildQuery({ dias }),
-    { method: 'GET', body: { dias } }
+    { method: 'GET' }
   );
 }
 app.get('/api/creditos/por-vencer',  requireOUSLogin, creditosPorVencer);
