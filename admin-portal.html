@@ -18,14 +18,15 @@
     .row-2, .row-3, .kpi-grid, .col-4, .col-3, .col-2 { min-width: 0; }
     .row-2 > *, .row-3 > *, .kpi-grid > * { min-width: 0; }
     .card, .dash-card { min-width: 0; overflow: hidden; }
-    /* Containment: clip chart canvases at the card boundary no matter what
-       inline width Chart.js thinks the canvas should be. We hit both the card
-       and any direct-child div (the typical Chart.js wrapper) with
-       overflow:hidden so even a stale canvas width can't bleed out of the
-       dashboard. position:relative on chart wrappers lets Chart.js measure
-       correctly on resize. */
-    .card { overflow: hidden !important; }
-    .card > div { position: relative; overflow: hidden !important; }
+    /* The card itself (not just the chart) was bleeding past .main after a
+       window resize — a Chart.js canvas with a stale inline width attribute
+       was forcing its grid track wider than 1fr. Brute-force containment
+       at every level so nothing can be wider than its parent. */
+    .main { max-width: 100% !important; overflow: hidden !important; box-sizing: border-box; }
+    .row-2, .row-3, .row-4, .kpi-grid { max-width: 100% !important; overflow: hidden !important; box-sizing: border-box; }
+    .row-2 > *, .row-3 > *, .row-4 > *, .kpi-grid > * { min-width: 0 !important; max-width: 100% !important; }
+    .card { max-width: 100% !important; overflow: hidden !important; box-sizing: border-box !important; }
+    .card > div { max-width: 100% !important; overflow: hidden !important; position: relative; box-sizing: border-box; }
     .card canvas { max-width: 100% !important; display: block; }
     /* Any table wider than its card scrolls inside the card, not the page. */
     .card table.tbl { width: 100%; table-layout: auto; }
@@ -66,6 +67,13 @@
     function resizeAllCharts(){
       if (typeof Chart === 'undefined') return;
       document.querySelectorAll('canvas').forEach(function(canvas){
+        // Clear stale inline width/height — Chart.js stamps these and they
+        // can keep the canvas wider than the new container size, dragging
+        // the grid track wider with them.
+        try {
+          canvas.style.width = '';
+          canvas.style.height = '';
+        } catch(e){}
         var ch = findChartForCanvas(canvas);
         if (ch && typeof ch.resize === 'function') {
           try { ch.resize(); } catch(e){}
