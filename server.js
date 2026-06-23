@@ -40,6 +40,12 @@
 
 const express = require('express');
 const fetch   = require('node-fetch');
+// Built-in Node modules — used for GET-with-body, which both
+// node-fetch and the WHATWG fetch refuse to do despite the HTTP
+// spec allowing it. Counts as a built-in, not an added dependency.
+const http  = require('http');
+const https = require('https');
+const { URL } = require('url');
 
 // ---------------------------------------------------------------
 // Config
@@ -230,6 +236,43 @@ function scheduleRefresh() {
 // OUS request helper — adds the bearer header, retries once on 401
 // ---------------------------------------------------------------
 
+// Low-level helper: do an HTTP request that *can* carry a body even
+// when the method is GET. The HTTP spec technically allows it, but
+// both the WHATWG fetch and node-fetch refuse to send it. OUS
+// requires it for /creditos-cierre-saldos and /creditos/por-vencer
+// (confirmed in Postman) so we drop down to Node's built-in http
+// module here. Returns { status, headers, text }.
+function rawHttpRequest(urlStr, { method = 'GET', headers = {}, body = null, timeoutMs = 30000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(urlStr);
+    const lib = u.protocol === 'https:' ? https : http;
+    const reqOpts = {
+      method,
+      protocol: u.protocol,
+      hostname: u.hostname,
+      port:     u.port || (u.protocol === 'https:' ? 443 : 80),
+      path:     u.pathname + (u.search || ''),
+      headers:  Object.assign({}, headers)
+    };
+    const payload = body == null ? null : (typeof body === 'string' ? body : JSON.stringify(body));
+    if (payload != null) reqOpts.headers['Content-Length'] = Buffer.byteLength(payload);
+
+    const req = lib.request(reqOpts, (res) => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve({
+        status:  res.statusCode,
+        headers: res.headers,
+        text:    Buffer.concat(chunks).toString('utf8')
+      }));
+    });
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('OUS request timed out after ' + timeoutMs + 'ms')));
+    req.on('error', reject);
+    if (payload != null) req.write(payload);
+    req.end();
+  });
+}
+
 async function callOUS(path, { method = 'GET', body = null } = {}) {
   if (!state.token) {
     const err = new Error('OUS proxy is not logged in yet');
@@ -237,35 +280,48 @@ async function callOUS(path, { method = 'GET', body = null } = {}) {
     throw err;
   }
   const url = OUS_API_URL + (path.startsWith('/') ? path : '/' + path);
+  const baseHeaders = {
+    'Authorization': 'Bearer ' + state.token,
+    'Accept':        'application/json'
+  };
 
-  const doFetch = async () => {
-    const init = {
-      method,
-      headers: {
-        'Authorization': 'Bearer ' + state.token,
-        'Accept': 'application/json'
-      }
-    };
+  // GET-with-body needs the raw http path (fetch refuses). All other
+  // combinations go through node-fetch which gives us nicer ergonomics.
+  const useRaw = (method === 'GET' || method === 'HEAD') && body != null;
+
+  const doRequest = async () => {
+    if (useRaw) {
+      const r = await rawHttpRequest(url, {
+        method, body,
+        headers: Object.assign({}, baseHeaders, { 'Content-Type': 'application/json' })
+      });
+      return { status: r.status, rawText: r.text };
+    }
+    const init = { method, headers: Object.assign({}, baseHeaders) };
     if (body != null) {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
     }
-    return fetch(url, init);
+    const res = await fetch(url, init);
+    const rawText = await res.text();
+    return { status: res.status, rawText };
   };
 
-  let res = await doFetch();
+  let r = await doRequest();
 
   // Token may have expired mid-flight — try one re-login and retry.
-  if (res.status === 401) {
+  if (r.status === 401) {
     console.warn('[ous-proxy] got 401 from OUS — re-logging in and retrying');
     const ok = await tryLogin('reactive');
-    if (ok) res = await doFetch();
+    if (ok) {
+      baseHeaders.Authorization = 'Bearer ' + state.token;
+      r = await doRequest();
+    }
   }
 
-  const rawText = await res.text();
   let json;
-  try { json = JSON.parse(rawText); } catch { json = { raw: rawText }; }
-  return { status: res.status, body: json };
+  try { json = JSON.parse(r.rawText); } catch { json = { raw: r.rawText }; }
+  return { status: r.status, body: json };
 }
 
 // ---------------------------------------------------------------
@@ -457,8 +513,9 @@ function buildQuery(params) {
 }
 
 // GET /api/creditos-cierre-saldos — { fecha_cierre: 'YYYY-MM-DD' }
-// Param goes on the query string only — Node's strict fetch refuses
-// to attach a body to GET (Postman is lenient and lets you do both).
+// OUS reads the param from the JSON body (confirmed via Postman).
+// callOUS uses Node's raw http module for GET+body since fetch refuses.
+// We also append it to the query string as a no-op safety net.
 function creditosCierreSaldos(req, res) {
   const fecha_cierre = (req.body && req.body.fecha_cierre) || req.query.fecha_cierre;
   if (!fecha_cierre) {
@@ -467,7 +524,7 @@ function creditosCierreSaldos(req, res) {
   return proxyAndForward(
     res,
     '/creditos-cierre-saldos' + buildQuery({ fecha_cierre }),
-    { method: 'GET' }
+    { method: 'GET', body: { fecha_cierre } }
   );
 }
 app.get('/api/creditos-cierre-saldos',  requireOUSLogin, creditosCierreSaldos);
@@ -483,7 +540,7 @@ function creditosPorVencer(req, res) {
   return proxyAndForward(
     res,
     '/creditos/por-vencer' + buildQuery({ dias }),
-    { method: 'GET' }
+    { method: 'GET', body: { dias } }
   );
 }
 app.get('/api/creditos/por-vencer',  requireOUSLogin, creditosPorVencer);
