@@ -373,6 +373,50 @@ app.get('/healthz', (req, res) => {
   });
 });
 
+// -------- Data-shape probe ------------------------------------
+// Fires the same parameterized request to OUS many different ways
+// and reports back what each one returns. Lets us figure out
+// whether OUS reads from query, JSON body, form body, etc. without
+// redeploying for every guess.
+app.get('/diagnose-data', async (req, res) => {
+  if (!state.token) {
+    return res.status(503).json({ error: 'OUS proxy is not logged in yet' });
+  }
+  const fecha_cierre = req.query.fecha_cierre || new Date().toISOString().slice(0, 10);
+  const base = OUS_API_URL + '/creditos-cierre-saldos';
+  const auth = 'Bearer ' + state.token;
+  const formBody = 'fecha_cierre=' + encodeURIComponent(fecha_cierre);
+  const jsonBody = JSON.stringify({ fecha_cierre });
+  const camelJson = JSON.stringify({ fechaCierre: fecha_cierre });
+
+  const variants = [
+    // ID, method, url, headers, body
+    ['GET  body=JSON',          'GET',  base,                                    { 'Content-Type': 'application/json', Accept: 'application/json' },           jsonBody],
+    ['GET  body=form',          'GET',  base,                                    { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, formBody],
+    ['GET  query only',         'GET',  base + '?fecha_cierre=' + fecha_cierre,  { Accept: 'application/json' },                                                null],
+    ['GET  query + JSON body',  'GET',  base + '?fecha_cierre=' + fecha_cierre,  { 'Content-Type': 'application/json', Accept: 'application/json' },           jsonBody],
+    ['GET  query + form body',  'GET',  base + '?fecha_cierre=' + fecha_cierre,  { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, formBody],
+    ['GET  body=JSON camel',    'GET',  base,                                    { 'Content-Type': 'application/json', Accept: 'application/json' },           camelJson],
+    ['POST body=JSON',          'POST', base,                                    { 'Content-Type': 'application/json', Accept: 'application/json' },           jsonBody],
+    ['POST body=form',          'POST', base,                                    { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, formBody],
+    ['POST query only',         'POST', base + '?fecha_cierre=' + fecha_cierre,  { Accept: 'application/json' },                                                null]
+  ];
+
+  const results = await Promise.all(variants.map(async ([id, method, url, hdrs, body]) => {
+    try {
+      const r = await rawHttpRequest(url, {
+        method,
+        headers: Object.assign({ Authorization: auth }, hdrs),
+        body
+      });
+      return { id, status: r.status, body_preview: (r.text || '').slice(0, 200) };
+    } catch (err) {
+      return { id, error: (err && err.message) || String(err) };
+    }
+  }));
+  res.json({ fecha_cierre, results });
+});
+
 // -------- Exhaustive connectivity diagnostic ------------------
 // Runs ~12 outbound tests in parallel from Railway and reports each
 // status + timing so we can isolate: is it Railway, is it OUS, is
