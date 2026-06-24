@@ -3357,45 +3357,45 @@
       v.innerHTML =
         '<div class="ous-head">' +
           '<div>' +
-            '<div class="ous-eyebrow">External System</div>' +
+            '<div class="ous-eyebrow" data-en="External System" data-es="Sistema Externo">External System</div>' +
             '<h1>OUS Pasiva</h1>' +
             '<div class="ous-rule"></div>' +
           '</div>' +
           '<div id="ous-status" class="ous-status">' +
-            '<span class="dot"></span><span id="ous-status-text">Checking…</span>' +
+            '<span class="dot"></span><span id="ous-status-text" data-en="Checking…" data-es="Verificando…">Checking…</span>' +
           '</div>' +
         '</div>' +
 
         // ---- Catalogos ----------------------------------------------
         '<div class="ous-card">' +
-          '<h2>Catalogs</h2>' +
-          '<div class="sub">Reference lookups live from OUS — products, segments, payment frequencies.</div>' +
+          '<h2 data-en="Catalogs" data-es="Catálogos">Catalogs</h2>' +
+          '<div class="sub" data-en="Reference lookups live from OUS — products, segments, payment frequencies." data-es="Consultas de referencia en vivo desde OUS — productos, segmentos, frecuencias de pago.">Reference lookups live from OUS — products, segments, payment frequencies.</div>' +
           '<div id="ous-catalogos">' +
-            '<div class="muted">Loading…</div>' +
+            '<div class="muted" data-en="Loading…" data-es="Cargando…">Loading…</div>' +
           '</div>' +
           '<div class="ous-meta-line" id="ous-catalogos-meta"></div>' +
         '</div>' +
 
         // ---- Closing balances ---------------------------------------
         '<div class="ous-card">' +
-          '<h2>Closing Balances</h2>' +
-          '<div class="sub">Balances on every active credit as of a closing date.</div>' +
+          '<h2 data-en="Closing Balances" data-es="Saldos al Cierre">Closing Balances</h2>' +
+          '<div class="sub" data-en="Balances on every active credit as of a closing date." data-es="Saldos de cada crédito activo en una fecha de cierre.">Balances on every active credit as of a closing date.</div>' +
           '<div class="ous-controls">' +
-            '<label>Closing date<input type="date" id="ous-cierre-date" value="' + today + '"></label>' +
-            '<button class="ous-btn" id="ous-cierre-btn" type="button">Fetch</button>' +
+            '<label><span data-en="Closing date" data-es="Fecha de cierre">Closing date</span><input type="date" id="ous-cierre-date" value="' + today + '"></label>' +
+            '<button class="ous-btn" id="ous-cierre-btn" type="button" data-en="Fetch" data-es="Consultar">Fetch</button>' +
           '</div>' +
-          '<div id="ous-cierre-result" class="ous-result"><span class="muted">No fetch yet.</span></div>' +
+          '<div id="ous-cierre-result" class="ous-result"><span class="muted" data-en="No fetch yet." data-es="Sin consulta aún.">No fetch yet.</span></div>' +
         '</div>' +
 
         // ---- Coming due --------------------------------------------
         '<div class="ous-card">' +
-          '<h2>Credits Coming Due</h2>' +
-          '<div class="sub">Credits scheduled to fall due within the next N days.</div>' +
+          '<h2 data-en="Credits Coming Due" data-es="Créditos por Vencer">Credits Coming Due</h2>' +
+          '<div class="sub" data-en="Credits scheduled to fall due within the next N days." data-es="Créditos programados a vencer en los próximos N días.">Credits scheduled to fall due within the next N days.</div>' +
           '<div class="ous-controls">' +
-            '<label>Days ahead<input type="number" id="ous-vencer-days" value="30" min="1" max="365" step="1"></label>' +
-            '<button class="ous-btn" id="ous-vencer-btn" type="button">Fetch</button>' +
+            '<label><span data-en="Days ahead" data-es="Días por delante">Days ahead</span><input type="number" id="ous-vencer-days" value="30" min="1" max="365" step="1"></label>' +
+            '<button class="ous-btn" id="ous-vencer-btn" type="button" data-en="Fetch" data-es="Consultar">Fetch</button>' +
           '</div>' +
-          '<div id="ous-vencer-result" class="ous-result"><span class="muted">No fetch yet.</span></div>' +
+          '<div id="ous-vencer-result" class="ous-result"><span class="muted" data-en="No fetch yet." data-es="Sin consulta aún.">No fetch yet.</span></div>' +
         '</div>';
       main.appendChild(v);
 
@@ -3665,8 +3665,16 @@
 
   // ---------------- Status pill + initial load -----------------------
 
+  // Helper: set the OUS status pill text + sync data-en/data-es so the
+  // EN/ES toggle's MutationObserver can re-translate when the user flips.
+  function setOusStatus(txt, en, es) {
+    if (!txt) return;
+    txt.setAttribute('data-en', en);
+    txt.setAttribute('data-es', es);
+    const lang = activeLang();
+    txt.textContent = (lang === 'es' ? es : en);
+  }
   async function loadOUSHealth() {
-    const dot  = document.querySelector('#ous-status .dot');
     const txt  = document.getElementById('ous-status-text');
     const pill = document.getElementById('ous-status');
     if (!pill) return;
@@ -3676,15 +3684,19 @@
       const j = await r.json();
       if (j.ous_logged_in) {
         pill.classList.add('ok');
-        if (txt) txt.textContent = 'Connected · token acquired ' +
-          new Date(j.token_acquired_at).toLocaleTimeString();
+        const time = new Date(j.token_acquired_at).toLocaleTimeString();
+        setOusStatus(txt,
+          'Connected · token acquired ' + time,
+          'Conectado · token obtenido ' + time);
       } else {
         pill.classList.add('warn');
-        if (txt) txt.textContent = 'Proxy not logged in (see Railway logs)';
+        setOusStatus(txt,
+          'Proxy not logged in (see Railway logs)',
+          'Proxy no autenticado (ver logs en Railway)');
       }
     } catch (err) {
       pill.classList.add('warn');
-      if (txt) txt.textContent = 'Cannot reach proxy';
+      setOusStatus(txt, 'Cannot reach proxy', 'No se puede conectar al proxy');
     }
   }
 
