@@ -40,7 +40,6 @@
 
 const express = require('express');
 const fetch   = require('node-fetch');
-const jwt     = require('jsonwebtoken');
 // Built-in Node modules — used for GET-with-body, which both
 // node-fetch and the WHATWG fetch refuse to do despite the HTTP
 // spec allowing it. Counts as a built-in, not an added dependency.
@@ -56,12 +55,16 @@ const OUS_LOGIN    = process.env.OUS_LOGIN    || '';
 const OUS_PASSWORD = process.env.OUS_PASSWORD || '';
 const OUS_API_URL  = (process.env.OUS_API_URL || '').replace(/\/+$/, '');
 
-// Supabase auth gate for /api/* — verifies each request's Supabase JWT
-// so the public Railway URL stops being an open back door into the OUS
-// data. SUPABASE_JWT_SECRET comes from Supabase → Settings → API → JWT
-// Settings. SUPABASE_URL + SUPABASE_ANON_KEY power the per-request role
-// lookup against the public.profiles table.
-const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET || '';
+// Supabase auth gate for /api/* — validates each request's Supabase
+// session token against Supabase's /auth/v1/user endpoint so the public
+// Railway URL stops being an open back door into the OUS data. We use
+// the user endpoint rather than verifying the JWT locally because
+// Supabase projects can sign tokens with either HS256 (legacy shared
+// secret) or asymmetric algorithms like ES256 — the user endpoint
+// validates them all and saves us a dependency.
+//
+// SUPABASE_URL + SUPABASE_ANON_KEY power both the auth check and the
+// per-request role lookup against the public.profiles table.
 const SUPABASE_URL        = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
 const SUPABASE_ANON_KEY   = process.env.SUPABASE_ANON_KEY || '';
 
@@ -93,13 +96,10 @@ if (!OUS_LOGIN || !OUS_PASSWORD || !OUS_API_URL) {
   // crash-looping container.
 }
 
-if (!SUPABASE_JWT_SECRET) {
-  console.error('[ous-proxy] FATAL: SUPABASE_JWT_SECRET is not set. /api/* will reject every request with 401. ' +
-                'Set it in Railway → Variables (copy from Supabase → Settings → API → JWT Settings → JWT Secret).');
-}
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.warn('[ous-proxy] WARN: SUPABASE_URL / SUPABASE_ANON_KEY not set — admin role checks will fail closed (403). ' +
-               'Set both in Railway → Variables to enable per-request role verification.');
+  console.error('[ous-proxy] FATAL: SUPABASE_URL / SUPABASE_ANON_KEY not set — /api/* will reject every request with 503. ' +
+                'Set both in Railway → Variables: SUPABASE_URL=https://<project>.supabase.co and ' +
+                'SUPABASE_ANON_KEY=<eyJ... from Supabase → Settings → API → API Keys>.');
 }
 
 // ---------------------------------------------------------------
@@ -532,31 +532,49 @@ function requireOUSLogin(req, res, next) {
   next();
 }
 
-// -------- Guard: verify the caller's Supabase JWT ---------------
-// Reads "Authorization: Bearer <jwt>" and validates the signature
-// against SUPABASE_JWT_SECRET. On success attaches req.user with
-// { id, email, raw_token, raw_payload }. Returns 401 on any failure.
-// This is the baseline gate — without it the Railway URL is an open
-// door (see README §SECURITY).
-function requireSupabaseAuth(req, res, next) {
-  if (!SUPABASE_JWT_SECRET) {
-    return res.status(503).json({ error: 'Auth not configured — SUPABASE_JWT_SECRET missing on server' });
+// -------- Guard: validate the caller's Supabase session token ----
+// Reads "Authorization: Bearer <jwt>" and validates it by asking
+// Supabase's /auth/v1/user endpoint who it belongs to. Algorithm-
+// agnostic (works for HS256, ES256, RS256). On success attaches
+// req.user with { id, email, raw_token, raw_payload }. Returns 401
+// on missing/invalid/expired token. This is the baseline gate —
+// without it the Railway URL is an open door (see README §SECURITY).
+async function requireSupabaseAuth(req, res, next) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return res.status(503).json({ error: 'Auth not configured — SUPABASE_URL/SUPABASE_ANON_KEY missing on server' });
   }
   const h = req.headers.authorization || '';
   const m = h.match(/^Bearer\s+(.+)$/i);
   if (!m) return res.status(401).json({ error: 'Missing Authorization: Bearer <supabase access token>' });
   const token = m[1].trim();
   try {
-    const payload = jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ['HS256'] });
+    const r = await fetch(SUPABASE_URL + '/auth/v1/user', {
+      headers: {
+        'apikey':        SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + token,
+        'Accept':        'application/json'
+      }
+    });
+    if (!r.ok) {
+      const body = await r.text();
+      return res.status(401).json({
+        error:  'Invalid or expired token',
+        detail: 'Supabase /auth/v1/user returned HTTP ' + r.status + ': ' + body.slice(0, 200)
+      });
+    }
+    const user = await r.json();
+    if (!user || !user.id) {
+      return res.status(401).json({ error: 'Token did not resolve to a user' });
+    }
     req.user = {
-      id:    payload.sub,
-      email: payload.email,
+      id:          user.id,
+      email:       user.email,
       raw_token:   token,
-      raw_payload: payload
+      raw_payload: user
     };
     next();
   } catch (err) {
-    return res.status(401).json({ error: 'Invalid or expired token', detail: err.message });
+    return res.status(503).json({ error: 'Auth check threw', detail: (err && err.message) || String(err) });
   }
 }
 
