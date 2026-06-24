@@ -3259,13 +3259,28 @@
   const OUS_PROXY_URL = 'https://onix-production-50c3.up.railway.app';
 
   async function ousFetch(path, body) {
+    // Auth: the Railway proxy now requires a Supabase admin JWT on
+    // every /api/* call (see server.js requireSupabaseAuth + requireOnixAdmin).
+    // Without this header the proxy returns 401. We pull the current
+    // access token from the live Supabase session — there is no fallback
+    // to "anonymous": if the admin isn't logged in we fail loudly here
+    // rather than send an unauthenticated request to Railway.
+    const sess = await OnixDB.client.auth.getSession();
+    const accessToken = sess && sess.data && sess.data.session && sess.data.session.access_token;
+    if (!accessToken) {
+      const err = new Error('OUS proxy call requires a logged-in admin Supabase session');
+      err.status = 401;
+      throw err;
+    }
+    const authHeader = { Authorization: 'Bearer ' + accessToken };
+
     // The proxy accepts both GET-with-query and POST-with-body for
     // the parameterized endpoints. We use POST so query strings
     // never end up in browser/Cloudflare logs alongside loan ids.
     const url  = OUS_PROXY_URL + path;
     const init = body
-      ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
-      : { method: 'GET' };
+      ? { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, authHeader), body: JSON.stringify(body) }
+      : { method: 'GET',  headers: authHeader };
     const res = await fetch(url, init);
     const text = await res.text();
     let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }

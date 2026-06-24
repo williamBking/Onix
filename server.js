@@ -40,6 +40,7 @@
 
 const express = require('express');
 const fetch   = require('node-fetch');
+const jwt     = require('jsonwebtoken');
 // Built-in Node modules — used for GET-with-body, which both
 // node-fetch and the WHATWG fetch refuse to do despite the HTTP
 // spec allowing it. Counts as a built-in, not an added dependency.
@@ -54,6 +55,15 @@ const { URL } = require('url');
 const OUS_LOGIN    = process.env.OUS_LOGIN    || '';
 const OUS_PASSWORD = process.env.OUS_PASSWORD || '';
 const OUS_API_URL  = (process.env.OUS_API_URL || '').replace(/\/+$/, '');
+
+// Supabase auth gate for /api/* — verifies each request's Supabase JWT
+// so the public Railway URL stops being an open back door into the OUS
+// data. SUPABASE_JWT_SECRET comes from Supabase → Settings → API → JWT
+// Settings. SUPABASE_URL + SUPABASE_ANON_KEY power the per-request role
+// lookup against the public.profiles table.
+const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET || '';
+const SUPABASE_URL        = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+const SUPABASE_ANON_KEY   = process.env.SUPABASE_ANON_KEY || '';
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -81,6 +91,15 @@ if (!OUS_LOGIN || !OUS_PASSWORD || !OUS_API_URL) {
   // We still start the server so Railway can reach /healthz and you
   // can see the misconfiguration in the dashboard instead of a
   // crash-looping container.
+}
+
+if (!SUPABASE_JWT_SECRET) {
+  console.error('[ous-proxy] FATAL: SUPABASE_JWT_SECRET is not set. /api/* will reject every request with 401. ' +
+                'Set it in Railway → Variables (copy from Supabase → Settings → API → JWT Settings → JWT Secret).');
+}
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.warn('[ous-proxy] WARN: SUPABASE_URL / SUPABASE_ANON_KEY not set — admin role checks will fail closed (403). ' +
+               'Set both in Railway → Variables to enable per-request role verification.');
 }
 
 // ---------------------------------------------------------------
@@ -513,6 +532,70 @@ function requireOUSLogin(req, res, next) {
   next();
 }
 
+// -------- Guard: verify the caller's Supabase JWT ---------------
+// Reads "Authorization: Bearer <jwt>" and validates the signature
+// against SUPABASE_JWT_SECRET. On success attaches req.user with
+// { id, email, raw_token, raw_payload }. Returns 401 on any failure.
+// This is the baseline gate — without it the Railway URL is an open
+// door (see README §SECURITY).
+function requireSupabaseAuth(req, res, next) {
+  if (!SUPABASE_JWT_SECRET) {
+    return res.status(503).json({ error: 'Auth not configured — SUPABASE_JWT_SECRET missing on server' });
+  }
+  const h = req.headers.authorization || '';
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  if (!m) return res.status(401).json({ error: 'Missing Authorization: Bearer <supabase access token>' });
+  const token = m[1].trim();
+  try {
+    const payload = jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ['HS256'] });
+    req.user = {
+      id:    payload.sub,
+      email: payload.email,
+      raw_token:   token,
+      raw_payload: payload
+    };
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid or expired token', detail: err.message });
+  }
+}
+
+// -------- Guard: caller's profile row must have role='admin' ----
+// JWT verification alone proves the caller is *some* Supabase user,
+// not that they're an Onix admin. We confirm by re-issuing their own
+// JWT against the public.profiles table — RLS lets a user read their
+// own profile only, which is exactly what we need. Fails closed.
+async function requireOnixAdmin(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Auth required' });
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return res.status(503).json({ error: 'Admin check not configured — SUPABASE_URL/SUPABASE_ANON_KEY missing on server' });
+  }
+  try {
+    const url = SUPABASE_URL + '/rest/v1/profiles?id=eq.' + encodeURIComponent(req.user.id) + '&select=role,status';
+    const r = await fetch(url, {
+      headers: {
+        'apikey':        SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + req.user.raw_token,
+        'Accept':        'application/json'
+      }
+    });
+    if (!r.ok) {
+      const body = await r.text();
+      return res.status(403).json({ error: 'Profile lookup failed', detail: 'HTTP ' + r.status + ': ' + body.slice(0, 200) });
+    }
+    const rows = await r.json();
+    const p = Array.isArray(rows) ? rows[0] : null;
+    if (!p || p.role !== 'admin' || p.status !== 'active') {
+      return res.status(403).json({ error: 'Admin role required' });
+    }
+    req.user.role   = 'admin';
+    req.user.status = p.status;
+    next();
+  } catch (err) {
+    return res.status(503).json({ error: 'Admin check threw', detail: (err && err.message) || String(err) });
+  }
+}
+
 // -------- Helper: send a proxied response to the frontend ------
 async function proxyAndForward(res, path, opts) {
   try {
@@ -535,7 +618,7 @@ async function proxyAndForward(res, path, opts) {
 
 // GET /api/catalogos
 //   No body; returns the upstream JSON verbatim.
-app.get('/api/catalogos', requireOUSLogin, (req, res) =>
+app.get('/api/catalogos', requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, (req, res) =>
   proxyAndForward(res, '/catalogos'));
 
 // =============================================================
@@ -571,8 +654,8 @@ function creditosCierreSaldos(req, res) {
     { method: 'GET', body: { fecha_cierre } }
   );
 }
-app.get('/api/creditos-cierre-saldos',  requireOUSLogin, creditosCierreSaldos);
-app.post('/api/creditos-cierre-saldos', requireOUSLogin, creditosCierreSaldos);
+app.get('/api/creditos-cierre-saldos',  requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosCierreSaldos);
+app.post('/api/creditos-cierre-saldos', requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosCierreSaldos);
 
 // GET /api/creditos/por-vencer — { dias: <integer> }
 function creditosPorVencer(req, res) {
@@ -587,8 +670,8 @@ function creditosPorVencer(req, res) {
     { method: 'GET', body: { dias } }
   );
 }
-app.get('/api/creditos/por-vencer',  requireOUSLogin, creditosPorVencer);
-app.post('/api/creditos/por-vencer', requireOUSLogin, creditosPorVencer);
+app.get('/api/creditos/por-vencer',  requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosPorVencer);
+app.post('/api/creditos/por-vencer', requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosPorVencer);
 
 // 404 for anything else under /api to make typos obvious in the
 // browser DevTools network tab.
