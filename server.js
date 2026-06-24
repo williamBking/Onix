@@ -55,6 +55,19 @@ const OUS_LOGIN    = process.env.OUS_LOGIN    || '';
 const OUS_PASSWORD = process.env.OUS_PASSWORD || '';
 const OUS_API_URL  = (process.env.OUS_API_URL || '').replace(/\/+$/, '');
 
+// Supabase auth gate for /api/* — validates each request's Supabase
+// session token against Supabase's /auth/v1/user endpoint so the public
+// Railway URL stops being an open back door into the OUS data. We use
+// the user endpoint rather than verifying the JWT locally because
+// Supabase projects can sign tokens with either HS256 (legacy shared
+// secret) or asymmetric algorithms like ES256 — the user endpoint
+// validates them all and saves us a dependency.
+//
+// SUPABASE_URL + SUPABASE_ANON_KEY power both the auth check and the
+// per-request role lookup against the public.profiles table.
+const SUPABASE_URL        = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+const SUPABASE_ANON_KEY   = process.env.SUPABASE_ANON_KEY || '';
+
 const PORT = Number(process.env.PORT) || 3000;
 
 // Comma-separated allowlist. Empty entries are ignored. The defaults
@@ -81,6 +94,12 @@ if (!OUS_LOGIN || !OUS_PASSWORD || !OUS_API_URL) {
   // We still start the server so Railway can reach /healthz and you
   // can see the misconfiguration in the dashboard instead of a
   // crash-looping container.
+}
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error('[ous-proxy] FATAL: SUPABASE_URL / SUPABASE_ANON_KEY not set — /api/* will reject every request with 503. ' +
+                'Set both in Railway → Variables: SUPABASE_URL=https://<project>.supabase.co and ' +
+                'SUPABASE_ANON_KEY=<eyJ... from Supabase → Settings → API → API Keys>.');
 }
 
 // ---------------------------------------------------------------
@@ -513,6 +532,88 @@ function requireOUSLogin(req, res, next) {
   next();
 }
 
+// -------- Guard: validate the caller's Supabase session token ----
+// Reads "Authorization: Bearer <jwt>" and validates it by asking
+// Supabase's /auth/v1/user endpoint who it belongs to. Algorithm-
+// agnostic (works for HS256, ES256, RS256). On success attaches
+// req.user with { id, email, raw_token, raw_payload }. Returns 401
+// on missing/invalid/expired token. This is the baseline gate —
+// without it the Railway URL is an open door (see README §SECURITY).
+async function requireSupabaseAuth(req, res, next) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return res.status(503).json({ error: 'Auth not configured — SUPABASE_URL/SUPABASE_ANON_KEY missing on server' });
+  }
+  const h = req.headers.authorization || '';
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  if (!m) return res.status(401).json({ error: 'Missing Authorization: Bearer <supabase access token>' });
+  const token = m[1].trim();
+  try {
+    const r = await fetch(SUPABASE_URL + '/auth/v1/user', {
+      headers: {
+        'apikey':        SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + token,
+        'Accept':        'application/json'
+      }
+    });
+    if (!r.ok) {
+      const body = await r.text();
+      return res.status(401).json({
+        error:  'Invalid or expired token',
+        detail: 'Supabase /auth/v1/user returned HTTP ' + r.status + ': ' + body.slice(0, 200)
+      });
+    }
+    const user = await r.json();
+    if (!user || !user.id) {
+      return res.status(401).json({ error: 'Token did not resolve to a user' });
+    }
+    req.user = {
+      id:          user.id,
+      email:       user.email,
+      raw_token:   token,
+      raw_payload: user
+    };
+    next();
+  } catch (err) {
+    return res.status(503).json({ error: 'Auth check threw', detail: (err && err.message) || String(err) });
+  }
+}
+
+// -------- Guard: caller's profile row must have role='admin' ----
+// JWT verification alone proves the caller is *some* Supabase user,
+// not that they're an Onix admin. We confirm by re-issuing their own
+// JWT against the public.profiles table — RLS lets a user read their
+// own profile only, which is exactly what we need. Fails closed.
+async function requireOnixAdmin(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Auth required' });
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return res.status(503).json({ error: 'Admin check not configured — SUPABASE_URL/SUPABASE_ANON_KEY missing on server' });
+  }
+  try {
+    const url = SUPABASE_URL + '/rest/v1/profiles?id=eq.' + encodeURIComponent(req.user.id) + '&select=role,status';
+    const r = await fetch(url, {
+      headers: {
+        'apikey':        SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + req.user.raw_token,
+        'Accept':        'application/json'
+      }
+    });
+    if (!r.ok) {
+      const body = await r.text();
+      return res.status(403).json({ error: 'Profile lookup failed', detail: 'HTTP ' + r.status + ': ' + body.slice(0, 200) });
+    }
+    const rows = await r.json();
+    const p = Array.isArray(rows) ? rows[0] : null;
+    if (!p || p.role !== 'admin' || p.status !== 'active') {
+      return res.status(403).json({ error: 'Admin role required' });
+    }
+    req.user.role   = 'admin';
+    req.user.status = p.status;
+    next();
+  } catch (err) {
+    return res.status(503).json({ error: 'Admin check threw', detail: (err && err.message) || String(err) });
+  }
+}
+
 // -------- Helper: send a proxied response to the frontend ------
 async function proxyAndForward(res, path, opts) {
   try {
@@ -535,7 +636,7 @@ async function proxyAndForward(res, path, opts) {
 
 // GET /api/catalogos
 //   No body; returns the upstream JSON verbatim.
-app.get('/api/catalogos', requireOUSLogin, (req, res) =>
+app.get('/api/catalogos', requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, (req, res) =>
   proxyAndForward(res, '/catalogos'));
 
 // =============================================================
@@ -571,8 +672,8 @@ function creditosCierreSaldos(req, res) {
     { method: 'GET', body: { fecha_cierre } }
   );
 }
-app.get('/api/creditos-cierre-saldos',  requireOUSLogin, creditosCierreSaldos);
-app.post('/api/creditos-cierre-saldos', requireOUSLogin, creditosCierreSaldos);
+app.get('/api/creditos-cierre-saldos',  requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosCierreSaldos);
+app.post('/api/creditos-cierre-saldos', requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosCierreSaldos);
 
 // GET /api/creditos/por-vencer — { dias: <integer> }
 function creditosPorVencer(req, res) {
@@ -587,8 +688,8 @@ function creditosPorVencer(req, res) {
     { method: 'GET', body: { dias } }
   );
 }
-app.get('/api/creditos/por-vencer',  requireOUSLogin, creditosPorVencer);
-app.post('/api/creditos/por-vencer', requireOUSLogin, creditosPorVencer);
+app.get('/api/creditos/por-vencer',  requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosPorVencer);
+app.post('/api/creditos/por-vencer', requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosPorVencer);
 
 // 404 for anything else under /api to make typos obvious in the
 // browser DevTools network tab.
