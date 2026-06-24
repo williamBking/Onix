@@ -3528,22 +3528,134 @@
 
   // ---------------- /api/creditos/por-vencer -------------------------
 
+  // Friendly column labels for the Credits Coming Due table. Anything not in
+  // this map falls back to the raw key, which is fine for unexpected fields.
+  const PV_COL_LABELS = {
+    id_cliente:                   { en: 'Client ID',         es: 'ID Cliente' },
+    id_credito:                   { en: 'Credit ID',         es: 'ID Crédito' },
+    cliente:                      { en: 'Client',            es: 'Cliente' },
+    producto:                     { en: 'Product',           es: 'Producto' },
+    fecha_inicio:                 { en: 'Start Date',        es: 'Fecha de Inicio' },
+    fecha_vencimiento:            { en: 'Maturity Date',     es: 'Fecha de Vencimiento' },
+    saldo_inicial:                { en: 'Initial Balance',   es: 'Saldo Inicial' },
+    saldo_actual:                 { en: 'Current Balance',   es: 'Saldo Actual' },
+    interes:                      { en: 'Interest',          es: 'Interés' },
+    saldo_final:                  { en: 'Final Balance',     es: 'Saldo Final' },
+    tasa:                         { en: 'Rate (%)',          es: 'Tasa (%)' },
+    tipo_pago:                    { en: 'Payment Frequency', es: 'Frecuencia de Pago' },
+    tiene_solicitud_de_renovacion:{ en: 'Renewal Requested?',es: '¿Renovación Solicitada?' }
+  };
+
+  // Translate a handful of Spanish enum values when the active language is
+  // English. Names, product codes, etc. stay as-is (proper nouns).
+  const PV_VALUE_EN = {
+    'Diaria':     'Daily',
+    'Semanal':    'Weekly',
+    'Quincenal':  'Bi-weekly',
+    'Mensual':    'Monthly',
+    'Trimestral': 'Quarterly',
+    'Anual':      'Annual',
+    'SI':         'Yes',
+    'NO':         'No'
+  };
+  // Light cleanups for the Spanish side (e.g. add the accent that the OUS
+  // API drops on "SI").
+  const PV_VALUE_ES = { 'SI': 'Sí' };
+
+  function activeLang() {
+    try { if (window.OnixLang && OnixLang.getLang) return OnixLang.getLang(); } catch (e) {}
+    return (document.documentElement.getAttribute('data-lang') || 'en');
+  }
+
+  function ousRenderPorVencerTable(rows) {
+    if (!Array.isArray(rows) || !rows.length) return null;
+    const lang = activeLang();
+    // Use a fixed column order so the rendered table stays consistent
+    // across API responses; trailing keys we don't know about get appended.
+    const knownOrder = Object.keys(PV_COL_LABELS);
+    const seen = {};
+    const cols = [];
+    knownOrder.forEach(k => { if (rows.some(r => r && k in r)) { seen[k] = true; cols.push(k); } });
+    rows.forEach(r => {
+      if (r && typeof r === 'object') {
+        Object.keys(r).forEach(k => { if (!seen[k]) { seen[k] = true; cols.push(k); } });
+      }
+    });
+    if (!cols.length) return null;
+
+    const labelFor = (k) => {
+      const m = PV_COL_LABELS[k];
+      return m ? (lang === 'es' ? m.es : m.en) : k;
+    };
+    const translateValue = (v) => {
+      if (v == null) return '';
+      const s = String(v);
+      if (lang === 'en' && PV_VALUE_EN[s]) return PV_VALUE_EN[s];
+      if (lang === 'es' && PV_VALUE_ES[s]) return PV_VALUE_ES[s];
+      return s;
+    };
+
+    const thead = '<thead><tr>' + cols.map(c => '<th>' + esc(labelFor(c)) + '</th>').join('') + '</tr></thead>';
+    const tbody = '<tbody>' + rows.map(r => '<tr>' + cols.map(c => {
+      const v = r ? r[c] : '';
+      const isNumeric = v != null && v !== '' && !isNaN(Number(v));
+      return '<td class="' + (isNumeric ? 'num' : '') + '">' + esc(translateValue(v)) + '</td>';
+    }).join('') + '</tr>').join('') + '</tbody>';
+    return '<table class="ous-table">' + thead + tbody + '</table>';
+  }
+
+  // Cache the last fetched rows so we can re-render in the new language
+  // when the user clicks the EN/ES toggle.
+  let __ousPorVencerRows = null;
+  let __ousPorVencerDias = null;
+  let __ousPorVencerFetchedAt = null;
+  function repaintPorVencer() {
+    if (!__ousPorVencerRows) return;
+    const lang = activeLang();
+    const table = ousRenderPorVencerTable(__ousPorVencerRows) || '';
+    const labels = lang === 'es'
+      ? { dias: 'días', rows: 'fila(s)', noRows: 'sin filas', fetched: 'obtenido' }
+      : { dias: 'days', rows: 'row(s)', noRows: 'no rows', fetched: 'fetched' };
+    const meta = '<div class="ous-meta-line">' +
+                  labels.dias + '=' + esc(__ousPorVencerDias) +
+                  ' · ' + (__ousPorVencerRows.length ? __ousPorVencerRows.length + ' ' + labels.rows : labels.noRows) +
+                  ' · ' + labels.fetched + ' ' + (__ousPorVencerFetchedAt || '') +
+                 '</div>';
+    ousShowResult('ous-vencer-result', table + meta);
+  }
+  // Re-paint whenever the EN/ES toggle is clicked.
+  document.addEventListener('click', (e) => {
+    if (e.target && e.target.closest && e.target.closest('[data-lang-set]')) {
+      setTimeout(repaintPorVencer, 50);
+    }
+  });
+
   async function fetchPorVencer() {
     const daysEl = document.getElementById('ous-vencer-days');
     const btnEl  = document.getElementById('ous-vencer-btn');
     if (!daysEl || !btnEl) return;
     const dias = Number(daysEl.value);
-    if (!Number.isFinite(dias) || dias < 1) { ousShowResult('ous-vencer-result', 'Days must be ≥ 1.', true); return; }
-    ousShowResult('ous-vencer-result', '<span class="muted">Loading…</span>');
-    btnEl.disabled = true; const orig = btnEl.textContent; btnEl.textContent = 'Loading…';
+    const lang = activeLang();
+    const loadingTxt = lang === 'es' ? 'Cargando…' : 'Loading…';
+    if (!Number.isFinite(dias) || dias < 1) {
+      ousShowResult('ous-vencer-result', lang === 'es' ? 'Los días deben ser ≥ 1.' : 'Days must be ≥ 1.', true);
+      return;
+    }
+    ousShowResult('ous-vencer-result', '<span class="muted">' + esc(loadingTxt) + '</span>');
+    btnEl.disabled = true; const orig = btnEl.textContent; btnEl.textContent = loadingTxt;
     try {
       const payload = await ousFetch('/api/creditos/por-vencer', { dias });
       const rows = ousExtractRows(payload);
-      const table = ousRenderTable(rows);
-      const meta = '<div class="ous-meta-line">dias=' + esc(dias) +
-                   ' · ' + (rows ? rows.length + ' row(s)' : 'no rows') +
-                   ' · fetched ' + new Date().toLocaleTimeString() + '</div>';
-      ousShowResult('ous-vencer-result', (table || '<pre class="ous-pre">' + esc(JSON.stringify(payload, null, 2)) + '</pre>') + meta);
+      __ousPorVencerRows = rows || [];
+      __ousPorVencerDias = dias;
+      __ousPorVencerFetchedAt = new Date().toLocaleTimeString();
+      const table = ousRenderPorVencerTable(rows);
+      if (!table) {
+        // Fall back to raw JSON for diagnostic visibility if the shape is unexpected
+        ousShowResult('ous-vencer-result', '<pre class="ous-pre">' + esc(JSON.stringify(payload, null, 2)) + '</pre>');
+      } else {
+        repaintPorVencer();
+      }
     } catch (err) {
       ousShowResult('ous-vencer-result', esc(err.message || String(err)), true);
     }  finally {
