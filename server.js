@@ -8,8 +8,12 @@
  *   - The browser must NEVER see the OUS login / password — we keep
  *     the credentials here in env vars and only expose a few proxied
  *     endpoints to the frontend.
- *   - OUS Pasiva tokens expire on the hour, so this server logs in
- *     once on boot and refreshes the token every 55 minutes.
+ *   - OUS Pasiva tokens expire on the hour. This server logs in once
+ *     on boot. It does NOT refresh on a timer — the OUS team asked us
+ *     to stop creating fresh sessions every 55 minutes because each
+ *     login showed up in their audit log. Instead, callOUS retries
+ *     reactively when OUS returns 401 (so the first request after
+ *     token expiry triggers a single re-login, not 24/day).
  *
  * Endpoints exposed to the Onix frontend:
  *   GET  /healthz                              — Railway health check
@@ -78,10 +82,6 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ||
   'https://williambking.github.io,https://portal.onixfinance.com'
 ).split(',').map(s => s.trim()).filter(Boolean);
 
-// Refresh well before OUS's 60-minute expiry so we never serve a
-// just-expired token to the frontend.
-const TOKEN_REFRESH_MS = 55 * 60 * 1000;
-
 // If the boot login fails (wrong creds, OUS down), retry on this
 // cadence. Routes 503 in the meantime.
 const BOOT_RETRY_MS = 60 * 1000;
@@ -110,7 +110,6 @@ const state = {
   token: null,           // current OUS bearer token, or null when logged out
   acquiredAt: null,      // epoch ms when we last got the token (for /healthz)
   lastError: null,       // last login error message, or null on success
-  refreshTimer: null,    // setInterval handle for the 55-min refresh loop
   bootTimer: null        // setTimeout handle for the retry-on-boot loop
 };
 
@@ -224,31 +223,19 @@ async function tryLogin(label) {
 
 /**
  * Boot loop: try once immediately, then retry every BOOT_RETRY_MS
- * until we get a token. Once successful, the 55-min refresh interval
- * takes over.
+ * until we get a token. Once successful, no further proactive logins
+ * are scheduled — the OUS team asked us to stop creating a fresh
+ * session every 55 minutes. Token renewal happens reactively in
+ * callOUS() the next time OUS returns 401, so we average one login
+ * per token-expiry-window instead of one every hour regardless.
  */
 async function startAuthLoop() {
   const ok = await tryLogin('initial');
-  if (ok) {
-    scheduleRefresh();
-    return;
-  }
+  if (ok) return;
   // Failed — schedule a retry. clearTimeout-safe so multiple calls
   // don't pile up duplicate timers.
   if (state.bootTimer) clearTimeout(state.bootTimer);
   state.bootTimer = setTimeout(startAuthLoop, BOOT_RETRY_MS);
-}
-
-function scheduleRefresh() {
-  if (state.refreshTimer) clearInterval(state.refreshTimer);
-  state.refreshTimer = setInterval(async () => {
-    const ok = await tryLogin('refresh');
-    if (!ok) {
-      // Refresh failed but we keep serving the old token until OUS
-      // rejects it (handled by the 401 retry in callOUS below).
-      console.warn('[ous-proxy] keeping previous token until next refresh tick');
-    }
-  }, TOKEN_REFRESH_MS);
 }
 
 // ---------------------------------------------------------------
