@@ -151,6 +151,12 @@ async function loginToOUS() {
     headers.get('authorization') || null;
   // ----------------------------------------------------------------
 
+  // Strip the password out of anything we're about to log or throw,
+  // in case OUS ever echoes the request body back in an error response.
+  const redact = (s) => OUS_PASSWORD
+    ? String(s).split(OUS_PASSWORD).join('[redacted]')
+    : String(s);
+
   const url = OUS_API_URL + LOGIN_PATH;
   console.log('[ous-proxy] login → POST ' + url +
               ' (body fields: ' + Object.keys(LOGIN_BODY).join(', ') + ')');
@@ -172,10 +178,10 @@ async function loginToOUS() {
   // key (if any) we extracted the token from.
   const contentType = res.headers.get('content-type') || '(no content-type)';
   console.log('[ous-proxy] login ← HTTP ' + res.status + ' ' + contentType +
-              ' — body preview: ' + rawText.slice(0, 400));
+              ' — body preview: ' + redact(rawText.slice(0, 400)));
 
   if (!res.ok) {
-    throw new Error('OUS login HTTP ' + res.status + ': ' + (rawText || '').slice(0, 300));
+    throw new Error('OUS login HTTP ' + res.status + ': ' + redact((rawText || '').slice(0, 300)));
   }
 
   // Identify which field carried the token (helps spot when OUS
@@ -195,7 +201,7 @@ async function loginToOUS() {
   if (typeof token === 'string') token = token.replace(/^Bearer\s+/i, '').trim();
   if (!token) {
     throw new Error('OUS login succeeded (HTTP ' + res.status + ') but no token in response. ' +
-      'Body was: ' + JSON.stringify(json).slice(0, 300));
+      'Body was: ' + redact(JSON.stringify(json).slice(0, 300)));
   }
 
   state.token      = token;
@@ -373,8 +379,6 @@ app.get('/healthz', (req, res) => {
     ok: true,
     ous_logged_in: !!state.token,
     token_acquired_at: state.acquiredAt ? new Date(state.acquiredAt).toISOString() : null,
-    last_login_error: state.lastError,
-    allowed_origins: ALLOWED_ORIGINS,
     uptime_s: Math.round(process.uptime())
   });
 });
@@ -384,7 +388,7 @@ app.get('/healthz', (req, res) => {
 // and reports back what each one returns. Lets us figure out
 // whether OUS reads from query, JSON body, form body, etc. without
 // redeploying for every guess.
-app.get('/diagnose-data', async (req, res) => {
+app.get('/diagnose-data', requireSupabaseAuth, requireOnixAdmin, async (req, res) => {
   if (!state.token) {
     return res.status(503).json({ error: 'OUS proxy is not logged in yet' });
   }
@@ -427,7 +431,7 @@ app.get('/diagnose-data', async (req, res) => {
 // Runs ~12 outbound tests in parallel from Railway and reports each
 // status + timing so we can isolate: is it Railway, is it OUS, is
 // it the specific port, is it the User-Agent, etc.
-app.get('/diagnose', async (req, res) => {
+app.get('/diagnose', requireSupabaseAuth, requireOnixAdmin, async (req, res) => {
   const tests = [
     // --- General internet: prove Railway's outbound is healthy ---
     { id: 'cloudflare-1.1.1.1', url: 'https://1.1.1.1', method: 'GET' },
