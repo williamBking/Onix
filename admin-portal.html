@@ -1146,7 +1146,7 @@
       var c = OnixDB.client;
       var [pRes, lRes, iRes] = await Promise.all([
         c.from('profiles').select('*').eq('id', profileId).single(),
-        c.from('loans').select('loan_id_display, balance, status').eq('user_id', profileId),
+        c.from('loans').select('loan_id_display, balance, principal_amount, interest_rate, maturity_date, status').eq('user_id', profileId),
         c.from('investments').select('venture_name, amount_invested, status').eq('user_id', profileId)
       ]);
       if (pRes.error) { console.error('[onix-clients] profile fetch failed:', pRes.error); return; }
@@ -1155,6 +1155,11 @@
       var invs  = iRes.data || [];
       var committed = invs.reduce(function(s, x){ return s + Number(x.amount_invested || 0); }, 0);
       var activeDeals = invs.filter(function(x){ return x.status !== 'exited'; }).length;
+      // Borrower-side aggregates. Loan Balance = outstanding principal across
+      // all active loans; Principal Disbursed = original amounts granted.
+      var activeLoanRows = loans.filter(function(x){ return x.status !== 'paid_off' && x.status !== 'closed'; });
+      var loanBalance     = activeLoanRows.reduce(function(s, x){ return s + Number(x.balance || 0); }, 0);
+      var principalDisbursed = activeLoanRows.reduce(function(s, x){ return s + Number(x.principal_amount || x.balance || 0); }, 0);
       var name = p.full_name || p.email || 'Client';
       var statusLabel = (p.status || '—').replace(/^./, function(ch){ return ch.toUpperCase(); });
 
@@ -1166,10 +1171,24 @@
           ivCell('Role', roleText(p)) +
           ivCell('Status', statusLabel) +
           ivCell('Client Since', yearOf(p.created_at)) +
-          ivCell('Active Loans', loans.length) +
+          ivCell('Active Loans', activeLoanRows.length) +
           ivCell('Active Investments', activeDeals) +
-          ivCell('Capital Committed', fmtMoney(committed), true) +
+          ivCell('Loan Balance', fmtMoney(loanBalance)) +
+          ivCell('Principal Disbursed', fmtMoney(principalDisbursed)) +
+          ivCell('Capital Committed (Investments)', fmtMoney(committed), true) +
         '</div>' +
+        (activeLoanRows.length
+          ? '<div style="font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:#9B9590;font-weight:700;margin-bottom:10px">Active Loans</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:18px">' +
+              activeLoanRows.map(function(x){
+                var rate = x.interest_rate != null ? ' · ' + Number(x.interest_rate).toFixed(2) + '%' : '';
+                var mat  = x.maturity_date ? ' · matures ' + x.maturity_date : '';
+                return '<div style="padding:10px 14px;background:#F8F7F5;border-left:3px solid #C0392B;font-size:.84rem;font-weight:600">' +
+                  '#' + esc(x.loan_id_display || '—') + ' — ' + fmtMoney(x.balance) + rate + mat +
+                '</div>';
+              }).join('') +
+            '</div>'
+          : '') +
         (invs.length
           ? '<div style="font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:#9B9590;font-weight:700;margin-bottom:10px">Active Investments</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px">' +
