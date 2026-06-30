@@ -70,17 +70,43 @@ for each row
 execute function public.enforce_onix_admin_permissions();
 
 -- ------------------------------------------------------------
--- 2. "Edit Content" — denied to Account Executives only
---    (Admin and Manager keep editing). Added as RESTRICTIVE
---    policies, which AND together with whatever access rules
---    already exist on these tables — they can only narrow
---    access, never grant new access.
+-- 2. "Edit Content" — denied to Account Executives only.
+--    (Admin and Manager can create, edit, and delete content.)
+--
+--    RESTRICTIVE policies AND with existing access rules — they
+--    can only narrow access, never grant new access.
+--
+--    loans / investments / raises: AE can SELECT (they need to
+--    view deals) but cannot INSERT, UPDATE, or DELETE.
+--
+--    *_documents: AE is fully blocked (covered by for all).
 -- ------------------------------------------------------------
+
+-- loans
+drop policy if exists "ae cannot insert loans" on public.loans;
+create policy "ae cannot insert loans" on public.loans
+as restrictive
+for insert
+with check (public.current_admin_title() is distinct from 'ae');
+
 drop policy if exists "ae cannot edit loans" on public.loans;
 create policy "ae cannot edit loans" on public.loans
 as restrictive
 for update
 using (public.current_admin_title() is distinct from 'ae');
+
+drop policy if exists "ae cannot delete loans" on public.loans;
+create policy "ae cannot delete loans" on public.loans
+as restrictive
+for delete
+using (public.current_admin_title() is distinct from 'ae');
+
+-- investments
+drop policy if exists "ae cannot insert investments" on public.investments;
+create policy "ae cannot insert investments" on public.investments
+as restrictive
+for insert
+with check (public.current_admin_title() is distinct from 'ae');
 
 drop policy if exists "ae cannot edit investments" on public.investments;
 create policy "ae cannot edit investments" on public.investments
@@ -88,12 +114,32 @@ as restrictive
 for update
 using (public.current_admin_title() is distinct from 'ae');
 
+drop policy if exists "ae cannot delete investments" on public.investments;
+create policy "ae cannot delete investments" on public.investments
+as restrictive
+for delete
+using (public.current_admin_title() is distinct from 'ae');
+
+-- raises
+drop policy if exists "ae cannot insert raises" on public.raises;
+create policy "ae cannot insert raises" on public.raises
+as restrictive
+for insert
+with check (public.current_admin_title() is distinct from 'ae');
+
 drop policy if exists "ae cannot edit raises" on public.raises;
 create policy "ae cannot edit raises" on public.raises
 as restrictive
 for update
 using (public.current_admin_title() is distinct from 'ae');
 
+drop policy if exists "ae cannot delete raises" on public.raises;
+create policy "ae cannot delete raises" on public.raises
+as restrictive
+for delete
+using (public.current_admin_title() is distinct from 'ae');
+
+-- documents: full block for AE (no read needed — they see docs via the loan/investment record)
 drop policy if exists "ae cannot touch loan_documents" on public.loan_documents;
 create policy "ae cannot touch loan_documents" on public.loan_documents
 as restrictive
@@ -112,6 +158,54 @@ as restrictive
 for all
 using (public.current_admin_title() is distinct from 'ae');
 
+-- ------------------------------------------------------------
+-- 3. "Billing" — denied to Account Executives only.
+--    (Admin and Manager can manage payments and distributions.)
+--
+--    AE can still SELECT these tables to view client history,
+--    but cannot create, modify, or delete payment/payout records.
+-- ------------------------------------------------------------
+
+-- loan_payments
+drop policy if exists "ae cannot insert loan_payments" on public.loan_payments;
+create policy "ae cannot insert loan_payments" on public.loan_payments
+as restrictive
+for insert
+with check (public.current_admin_title() is distinct from 'ae');
+
+drop policy if exists "ae cannot update loan_payments" on public.loan_payments;
+create policy "ae cannot update loan_payments" on public.loan_payments
+as restrictive
+for update
+using (public.current_admin_title() is distinct from 'ae');
+
+drop policy if exists "ae cannot delete loan_payments" on public.loan_payments;
+create policy "ae cannot delete loan_payments" on public.loan_payments
+as restrictive
+for delete
+using (public.current_admin_title() is distinct from 'ae');
+
+-- distributions
+drop policy if exists "ae cannot insert distributions" on public.distributions;
+create policy "ae cannot insert distributions" on public.distributions
+as restrictive
+for insert
+with check (public.current_admin_title() is distinct from 'ae');
+
+drop policy if exists "ae cannot update distributions" on public.distributions;
+create policy "ae cannot update distributions" on public.distributions
+as restrictive
+for update
+using (public.current_admin_title() is distinct from 'ae');
+
+drop policy if exists "ae cannot delete distributions" on public.distributions;
+create policy "ae cannot delete distributions" on public.distributions
+as restrictive
+for delete
+using (public.current_admin_title() is distinct from 'ae');
+
 -- Note: "Add Clients" and "View Projects" (Raises) are allowed for every
--- role per the matrix, so no restriction is added for those. "Billing" has
--- no real page/table in this app yet, so there is nothing to enforce there.
+-- role per the matrix, so no restriction is added for those.
+-- "Manage Users" and "Remove Clients" (admin-only) are enforced via the
+-- trigger above, not RLS policies, because they depend on which column
+-- is changing rather than which table is being accessed.
