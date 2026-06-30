@@ -1107,6 +1107,91 @@
       table.dataset.roleSplit = '';
     }
 
+    // Inject the "Import from OUS" button bar at the top of the Clients
+    // view. Idempotent — runs every paint, only adds the bar once.
+    // Calls the import-ous-clients Supabase edge function (admin-only),
+    // streams progress into a result modal, then re-paints the table.
+    function ensureImportFromOusButton(){
+      var view = document.getElementById('view-clients');
+      if (!view) return;
+      if (view.querySelector('[data-onix-ous-import]')) return;
+
+      var host = document.createElement('div');
+      host.setAttribute('data-onix-ous-import', '1');
+      host.style.cssText =
+        'display:flex;align-items:center;gap:12px;margin:0 0 18px;padding:12px 16px;' +
+        'background:#fff;border:1px solid #E8E8E8;border-left:3px solid #C0392B';
+
+      var label = document.createElement('div');
+      label.style.cssText = 'flex:1;font-size:.78rem;color:#1A1A1A';
+      label.innerHTML =
+        '<strong>OUS Pasiva sync</strong> · Pulls the latest closing-balances feed and creates/updates client profiles + loans. Idempotent — safe to re-run.';
+
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tbl-btn';
+      btn.style.cssText =
+        'background:#C0392B;color:#fff;border:1px solid #C0392B;padding:9px 16px;' +
+        'cursor:pointer;font:600 .72rem/1 "DM Sans",sans-serif;text-transform:uppercase;' +
+        'letter-spacing:.1em;border-radius:2px';
+      btn.textContent = 'Import from OUS';
+
+      btn.addEventListener('click', async function(){
+        if (btn.disabled) return;
+        var today = new Date().toISOString().slice(0, 10);
+        var fecha = prompt('Closing date to pull from OUS (YYYY-MM-DD):', today);
+        if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return;
+        if (!confirm('Run OUS import for ' + fecha + '?\\n\\nThis creates/updates auth users + profiles + loans for every client in the feed. Safe to re-run.')) return;
+
+        btn.disabled = true;
+        var orig = btn.textContent;
+        btn.textContent = 'Importing…';
+        try {
+          var sess = await OnixDB.client.auth.getSession();
+          var token = sess && sess.data && sess.data.session && sess.data.session.access_token;
+          if (!token) throw new Error('Not logged in.');
+
+          var r = await OnixDB.client.functions.invoke('import-ous-clients', {
+            body: { fecha_cierre: fecha }
+          });
+          if (r.error) throw r.error;
+          var d = r.data || {};
+          var msg =
+            'OUS import for ' + (d.fecha_cierre || fecha) + '\\n\\n' +
+            'OUS rows received:   ' + (d.total_ous_rows || 0) + '\\n' +
+            'Unique clients:      ' + (d.unique_clients || 0) + '\\n\\n' +
+            'Profiles created:    ' + (d.profiles && d.profiles.created || 0) + '\\n' +
+            'Profiles existing:   ' + (d.profiles && d.profiles.existing || 0) + '\\n' +
+            'Fallback emails:     ' + (d.profiles && d.profiles.fallback_emails || 0) + '\\n' +
+            'Profile errors:      ' + (d.profiles && d.profiles.errored || 0) + '\\n\\n' +
+            'Loans created:       ' + (d.loans && d.loans.created || 0) + '\\n' +
+            'Loans existing:      ' + (d.loans && d.loans.existing || 0) + '\\n' +
+            'Loan errors:         ' + (d.loans && d.loans.errored || 0);
+          if (d.error_count) msg += '\\n\\nFirst error: ' + (d.errors && d.errors[0] ? JSON.stringify(d.errors[0]) : '?');
+          alert(msg);
+          // Re-paint the table to reflect any new clients.
+          loadClientsAndPaint().catch(function(e){ console.error('[onix-clients] re-paint after import failed:', e); });
+        } catch (err) {
+          console.error('[onix-ous-import]', err);
+          alert('Import failed: ' + (err && err.message ? err.message : String(err)));
+        } finally {
+          btn.disabled = false;
+          btn.textContent = orig;
+        }
+      });
+
+      host.appendChild(label);
+      host.appendChild(btn);
+
+      // Place just above the clients table
+      var table = view.querySelector('table.tbl');
+      if (table && table.parentElement) {
+        table.parentElement.insertBefore(host, table);
+      } else {
+        view.insertBefore(host, view.firstChild);
+      }
+    }
+
     // Poll until view-clients exists in the DOM (the Bolt bundler unpacks
     // the template asynchronously), then paint once. We deliberately do NOT
     // require .active — the bundle may toggle views via inline display
@@ -1119,6 +1204,7 @@
       if (!view) return;
       var table = view.querySelector('table.tbl');
       if (!table || !table.querySelector('tbody')) return;
+      ensureImportFromOusButton();
       painted = true;
       loadClientsAndPaint().catch(function(e){
         console.error('[onix-clients] paint failed:', e);
