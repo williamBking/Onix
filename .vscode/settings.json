@@ -1,0 +1,20 @@
+{
+  "files.exclude": {
+    "**/.DS_Store": true
+  },
+  "search.exclude": {
+    "_archive/**": true,
+    "**/*.min.js": true
+  },
+  "files.watcherExclude": {
+    "_archive/**": true,
+    "node_modules/**": true
+  },
+  "explorer.fileNesting.enabled": true,
+  "explorer.fileNesting.patterns": {
+    "admin-portal.html": "admin-portal-data.js",
+    "client-portal.html": "client-portal-data.js",
+    "package.json": "package-lock.json, vercel.json, .vercelignore",
+    "server.js": "supabase.js"
+  }
+}
