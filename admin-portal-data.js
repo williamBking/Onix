@@ -379,6 +379,55 @@
     });
   }
 
+  // Render client_documents for a given profile id (not application_id).
+  async function loadAndRenderClientDocs(container, profileId) {
+    if (!container || !profileId) return;
+    container.innerHTML = '<div style="padding:10px 0;color:#9B9590;font-size:.8rem">Loading documents…</div>';
+    const { data, error } = await OnixDB.client
+      .from('client_documents')
+      .select('id, name, storage_path, dropbox_url, uploaded_at, category')
+      .eq('user_id', profileId)
+      .order('uploaded_at', { ascending: false });
+    if (error) {
+      container.innerHTML = '<div style="padding:10px 0;color:#C0392B;font-size:.8rem">Could not load: ' + esc(error.message) + '</div>';
+      return;
+    }
+    const docs = data || [];
+    if (!docs.length) {
+      container.innerHTML = '<div style="padding:10px 0;color:#9B9590;font-style:italic;font-size:.8rem">No documents on file.</div>';
+      return;
+    }
+    const linkStyle = 'font-size:.66rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#C0392B;text-decoration:none;border:1px solid #C0392B;padding:6px 12px;border-radius:2px;cursor:pointer';
+    container.innerHTML = docs.map(d => {
+      let meta = '';
+      try { meta = new Date(d.uploaded_at).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }); } catch(_) {}
+      const action = d.storage_path
+        ? `<a href="#" data-storage-path="${esc(d.storage_path)}" style="${linkStyle}">View ↗</a>`
+        : (d.dropbox_url
+            ? `<a href="${esc(d.dropbox_url)}" target="_blank" rel="noopener" style="${linkStyle}">View ↗</a>`
+            : '<span style="font-size:.66rem;color:#9B9590">No link</span>');
+      return `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;background:#F8F7F5;border-left:3px solid #C0392B;margin-bottom:6px">
+        <div style="min-width:0">
+          <div style="font-size:.84rem;font-weight:600">${esc(d.name)}</div>
+          <div style="font-size:.7rem;color:#9B9590;margin-top:2px">${esc(d.category || '')}${meta ? ' · ' + meta : ''}</div>
+        </div>
+        ${action}
+      </div>`;
+    }).join('');
+    container.querySelectorAll('[data-storage-path]').forEach(a => {
+      a.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const path = a.getAttribute('data-storage-path');
+        const orig = a.textContent;
+        a.textContent = 'Opening…';
+        const r = await OnixDB.client.storage.from('client-documents').createSignedUrl(path, 3600);
+        a.textContent = orig;
+        if (r.error || !r.data) { alert('Could not open: ' + (r.error && r.error.message || 'unknown')); return; }
+        window.open(r.data.signedUrl, '_blank', 'noopener');
+      });
+    });
+  }
+
   function viewApplication(app) {
     const c = app.profiles || {};
     const statusBtn = (label, status, color) => `
@@ -1206,6 +1255,153 @@
     return true;
   }
 
+  // ---- Client detail modal (wired to the "View" button in the Clients table) ----
+  function viewClient(client, loans, investments) {
+    const loanRows    = (loans       || []).filter(l => l.user_id === client.id);
+    const invRows     = (investments || []).filter(i => i.user_id === client.id);
+
+    const loanTable = loanRows.length ? `
+      <table class="oac-table" style="margin-top:10px;font-size:.8rem">
+        <thead><tr><th>Loan ID</th><th>Balance</th><th>Rate</th><th>Next Due</th><th>Status</th></tr></thead>
+        <tbody>${loanRows.map(l => `<tr>
+          <td>${esc(l.loan_id_display || l.id.slice(0,8))}</td>
+          <td>${fmt.money(l.balance)}</td>
+          <td>${fmt.pct(l.interest_rate)}</td>
+          <td>${fmt.date(l.next_due_date)}</td>
+          <td><span class="oac-badge ${esc(l.status||'')}">${esc(l.status||'—')}</span></td>
+        </tr>`).join('')}</tbody>
+      </table>` : '<div style="color:#888;font-size:.85rem;padding:8px 0">No loans on record.</div>';
+
+    const invTable = invRows.length ? `
+      <table class="oac-table" style="margin-top:10px;font-size:.8rem">
+        <thead><tr><th>Venture</th><th>Invested</th><th>Return</th><th>Status</th></tr></thead>
+        <tbody>${invRows.map(i => `<tr>
+          <td>${esc(i.venture_name)}</td>
+          <td>${fmt.money(i.amount_invested)}</td>
+          <td>${i.expected_return != null ? fmt.pct(i.expected_return) : '—'}</td>
+          <td><span class="oac-badge ${esc(i.status||'')}">${esc(i.status||'—')}</span></td>
+        </tr>`).join('')}</tbody>
+      </table>` : '<div style="color:#888;font-size:.85rem;padding:8px 0">No investments on record.</div>';
+
+    openModal(`
+      <h2>${esc(client.full_name || client.email || 'Client')}</h2>
+      <div class="sub">${esc(client.email)}</div>
+      <div class="oac-tabs">
+        <button type="button" class="oac-tab active" data-cl-tab="profile">Profile</button>
+        <button type="button" class="oac-tab" data-cl-tab="loans">Loans</button>
+        <button type="button" class="oac-tab" data-cl-tab="investments">Investments</button>
+        <button type="button" class="oac-tab" data-cl-tab="ous">OUS Credits</button>
+      </div>
+
+      <div class="oac-section active" data-cl-section="profile">
+        <div class="oac-modal-row">
+          ${detailRow('Full Name',   client.full_name)}
+          ${detailRow('Email',       client.email)}
+          ${detailRow('Phone',       client.phone)}
+          ${detailRow('RFC',         client.rfc)}
+          ${detailRow('Regime',      client.regimen)}
+          ${detailRow('Promotor',    client.promotor)}
+          ${detailRow('Role',        [client.is_borrower && 'Borrower', client.is_lp && 'LP'].filter(Boolean).join(' + ') || '—')}
+          ${detailRow('Status',      client.status)}
+          ${detailRow('Joined',      fmt.date(client.created_at))}
+          ${detailRow('Address',     client.address)}
+        </div>
+        <div style="margin-top:10px;text-align:right">
+          <button class="oac-btn red" id="cl-edit-btn" type="button">Edit Profile</button>
+        </div>
+      </div>
+
+      <div class="oac-section" data-cl-section="loans">
+        <h3 style="font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:#888;font-weight:700;margin:14px 0 4px">
+          ${loanRows.length} Loan${loanRows.length !== 1 ? 's' : ''}
+        </h3>
+        ${loanTable}
+      </div>
+
+      <div class="oac-section" data-cl-section="investments">
+        <h3 style="font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:#888;font-weight:700;margin:14px 0 4px">
+          ${invRows.length} Investment${invRows.length !== 1 ? 's' : ''}
+        </h3>
+        ${invTable}
+      </div>
+
+      <div class="oac-section" data-cl-section="ous">
+        <div id="cl-ous-body" style="padding:10px 0;color:#9B9590;font-size:.84rem">Loading OUS credits…</div>
+      </div>
+    `);
+
+    const m = document.getElementById('oac-modal');
+
+    // Tab switching
+    m.querySelectorAll('[data-cl-tab]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const key = tab.dataset.clTab;
+        m.querySelectorAll('[data-cl-tab]').forEach(t => t.classList.toggle('active', t === tab));
+        m.querySelectorAll('[data-cl-section]').forEach(s => s.classList.toggle('active', s.dataset.clSection === key));
+        if (key === 'ous') loadClientOUSCredits(m.querySelector('#cl-ous-body'), client);
+      });
+    });
+
+    // Edit profile
+    const editBtn = m.querySelector('#cl-edit-btn');
+    if (editBtn) editBtn.addEventListener('click', () => openEditClientModal(client));
+  }
+
+  // Fetch and render this client's OUS credits in the modal's OUS tab.
+  async function loadClientOUSCredits(container, client) {
+    if (!container || container.dataset.loaded) return;
+    container.dataset.loaded = '1';
+    container.innerHTML = '<span style="color:#888;font-style:italic">Fetching OUS credits…</span>';
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      const payload = await ousFetch('/api/creditos-cierre-saldos', { fecha_cierre: today });
+      const all     = ousExtractRows(payload) || [];
+      const email   = (client.email  || '').toLowerCase().trim();
+      const rfc     = (client.rfc    || '').toUpperCase().trim();
+      const mine    = all.filter(c => {
+        const ce = ((c.correo || '')).toLowerCase().trim();
+        const cr = ((c.rfc    || '')).toUpperCase().trim();
+        if (rfc   && cr && cr === rfc)   return true;
+        if (email && ce && ce === email) return true;
+        return false;
+      });
+
+      if (!mine.length) {
+        container.innerHTML = '<div style="color:#888;font-size:.85rem;padding:8px 0">No OUS credits found for this client as of today.</div>';
+        return;
+      }
+
+      const fmtMXN = n => (n == null || n === '' ? '—' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+      const rows = mine.map(c => `
+        <div style="background:#FBFAF7;border:1px solid #E8E8E8;border-top:2px solid #C0392B;padding:14px 18px;margin-bottom:12px;font-size:.82rem">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
+            <div style="font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:1.1rem">${esc(c.producto || '—')}</div>
+            <div><span class="oac-badge active">${esc(c.status_contable || '—')}</span></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 24px">
+            ${detailRow('Credit ID',     c.id_credito)}
+            ${detailRow('Type',          c.tipo_credito)}
+            ${detailRow('Term',          c.plazo)}
+            ${detailRow('Annual Rate',   c.tasa_anualizada ? c.tasa_anualizada + '%' : '—')}
+            ${detailRow('Start Date',    fmt.date(c.fecha_inicio))}
+            ${detailRow('End Date',      fmt.date(c.fecha_termino))}
+            ${detailRow('Outstanding',   fmtMXN(c.adeudo_total_neto))}
+            ${detailRow('Current Bal.',  fmtMXN(c.saldo_total_vigente))}
+            ${detailRow('Past Due',      fmtMXN(c.saldo_total_vencido))}
+            ${detailRow('Days Past Due', c.dias_mora || '0')}
+            ${detailRow('Payments Paid', c.num_cuotas_pagadas + ' / ' + c.num_cuotas_contratadas)}
+          </div>
+        </div>`).join('');
+      container.innerHTML = `
+        <div style="font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:#888;font-weight:700;margin:10px 0 8px">
+          ${mine.length} Active Credit${mine.length !== 1 ? 's' : ''} — ${today}
+        </div>
+        ${rows}`;
+    } catch (err) {
+      container.innerHTML = '<div style="color:#C0392B;font-size:.85rem">' + esc(err.message || String(err)) + '</div>';
+    }
+  }
+
   function paintClientsView(clients, loans, investments, pending) {
     const v = findView(STATIC_VIEWS.clients); if (!v) return false;
     if (alreadyPainted(v)) return true;
@@ -1368,6 +1564,26 @@
         });
       });
     }
+
+    // Wire the View buttons to open the client detail modal.
+    v.querySelectorAll('[data-cl-view]').forEach(b => {
+      const profileId = b.closest('tr') && b.closest('tr').dataset.profileId;
+      const client = (clients || []).find(c => c.id === profileId);
+      if (client) b.addEventListener('click', () => viewClient(client, loans, investments));
+    });
+
+    // Wire the Documents buttons to open the client docs manager.
+    v.querySelectorAll('[data-cl-docs]').forEach(b => {
+      const profileId = b.closest('tr') && b.closest('tr').dataset.profileId;
+      const client = (clients || []).find(c => c.id === profileId);
+      if (client) b.addEventListener('click', () => {
+        openModal(`<h2>${esc(client.full_name || client.email)}</h2>
+          <div class="sub">Client Documents</div>
+          <div id="cl-docs-body"><span style="color:#888;font-style:italic">Loading…</span></div>`);
+        const m = document.getElementById('oac-modal');
+        loadAndRenderClientDocs(m.querySelector('#cl-docs-body'), client.id);
+      });
+    });
 
     wireExport(v, 'oac-export-clients', () => {
       downloadCsv('onix-clients-' + isoDate(new Date().toISOString()) + '.csv',
@@ -3468,23 +3684,105 @@
 
   // ---------------- Helpers for tabular results ----------------------
 
+  // Column labels and display config for the Closing Balances table.
+  // Columns listed here appear first in the defined order; any OUS field
+  // not listed here is appended after and shown with its raw key name.
+  // hidden:true columns are excluded from the rendered table entirely
+  // (they exist in the API but add noise rather than value for the admin).
+  const CS_COL_CONFIG = {
+    nombre_cliente:             { en: 'Client',           es: 'Cliente' },
+    rfc:                        { en: 'RFC',              es: 'RFC' },
+    id_credito:                 { en: 'Credit ID',        es: 'ID Crédito' },
+    producto:                   { en: 'Product',          es: 'Producto' },
+    plazo:                      { en: 'Term',             es: 'Plazo' },
+    tasa_anualizada:            { en: 'Rate (%)',         es: 'Tasa (%)' },
+    fecha_inicio:               { en: 'Start Date',       es: 'Fecha Inicio' },
+    fecha_termino:              { en: 'End Date',         es: 'Fecha Término' },
+    status_contable:            { en: 'Status',           es: 'Estado' },
+    dias_mora:                  { en: 'Days Overdue',     es: 'Días Mora' },
+    saldo_total_vigente:        { en: 'Current Balance',  es: 'Saldo Vigente', money: true },
+    saldo_total_vencido:        { en: 'Past Due',         es: 'Vencido',       money: true },
+    adeudo_total_neto:          { en: 'Total Owed',       es: 'Adeudo Total',  money: true },
+    correo:                     { en: 'Email',            es: 'Correo' },
+    // hide raw sub-components that are already summarised above
+    sucursal:                   { hidden: true },
+    regimen:                    { hidden: true },
+    capital:                    { hidden: true },
+    monto_otorgado:             { hidden: true },
+    cuota:                      { hidden: true },
+    factor_moratorio:           { hidden: true },
+    amortizaciones_capital:     { hidden: true },
+    num_cuotas_devengadas:      { hidden: true },
+    saldo_vencido_capital:      { hidden: true },
+    saldo_vencido_intereses:    { hidden: true },
+    saldo_vencido_intereses_isr:{ hidden: true },
+    saldo_vencido_intereses_neto:{hidden: true },
+    saldo_vencido_comisiones:   { hidden: true },
+    saldo_vencido_moratorios:   { hidden: true },
+    saldo_vencido_iva:          { hidden: true },
+    saldo_vigente_capital:      { hidden: true },
+    saldo_vigente_intereses:    { hidden: true },
+    saldo_vigente_intereses_isr:{ hidden: true },
+    saldo_vigente_intereses_neto:{hidden: true },
+    saldo_vigente_comisiones:   { hidden: true },
+    saldo_vigente_iva:          { hidden: true },
+    saldo_total_capital:        { hidden: true },
+    adeudo_total:               { hidden: true },
+    promotor:                   { hidden: true },
+    fecha_cierre:               { hidden: true },
+    cuenta:                     { hidden: true },
+    clabe:                      { hidden: true },
+    num_cuotas_contratadas:     { en: 'Installments', es: 'Cuotas' },
+    num_cuotas_pagadas:         { en: 'Paid',         es: 'Pagadas' },
+    num_cuotas_vencidas:        { en: 'Overdue',      es: 'Vencidas' }
+  };
+
+  // Format a value for display in the OUS tables: currency, dates, etc.
+  function ousFormatValue(key, val) {
+    if (val == null || val === '') return '';
+    const cfg = CS_COL_CONFIG[key] || {};
+    if (cfg.money) {
+      const n = Number(val);
+      return isNaN(n) ? String(val) : '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    // Date fields
+    if (/^fecha_/.test(key)) {
+      try { return new Date(val).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (_) {}
+    }
+    return String(val);
+  }
+
   function ousRenderTable(rows) {
     if (!Array.isArray(rows) || !rows.length) return null;
-    // Collect every key across the rows so missing fields don't break
-    // the alignment.
+    const lang = activeLang();
+
+    // Build visible column list: known order first, then any remainder.
+    const knownOrder = Object.keys(CS_COL_CONFIG);
+    const allKeys = new Set();
+    rows.forEach(r => r && typeof r === 'object' && Object.keys(r).forEach(k => allKeys.add(k)));
     const cols = [];
-    const seen = {};
-    rows.forEach(r => {
-      if (r && typeof r === 'object') {
-        Object.keys(r).forEach(k => { if (!seen[k]) { seen[k] = true; cols.push(k); } });
-      }
+    const seenCs = new Set();
+    knownOrder.forEach(k => {
+      if (!allKeys.has(k)) return;
+      if (CS_COL_CONFIG[k] && CS_COL_CONFIG[k].hidden) return;
+      seenCs.add(k); cols.push(k);
     });
+    allKeys.forEach(k => { if (!seenCs.has(k) && !(CS_COL_CONFIG[k] && CS_COL_CONFIG[k].hidden)) cols.push(k); });
     if (!cols.length) return null;
-    const thead = '<thead><tr>' + cols.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr></thead>';
+
+    const labelFor = k => {
+      const cfg = CS_COL_CONFIG[k];
+      if (!cfg || cfg.hidden) return k;
+      return lang === 'es' ? (cfg.es || k) : (cfg.en || k);
+    };
+
+    const thead = '<thead><tr>' + cols.map(c => '<th>' + esc(labelFor(c)) + '</th>').join('') + '</tr></thead>';
     const tbody = '<tbody>' + rows.map(r => '<tr>' + cols.map(c => {
-      const v = r ? r[c] : '';
-      const isNumeric = v != null && v !== '' && !isNaN(Number(v));
-      return '<td class="' + (isNumeric ? 'num' : '') + '">' + esc(v == null ? '' : String(v)) + '</td>';
+      const v   = r ? r[c] : '';
+      const fmt = ousFormatValue(c, v);
+      const cfg = CS_COL_CONFIG[c] || {};
+      const isNum = cfg.money || (!isNaN(Number(v)) && v !== '' && v != null);
+      return '<td class="' + (isNum ? 'num' : '') + '">' + esc(fmt || '') + '</td>';
     }).join('') + '</tr>').join('') + '</tbody>';
     return '<table class="ous-table">' + thead + tbody + '</table>';
   }
@@ -3721,6 +4019,7 @@
     const wait = () => new Promise(r => setTimeout(r, 250));
     while (tries++ < 40 && !ensureOUSSidebarAndView()) await wait();
     loadOUSHealth();
+    // Auto-load catalogs
     try {
       const payload = await ousFetch('/api/catalogos');
       renderCatalogos(payload);
@@ -3732,6 +4031,9 @@
       const root = document.getElementById('ous-catalogos');
       if (root) root.innerHTML = '<div class="ous-result err">' + esc(err.message || String(err)) + '</div>';
     }
+    // Auto-load today's closing balances so the admin sees data immediately
+    // without having to click Fetch. The date picker still works for other dates.
+    fetchCierreSaldos();
   }
 
   async function bootstrap() {

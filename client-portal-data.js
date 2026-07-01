@@ -2240,6 +2240,90 @@
 
     wireLoanApplicationForm(userId, profile);
     wireDocumentsTab(userId, clientDocs || []);
+
+    // OUS Credits card — shows the client's own credits from the OUS
+    // Pasiva system via the /api/my-ous-credits endpoint. Loads in the
+    // background after the rest of the portal is ready.
+    loadAndRenderOUSCredits(session.access_token);
+  }
+
+  const OUS_PROXY_CLIENT_URL = 'https://onix-production-50c3.up.railway.app';
+
+  async function loadAndRenderOUSCredits(accessToken) {
+    // Find the Lending view — if the client has no loans the card still
+    // appears so they can see any OUS credits that exist.
+    const view = document.querySelector('#view-loans');
+    if (!view) return;
+
+    // Inject a placeholder card to reserve space while loading.
+    const cardId = 'onix-ous-credits-card';
+    if (document.getElementById(cardId)) return;
+    const card = document.createElement('div');
+    card.id = cardId;
+    card.className = 'card';
+    card.style.cssText = 'margin-top:24px';
+    card.innerHTML = `
+      <div class="card-title">OUS Credits</div>
+      <div id="onix-ous-credits-body" style="padding:16px 0;color:#9B9590;font-style:italic;font-size:.85rem">
+        Loading credits…
+      </div>`;
+    view.appendChild(card);
+
+    const body = card.querySelector('#onix-ous-credits-body');
+    try {
+      const res = await fetch(OUS_PROXY_CLIENT_URL + '/api/my-ous-credits', {
+        method: 'GET',
+        headers: {
+          'Authorization': 'Bearer ' + accessToken,
+          'Content-Type':  'application/json'
+        }
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        body.textContent = j.error || ('Could not load credits (' + res.status + ')');
+        return;
+      }
+      const payload = await res.json();
+      const credits  = payload.data || [];
+
+      if (!credits.length) {
+        body.innerHTML = '<span style="color:#9B9590;font-style:italic">No active OUS credits found.</span>';
+        return;
+      }
+
+      // Group by id_credito in case of duplicate rows.
+      const seen = new Set();
+      const unique = credits.filter(c => { if (seen.has(c.id_credito)) return false; seen.add(c.id_credito); return true; });
+
+      const fmtMXN = n => (n == null || n === '' ? '—' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+      const fmtDate = s => { try { return new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (_) { return s || '—'; } };
+      const badgeColor = status => status === 'operativa' ? '#3B8B3B' : '#C0392B';
+
+      body.innerHTML = unique.map(c => `
+        <div style="border:1px solid var(--border,#E8E8E8);border-top:2px solid #C0392B;padding:16px;margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px">
+            <div style="font-size:.92rem;font-weight:600">${escapeHtml(c.producto || '—')}</div>
+            <div style="font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+                        color:${badgeColor(c.status_contable)};padding:3px 8px;border:1px solid currentColor">
+              ${escapeHtml(c.status_contable || '—')}
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;font-size:.82rem">
+            <div><div style="font-size:.62rem;color:#9B9590;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:2px">Credit ID</div><div>${escapeHtml(c.id_credito)}</div></div>
+            <div><div style="font-size:.62rem;color:#9B9590;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:2px">Type</div><div>${escapeHtml(c.tipo_credito || '—')}</div></div>
+            <div><div style="font-size:.62rem;color:#9B9590;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:2px">Term</div><div>${escapeHtml(c.plazo || '—')}</div></div>
+            <div><div style="font-size:.62rem;color:#9B9590;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:2px">Annual Rate</div><div>${escapeHtml(c.tasa_anualizada ? c.tasa_anualizada + '%' : '—')}</div></div>
+            <div><div style="font-size:.62rem;color:#9B9590;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:2px">Start Date</div><div>${fmtDate(c.fecha_inicio)}</div></div>
+            <div><div style="font-size:.62rem;color:#9B9590;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:2px">End Date</div><div>${fmtDate(c.fecha_termino)}</div></div>
+            <div><div style="font-size:.62rem;color:#9B9590;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:2px">Current Balance</div><div style="font-weight:600">${fmtMXN(c.saldo_total_vigente)}</div></div>
+            <div><div style="font-size:.62rem;color:#9B9590;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:2px">Total Owed</div><div style="font-weight:600">${fmtMXN(c.adeudo_total_neto)}</div></div>
+            <div><div style="font-size:.62rem;color:#9B9590;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:2px">Payments</div><div>${escapeHtml((c.num_cuotas_pagadas || '0') + ' / ' + (c.num_cuotas_contratadas || '—'))}</div></div>
+            <div><div style="font-size:.62rem;color:#9B9590;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:2px">Days Past Due</div><div>${escapeHtml(c.dias_mora || '0')}</div></div>
+          </div>
+        </div>`).join('');
+    } catch (err) {
+      body.textContent = 'Could not load OUS credits: ' + (err && err.message || String(err));
+    }
   }
 
   if (document.readyState === 'loading') {

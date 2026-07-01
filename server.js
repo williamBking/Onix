@@ -682,6 +682,67 @@ function creditosPorVencer(req, res) {
 app.get('/api/creditos/por-vencer',  requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosPorVencer);
 app.post('/api/creditos/por-vencer', requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosPorVencer);
 
+// GET/POST /api/my-ous-credits — available to any authenticated client
+// (not admin-only). Returns only the OUS credits that belong to the
+// calling user, matched by their profile's email address. Clients
+// cannot see each other's data.
+async function myOusCredits(req, res) {
+  if (!state.token) return res.status(503).json({ error: 'OUS proxy is not logged in yet' });
+  const today = new Date().toISOString().slice(0, 10);
+  const fecha_cierre = (req.body && req.body.fecha_cierre) || req.query.fecha_cierre || today;
+
+  // Look up the caller's profile to get their correo + rfc so we
+  // can filter OUS results to only their credits.
+  let profileEmail = req.user.email || '';
+  let profileRfc   = '';
+  try {
+    const pUrl = SUPABASE_URL + '/rest/v1/profiles?id=eq.' + encodeURIComponent(req.user.id) + '&select=email,rfc';
+    const pRes = await fetch(pUrl, {
+      headers: {
+        'apikey':        SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + req.user.raw_token,
+        'Accept':        'application/json'
+      }
+    });
+    if (pRes.ok) {
+      const rows = await pRes.json();
+      if (rows && rows[0]) {
+        profileEmail = rows[0].email || profileEmail;
+        profileRfc   = rows[0].rfc   || '';
+      }
+    }
+  } catch (_) { /* fall back to auth email */ }
+
+  // Fetch full closing-balance list from OUS, then filter server-side.
+  let allCredits;
+  try {
+    const result = await callOUS('/creditos-cierre-saldos', {
+      method: 'GET',
+      body:   { fecha_cierre }
+    });
+    const d = result && result.data;
+    allCredits = Array.isArray(d) ? d
+               : (d && Array.isArray(d.creditos)) ? d.creditos
+               : [];
+  } catch (err) {
+    return res.status(502).json({ error: 'OUS fetch failed', detail: (err && err.message) || String(err) });
+  }
+
+  const emailLower = (profileEmail || '').toLowerCase().trim();
+  const rfcUpper   = (profileRfc   || '').toUpperCase().trim();
+  const mine = allCredits.filter(c => {
+    const cEmail = ((c.correo || '')).toLowerCase().trim();
+    const cRfc   = ((c.rfc   || '')).toUpperCase().trim();
+    if (rfcUpper   && cRfc   && cRfc   === rfcUpper)   return true;
+    if (emailLower && cEmail && cEmail === emailLower) return true;
+    return false;
+  });
+
+  res.json({ status: 'ok', data: mine, fecha_cierre, matched_by: { email: emailLower, rfc: rfcUpper } });
+}
+app.get('/api/my-ous-credits',  requireSupabaseAuth, requireOUSLogin, myOusCredits);
+app.post('/api/my-ous-credits', requireSupabaseAuth, requireOUSLogin, myOusCredits);
+
 // 404 for anything else under /api to make typos obvious in the
 // browser DevTools network tab.
 app.use('/api', (req, res) =>
