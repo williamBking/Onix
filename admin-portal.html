@@ -3784,9 +3784,13 @@
       if (!tbody) return;
       var res = await OnixDB.client.from('profiles')
         .select('email, full_name, title, role, status, created_at')
-        .eq('role', 'admin').eq('status', 'active')
+        .in('role', ['admin', 'manager']).eq('status', 'active')
         .order('created_at', { ascending: true });
       if (res.error) return;
+      // Remove demo/hardcoded rows (any row not tagged data-team-email) so only
+      // real team members from Supabase are shown.
+      Array.prototype.slice.call(tbody.querySelectorAll('tr'))
+        .forEach(function(tr){ if (!tr.hasAttribute('data-team-email')) tr.remove(); });
       var TEAM_ROLES = [
         { key:'admin',   label:'Admin' },
         { key:'manager', label:'Manager' },
@@ -3796,7 +3800,7 @@
         var already = Array.prototype.slice.call(tbody.querySelectorAll('tr'))
           .some(function(tr){ return (tr.textContent||'').toLowerCase().indexOf((m.email||'').toLowerCase()) >= 0; });
         if (already) return;
-        var current = (m.title === 'manager' || m.title === 'ae') ? m.title : 'admin';
+        var current = (m.role === 'manager') ? 'manager' : (m.title === 'ae') ? 'ae' : 'admin';
         var tr = document.createElement('tr');
         tr.setAttribute('data-team-email', m.email);
         tr.innerHTML =
