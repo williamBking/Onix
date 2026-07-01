@@ -111,7 +111,7 @@
   (function(){
     try {
       var u = JSON.parse(localStorage.getItem('onix-user') || 'null');
-      if (!u || u.role !== 'admin') { window.location.replace('login.html'); }
+      if (!u || !['admin', 'manager'].includes(u.role)) { window.location.replace('login.html'); }
     } catch(e) { window.location.replace('login.html'); }
   })();
 

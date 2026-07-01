@@ -257,7 +257,7 @@ async function doLogin(e) {
   }));
 
   // 4. Redirect based on role
-  if (profile.role === 'admin') {
+  if (profile.role === 'admin' || profile.role === 'manager') {
     window.location.href = 'admin-portal.html';
   } else {
     window.location.href = 'client-portal.html';
