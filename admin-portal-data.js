@@ -3907,12 +3907,48 @@
     }
   }
 
+  // ── Role-based permission enforcement ────────────────────────────────────
+  // Managers can view all data and add clients but cannot reject/remove
+  // clients or manage admin team members. We hide the relevant buttons and
+  // the Users tab via CSS injected once, then re-apply via MutationObserver
+  // to catch elements the bundler renders after initial load.
+  function enforceRolePermissions(role) {
+    if (role !== 'manager') return; // admins have no restrictions
+
+    const MANAGER_CSS = `
+      /* Hide reject/remove buttons for clients */
+      [data-act="reject"], [data-pending-act="reject"],
+      #oac-bulk-reject, .oac-btn.danger { display: none !important; }
+      /* Hide the Users/Team management tab in the sidebar */
+      [data-view="users"], [onclick*="showView('users')"],
+      a[href="#users"] { display: none !important; }
+      /* Hide the Users view itself */
+      #view-users { display: none !important; }
+    `;
+
+    if (!document.getElementById('__onix_manager_css')) {
+      const s = document.createElement('style');
+      s.id = '__onix_manager_css';
+      s.textContent = MANAGER_CSS;
+      document.head.appendChild(s);
+    }
+
+    // Re-apply to any elements the bundler injects after initial load
+    const obs = new MutationObserver(() => {
+      document.querySelectorAll('[data-act="reject"], [data-pending-act="reject"], #oac-bulk-reject')
+        .forEach(el => { el.style.display = 'none'; });
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+  }
+  // ── /Role-based permission enforcement ───────────────────────────────────
+
   async function bootstrap() {
     const gate = await OnixDB.requireAdmin();
     if (!gate) return;
     injectStyles();
     buildPanel();
     renderSidebarUser(gate.profile);
+    enforceRolePermissions(gate.profile.role);
     // oac-greeting belongs to the retired Live Admin Console drawer; only
     // set its text if the element actually exists. Without this guard the
     // bootstrap throws and downstream wiring (Calendar tab, etc.) never runs.
