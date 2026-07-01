@@ -2391,18 +2391,25 @@
       : (Chart.instances && Object.values(Chart.instances).find(c => c.canvas === canvas)) || null;
   }
 
+  // Format a raw dollar value as $1.2M or $450K for chart tooltips.
+  function fmtChartDollars(v) {
+    if (v >= 1e6) return '$' + (v / 1e6).toFixed(2) + 'M';
+    if (v >= 1e3) return '$' + (v / 1e3).toFixed(0) + 'K';
+    return '$' + Math.round(v).toLocaleString('en-US');
+  }
+
   function updateDashboardCharts(loans, investments) {
     const labels12 = lastNMonthLabels(12);
 
-    // origChart — loan originations by month (balance at creation, $M)
+    // origChart — loan originations by month (balance at origination, $M)
     const origChart = getChart('origChart');
     if (origChart) {
       const vals = sumByMonth(loans, 'created_at', 'balance', 12)
-        .map(v => Math.round(v / 1e4) / 100); // cents → $M, 2dp
+        .map(v => parseFloat((v / 1e6).toFixed(2)));
       setChartData(origChart, labels12, vals);
     }
 
-    // loanTypeChart — active loan portfolio mix by type (% of total balance)
+    // loanTypeChart — active loan portfolio by type: real $ amounts + tooltip shows amount + %
     const loanTypeChart = getChart('loanTypeChart');
     if (loanTypeChart) {
       const activeLoans = loans.filter(l => l.status === 'active');
@@ -2412,14 +2419,27 @@
         typeTotals[t] = (typeTotals[t] || 0) + Number(l.balance || 0);
       });
       const total = Object.values(typeTotals).reduce((s, v) => s + v, 0);
-      const types = Object.keys(typeTotals);
-      const pcts = types.map(t => total > 0 ? Math.round((typeTotals[t] / total) * 100) : 0);
+      const types = Object.keys(typeTotals).sort((a, b) => typeTotals[b] - typeTotals[a]);
+      const vals = types.map(t => typeTotals[t]);
       loanTypeChart.data.labels = types;
-      loanTypeChart.data.datasets[0].data = pcts;
+      loanTypeChart.data.datasets[0].data = vals;
+      // Tooltip: "CRE: $1.20M (58%)"
+      loanTypeChart.options.plugins = loanTypeChart.options.plugins || {};
+      loanTypeChart.options.plugins.tooltip = loanTypeChart.options.plugins.tooltip || {};
+      loanTypeChart.options.plugins.tooltip.callbacks = {
+        label: c => {
+          const val = c.parsed;
+          const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+          return ` ${c.label}: ${fmtChartDollars(val)} (${pct}%)`;
+        }
+      };
+      // Show legend so type names are visible on the chart
+      loanTypeChart.options.plugins.legend = { display: true, position: 'bottom',
+        labels: { font: { size: 11 }, padding: 12, color: '#555' } };
       loanTypeChart.update('none');
     }
 
-    // depositChart — cumulative deposit (investment) portfolio growth by month ($M)
+    // depositChart — cumulative deposit portfolio growth by month ($M)
     const depositChart = getChart('depositChart');
     if (depositChart) {
       const deposits = investments.filter(i => (i.venture_type || '').toLowerCase() === 'deposit');
@@ -2427,7 +2447,7 @@
       let cumulative = 0;
       const vals = monthly.map(v => {
         cumulative += v;
-        return Math.round(cumulative / 1e4) / 100;
+        return parseFloat((cumulative / 1e6).toFixed(2));
       });
       setChartData(depositChart, labels12, vals);
     }
@@ -2438,12 +2458,12 @@
   function updateReportsCharts(loans, payments) {
     const labels6 = lastNMonthLabels(6);
 
-    // revChart — monthly revenue from loan payments ($K)
+    // revChart — monthly revenue from collected loan payments ($K)
     const revChart = getChart('revChart');
     if (revChart) {
       const paidPayments = payments.filter(p => p.paid_at);
       const vals = sumByMonth(paidPayments, 'paid_at', 'amount_due', 6)
-        .map(v => Math.round(v / 100) / 10); // cents → $K, 1dp
+        .map(v => parseFloat((v / 1e3).toFixed(1)));
       setChartData(revChart, labels6, vals);
     }
 
@@ -2456,8 +2476,8 @@
         const t = l.venture_type || 'Other';
         typeTotals[t] = (typeTotals[t] || 0) + Number(l.balance || 0);
       });
-      const types = Object.keys(typeTotals);
-      const vals = types.map(t => Math.round(typeTotals[t] / 1e4) / 100);
+      const types = Object.keys(typeTotals).sort((a, b) => typeTotals[b] - typeTotals[a]);
+      const vals = types.map(t => parseFloat((typeTotals[t] / 1e6).toFixed(2)));
       typeChart.data.labels = types;
       typeChart.data.datasets[0].data = vals;
       typeChart.update('none');
