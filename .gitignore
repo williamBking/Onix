@@ -6,3 +6,6 @@ node_modules/
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
+.tmp/
+credentials.json
+token.json

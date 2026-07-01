@@ -250,6 +250,7 @@ async function doLogin(e) {
   //    `onix-user`) recognise the session and don't bounce back to login.
   localStorage.setItem('onix-user', JSON.stringify({
     role: profile.role,
+    title: profile.title || 'admin',
     name: profile.full_name || profile.email,
     email: profile.email,
     id: profile.id

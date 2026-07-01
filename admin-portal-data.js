@@ -1341,11 +1341,19 @@
         } else if (action === 'met') {
           ok = !!(OnixDB.markClientMet && await OnixDB.markClientMet(id));
         } else if (action === 'reject') {
+          if (window.OnixPerms && !OnixPerms.can('removeClients')) {
+            alert('Your role does not have permission to remove clients.');
+            return false;
+          }
           ok = await OnixDB.rejectClient(id);
         }
         return ok;
       }
       async function bulk(action) {
+        if (action === 'reject' && window.OnixPerms && !OnixPerms.can('removeClients')) {
+          alert('Your role does not have permission to remove clients.');
+          return;
+        }
         const ids = checkboxes().filter(c => c.checked).map(c => c.dataset.id);
         if (!ids.length) return;
         const label = action === 'approve' ? 'activate' : action === 'met' ? 'mark as met' : 'reject';
@@ -1463,6 +1471,11 @@
     const submitBtn = form.querySelector('[data-form-submit]');
     const errEl = form.querySelector('#oac-form-err');
     errEl.style.display = 'none';
+    if (window.OnixPerms && !OnixPerms.can('editContent')) {
+      errEl.style.display = 'block';
+      errEl.textContent = 'Your role does not have permission to edit content.';
+      return;
+    }
     const origLabel = submitBtn.textContent;
     submitBtn.disabled = true; submitBtn.textContent = 'Saving…';
     try {
@@ -1538,6 +1551,10 @@
     root.querySelectorAll('[data-doc-remove]').forEach(a => {
       a.addEventListener('click', async (e) => {
         e.preventDefault();
+        if (window.OnixPerms && !OnixPerms.can('editContent')) {
+          alert('Your role does not have permission to edit content.');
+          return;
+        }
         if (!confirm('Remove this document?')) return;
         const id = a.dataset.docRemove;
         const { error } = await OnixDB.client.from(table).delete().eq('id', id);
@@ -1551,6 +1568,10 @@
     if (form) {
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
+        if (window.OnixPerms && !OnixPerms.can('editContent')) {
+          alert('Your role does not have permission to edit content.');
+          return;
+        }
         const fd = new FormData(form);
         const name = strOrNull(fd.get('name'));
         const url  = strOrNull(fd.get('dropbox_url'));
