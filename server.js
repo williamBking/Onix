@@ -612,10 +612,14 @@ async function requireOnixAdmin(req, res, next) {
 // -------- Server-side mirror of the RBAC matrix ----------------
 // Keep in sync with /permissions.js and /permissions-rls.sql. This is
 // the single source of truth for what each title can do on the proxy.
+// Manager = read-only observer (sees everything Admin sees, edits
+// nothing). AE = same read-only posture plus DB-level scoping to their
+// own assigned rows. `billing` is a view-only gate on the OUS Pasiva
+// report fetches — Manager keeps it so they can still see reports.
 const RBAC_MATRIX = {
-  admin:   { manageUsers: true,  addClients: true, removeClients: true,  viewProjects: true, editContent: true,  billing: true  },
-  manager: { manageUsers: false, addClients: true, removeClients: false, viewProjects: true, editContent: true,  billing: true  },
-  ae:      { manageUsers: false, addClients: true, removeClients: false, viewProjects: true, editContent: false, billing: false }
+  admin:   { manageUsers: true,  addClients: true,  removeClients: true,  viewProjects: true, editContent: true,  billing: true },
+  manager: { manageUsers: false, addClients: false, removeClients: false, viewProjects: true, editContent: false, billing: true },
+  ae:      { manageUsers: false, addClients: false, removeClients: false, viewProjects: true, editContent: false, billing: true }
 };
 function permsFor(title) { return RBAC_MATRIX[title] || RBAC_MATRIX.admin; }
 

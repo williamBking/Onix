@@ -23,11 +23,19 @@ The single source of truth is `permissions.js` (frontend) and `RBAC_MATRIX` in
 | Permission key | Admin | Manager | AE  | What it gates                                                                    |
 | -------------- | :---: | :-----: | :-: | -------------------------------------------------------------------------------- |
 | `manageUsers`  |  ✅   |   ❌    | ❌  | Manage Users / User Roles view, "Add Admin" button, role changes                 |
-| `addClients`   |  ✅   |   ✅    | ✅  | "+ New Client" button on Clients tab                                             |
+| `addClients`   |  ✅   |   ❌    | ❌  | "+ New Client" button on Clients tab                                             |
 | `removeClients`|  ✅   |   ❌    | ❌  | "Remove" / "Reject" / bulk-reject on Clients & Pending Approvals                  |
 | `viewProjects` |  ✅   |   ✅    | ✅  | Sidebar access to Loans / Investments / Raises / Applications / OUS Pasiva       |
-| `editContent`  |  ✅   |   ✅    | ❌  | Add Loan, Edit Loan, Edit Investment, Add Payment/Distribution, Document upload  |
-| `billing`      |  ✅   |   ✅    | ❌  | Billing / Reports / OUS Pasiva "Cierre Saldos" and "Por Vencer" fetches          |
+| `editContent`  |  ✅   |   ❌    | ❌  | Add/Edit Loan+Investment+Raise, Add Payment/Distribution, Document upload        |
+| `billing`      |  ✅   |   ✅    | ✅  | OUS Pasiva "Cierre Saldos" and "Por Vencer" report fetches (view-only)           |
+
+**Manager & AE are read-only observers.** They see everything Admin sees on
+Dashboard / Clients / Loans / Investments / Raises / Applications / Reports /
+OUS Pasiva, but no mutation UI is visible and the DB rejects any bypass
+attempt (RESTRICTIVE "non-admin cannot ..." policies require
+`current_admin_title() = 'admin'` for INSERT / UPDATE / DELETE on all
+portfolio and document tables). AE is additionally scoped to
+`assigned_to = auth.uid()` rows via the "ae scope ..." SELECT policies.
 
 DB layer additionally enforces AE data scoping via RLS: an AE only **sees**
 profiles / loans / investments / loan_payments / distributions where
@@ -77,22 +85,31 @@ Log in as `rbac-admin@…`. Expected: **everything works, nothing hidden.**
 
 ## 3. Manager — smoke checklist
 
-Log in as `rbac-manager@…`. Expected: content editing OK, user management blocked.
+Log in as `rbac-manager@…`. Expected: **read-only observer.** Same view
+as Admin (all data on Dashboard, Clients, Loans, Investments, Raises,
+Applications, Reports, OUS Pasiva), no mutation UI, no user management.
 
-### Should WORK
+### Should WORK (view only)
 - [ ] Sidebar shows Dashboard, Clients, Loans, Investments, Raises, Applications, OUS Pasiva, Documents, Reports, Calendar
-- [ ] "+ New Client" button visible; Add works
-- [ ] "+ Add Loan" visible; Add + Edit both save
-- [ ] Add Payment / Add Distribution both save
-- [ ] Loan/Investment document upload works
-- [ ] OUS Pasiva "Fetch Cierre Saldos" and "Fetch Por Vencer" both return data
+- [ ] Dashboard KPIs render with the same numbers as Admin sees
+- [ ] All Client rows visible (not scoped)
+- [ ] All Loan / Investment / Raise / Application rows visible
+- [ ] Clicking a loan/investment opens the detail modal — data loads
+- [ ] OUS Pasiva "Fetch Cierre Saldos" and "Fetch Por Vencer" both return data (view-only)
 
 ### Should be BLOCKED
 - [ ] Manage Users / User Roles view NOT reachable from sidebar; direct nav shows Access Denied
-- [ ] "Add Admin" / role-changer controls hidden or return 403
+- [ ] "Add Admin" / role-changer dropdown on Team & Settings HIDDEN
+- [ ] "+ New Client" button HIDDEN
+- [ ] "+ Add Loan" / "+ Add Investment" / "+ Add Raise" buttons HIDDEN
+- [ ] Loan / Investment / Raise row "Edit" buttons HIDDEN
+- [ ] "Add Payment" / "Add Distribution" buttons HIDDEN on detail modals
+- [ ] Document upload form HIDDEN on all detail modals
 - [ ] Client rows: "Remove" button HIDDEN
-- [ ] Pending Approvals: "Reject" and "Bulk Reject" HIDDEN
-- [ ] Attempting a `role` change via devtools returns Postgres error (RLS trigger `onix_enforce_admin_permissions` blocks it)
+- [ ] Pending Approvals: "Reject" / "Bulk Reject" HIDDEN
+- [ ] Devtools bypass: `OnixDB.client.from('loans').update({...}).eq('id', '<any>')` returns Postgres error (`non-admin cannot edit loans`)
+- [ ] Devtools bypass: `.from('loans').insert({...})` returns Postgres error
+- [ ] Devtools bypass: `.from('profiles').update({role:'admin'}).eq('id', '<other user>')` returns Postgres error (William's trigger blocks non-admins)
 
 ---
 
@@ -108,21 +125,18 @@ Log in as `rbac-ae@…`. Expected: read-only view of **their own** book.
 
 ### Should be BLOCKED (frontend + backend)
 - [ ] Manage Users / User Roles view NOT reachable
+- [ ] "+ New Client" button HIDDEN
 - [ ] "Remove" / "Reject" client buttons HIDDEN
-- [ ] "+ Add Loan" button HIDDEN
-- [ ] Loan row "Edit" button HIDDEN
-- [ ] Loan row "Add Payment" HIDDEN
-- [ ] Investment row "Edit" HIDDEN
-- [ ] Investment "Add Distribution" HIDDEN
+- [ ] "+ Add Loan" / "+ Add Investment" / "+ Add Raise" HIDDEN
+- [ ] Loan / Investment / Raise row "Edit" buttons HIDDEN
+- [ ] "Add Payment" / "Add Distribution" HIDDEN on detail modals
 - [ ] Document upload form HIDDEN on all detail modals
-- [ ] Reports view NOT reachable
-- [ ] OUS Pasiva: "Fetch Cierre Saldos" returns **403 permission_denied** (branded Access Denied UI)
-- [ ] OUS Pasiva: "Fetch Por Vencer" returns **403 permission_denied**
 
 ### Data-scoping tampering
-- [ ] In devtools, run `OnixDB.client.from('loans').select('*').eq('id', '<Loan B id>')` — result is empty (RLS scope, not 403)
-- [ ] Run `.from('profiles').update({ status: 'active' }).eq('id', '<any client>')` — Postgres error (`onix_enforce_admin_permissions` blocks non-admin admin work; scoping RLS also filters)
-- [ ] Run `.from('loans').insert({...})` — RESTRICTIVE policy "ae cannot insert" blocks
+- [ ] In devtools, run `OnixDB.client.from('loans').select('*').eq('id', '<Loan B id>')` — result is empty (RLS "ae scope loans" filters)
+- [ ] Run `.from('profiles').update({ status: 'active' }).eq('id', '<any client>')` — Postgres error (`onix_enforce_admin_permissions` blocks non-admin admin work)
+- [ ] Run `.from('loans').insert({...})` — RESTRICTIVE policy "non-admin cannot insert loans" blocks
+- [ ] OUS Pasiva "Fetch Cierre Saldos" and "Fetch Por Vencer" **return data** (view-only, allowed)
 
 ---
 
@@ -147,23 +161,20 @@ BASE=https://onix-server.example.com  # Railway URL
 # Should be 200 for all roles
 curl -H "Authorization: Bearer $TOKEN" $BASE/api/catalogos
 
-# Should be 200 for admin+manager, 403 for AE
+# Should be 200 for all three staff titles (billing is view-only)
 curl -H "Authorization: Bearer $TOKEN" $BASE/api/creditos-cierre-saldos
-
-# Should be 200 for admin+manager, 403 for AE
 curl -H "Authorization: Bearer $TOKEN" $BASE/api/creditos/por-vencer
-```
-
-Expected 403 body:
-```json
-{ "error": "permission_denied", "perm": "billing", "title": "ae", "message": "…" }
 ```
 
 - [ ] Admin token: all 200
 - [ ] Manager token: catalogos 200, cierre-saldos 200, por-vencer 200
-- [ ] AE token: catalogos 200, cierre-saldos **403**, por-vencer **403**
+- [ ] AE token: catalogos 200, cierre-saldos 200, por-vencer 200
 - [ ] Tampered token (wrong signature) → 401 (`requireOnixAdmin` rejects)
 - [ ] Client-role token → 403 from `requireOnixAdmin`
+
+(Note: `editContent` is enforced at the DB layer via RESTRICTIVE
+"non-admin cannot ..." policies, not via the proxy. If we ever add
+edit-content proxy routes, gate them with `requirePerm('editContent')`.)
 
 ---
 

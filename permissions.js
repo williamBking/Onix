@@ -26,10 +26,13 @@
   'use strict';
 
   // Keep in lockstep with the RLS policies in permissions-rls.sql.
+  // Manager = read-only observer: sees everything an Admin sees, edits
+  // nothing. AE = same read-only posture plus DB-level scoping to their
+  // own assigned rows.
   var MATRIX = {
-    admin:   { manageUsers: true,  addClients: true, removeClients: true,  viewProjects: true, editContent: true,  billing: true  },
-    manager: { manageUsers: false, addClients: true, removeClients: false, viewProjects: true, editContent: true,  billing: true  },
-    ae:      { manageUsers: false, addClients: true, removeClients: false, viewProjects: true, editContent: false, billing: false }
+    admin:   { manageUsers: true,  addClients: true,  removeClients: true,  viewProjects: true, editContent: true,  billing: true },
+    manager: { manageUsers: false, addClients: false, removeClients: false, viewProjects: true, editContent: false, billing: true },
+    ae:      { manageUsers: false, addClients: false, removeClients: false, viewProjects: true, editContent: false, billing: true }
   };
 
   var PERMS = [
@@ -227,13 +230,19 @@
       'body.onix-no-manage-users [data-onix-remove],' +
       'body.onix-no-manage-users [data-perm="manageUsers"]{display:none !important}' +
 
+      /* Add Clients (+ New Client button on Clients tab) */
+      'body.onix-no-add-clients [data-perm="addClients"],' +
+      'body.onix-no-add-clients #oac-new-client-btn{display:none !important}' +
+
       /* Remove Clients (reject-client controls, Decline buttons on pending queue) */
       'body.onix-no-remove-clients [data-perm="removeClients"],' +
       'body.onix-no-remove-clients [data-cl-reject],' +
       'body.onix-no-remove-clients [data-pending-act="reject"],' +
       'body.onix-no-remove-clients #oac-bulk-reject{display:none !important}' +
 
-      /* Edit Content (+Add, Edit Loan/Investment/Raise, Delete, document uploads) */
+      /* Edit Content (+Add, Edit Loan/Investment/Raise, Delete, document
+         uploads, and payment / distribution creation — all mutations to
+         portfolio data). Viewing the underlying tables is NOT gated here. */
       'body.onix-no-edit-content [data-perm="editContent"],' +
       'body.onix-no-edit-content [data-add-loan],' +
       'body.onix-no-edit-content [data-add-inv],' +
@@ -241,16 +250,18 @@
       'body.onix-no-edit-content [data-edit-loan],' +
       'body.onix-no-edit-content [data-edit-inv],' +
       'body.onix-no-edit-content [data-edit-raise],' +
+      'body.onix-no-edit-content [data-add-payment],' +
+      'body.onix-no-edit-content [data-add-dist],' +
       'body.onix-no-edit-content [data-doc-remove],' +
       'body.onix-no-edit-content [data-doc-add-form],' +
       'body.onix-no-edit-content #oac-add-loan-btn,' +
       'body.onix-no-edit-content #oac-add-inv-btn,' +
       'body.onix-no-edit-content #oac-add-raise-btn{display:none !important}' +
 
-      /* Billing (Add Payment / Distribution, related actions) */
-      'body.onix-no-billing [data-perm="billing"],' +
-      'body.onix-no-billing [data-add-payment],' +
-      'body.onix-no-billing [data-add-dist]{display:none !important}';
+      /* Billing (view-only gate on OUS Pasiva "Cierre Saldos" and "Por
+         Vencer" report fetches. Manager keeps this; only unassigned roles
+         lose it.) */
+      'body.onix-no-billing [data-perm="billing"]{display:none !important}';
     document.head.appendChild(s);
   }
 
