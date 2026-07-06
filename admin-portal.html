@@ -115,67 +115,12 @@
     } catch(e) { window.location.replace('login.html'); }
   })();
 
-  /* ============================================================
-     Role permissions — single source of truth for what each title
-     (admin / manager / ae) is allowed to do. The "Role Permissions"
-     chart on the Team & Settings page is a visual mirror of this
-     same MATRIX, not a separate definition — keep them in sync here.
-     ============================================================ */
-  window.OnixPerms = (function(){
-    var MATRIX = {
-      admin:   {manageUsers:true,  addClients:true,  removeClients:true,  viewProjects:true, editContent:true,  billing:true},
-      manager: {manageUsers:false, addClients:true,  removeClients:false, viewProjects:true, editContent:true,  billing:true},
-      ae:      {manageUsers:false, addClients:true,  removeClients:false, viewProjects:true, editContent:false, billing:false}
-    };
-    function currentTitle(){
-      try {
-        var u = JSON.parse(localStorage.getItem('onix-user') || 'null');
-        var t = u && u.title;
-        return (t === 'manager' || t === 'ae') ? t : 'admin';
-      } catch(e) { return 'admin'; }
-    }
-    function can(key){
-      var t = currentTitle();
-      return !!(MATRIX[t] && MATRIX[t][key]);
-    }
-    function applyBodyClasses(){
-      if (!document.body) return;
-      document.body.classList.toggle('onix-no-manage-users',   !can('manageUsers'));
-      document.body.classList.toggle('onix-no-remove-clients', !can('removeClients'));
-      document.body.classList.toggle('onix-no-edit-content',   !can('editContent'));
-    }
-    // The bundler replaces document.head wholesale after load (see the
-    // "Lock-the-viewport layout" comment below), which would wipe out a
-    // plain <style> tag written into the original <head>. So this CSS is
-    // injected via JS and re-checked on the same schedule as that other
-    // workaround, instead of living in the static <style> block above.
-    function injectPermCss(){
-      if (document.getElementById('__onix_perm_css')) return;
-      if (!document.head) return;
-      var s = document.createElement('style');
-      s.id = '__onix_perm_css';
-      s.textContent =
-        'body.onix-no-manage-users .__onix_role_select,' +
-        'body.onix-no-manage-users [data-onix-remove]{display:none !important}' +
-        'body.onix-no-remove-clients [data-pending-act="reject"],' +
-        'body.onix-no-remove-clients #oac-bulk-reject{display:none !important}' +
-        'body.onix-no-edit-content [data-edit-loan],' +
-        'body.onix-no-edit-content [data-edit-inv],' +
-        'body.onix-no-edit-content [data-edit-raise],' +
-        'body.onix-no-edit-content [data-doc-remove],' +
-        'body.onix-no-edit-content [data-doc-add-form]{display:none !important}';
-      document.head.appendChild(s);
-    }
-    function applyAll(){ injectPermCss(); applyBodyClasses(); }
-    document.addEventListener('DOMContentLoaded', applyAll);
-    window.addEventListener('load', applyAll);
-    // The admin bundle injects/re-injects markup (and replaces <head>) well
-    // after window.load (see the 1500-2000ms setTimeouts throughout this
-    // file), so keep re-applying to cover late-rendered buttons/rows and a
-    // head swap that drops our injected <style>.
-    setInterval(applyAll, 2000);
-    return { MATRIX: MATRIX, currentTitle: currentTitle, can: can, applyBodyClasses: applyBodyClasses };
-  })();
+  /* Role permissions — moved to permissions.js (loaded as its own script).
+     window.OnixPerms is provided by that module. Keeping this comment as
+     an anchor so anyone searching the file lands here first. */
+  // Keep body classes in sync with the currently-visible view. The Bolt
+  // bundler swaps document.head after load, so re-apply on an interval.
+  setInterval(function(){ if (window.OnixPerms) OnixPerms.applyBodyClasses(); }, 2000);
 
   /* Lock-the-viewport layout — sidebar + top-bar stay anchored, only the
      right column (main content) scrolls. The Bolt bundler overwrites the
@@ -4642,7 +4587,11 @@
   <!-- Onix Supabase live admin layer -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="supabase.js?v=11"></script>
-  <script defer src="admin-portal-data.js?v=51"></script>
+  <!-- Centralized RBAC (window.OnixPerms) — must load BEFORE
+       admin-portal-data.js so downstream code can call OnixPerms.can() /
+       .require() without a null check. -->
+  <script src="permissions.js?v=1"></script>
+  <script defer src="admin-portal-data.js?v=53"></script>
   <!-- Shared i18n helper: wires EN/ES toggle via event delegation so it
        works even for late-injected DOM (the admin bundle ships its own
        lang script but binds once at load and misses the buttons). -->

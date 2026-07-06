@@ -169,6 +169,18 @@ async function getAllClients() {
   return data || []
 }
 
+async function getAllStaff() {
+  // Onix staff (admin/manager/AE) — role='admin' with any title.
+  // Used for the "Assigned to (Staff)" dropdowns in admin modals.
+  const { data, error } = await _supabase
+    .from('profiles')
+    .select('id, full_name, email, role, status, title')
+    .eq('role', 'admin')
+    .order('full_name', { ascending: true })
+  if (error) console.error('Staff fetch error:', error)
+  return data || []
+}
+
 async function getPendingClients() {
   // Includes both 'pending' (new sign-up) and 'met' (admin has met them
   // in person, just hasn't activated their account yet).
@@ -299,6 +311,7 @@ window.OnixDB = {
   submitLoanApplication,
   submitRaiseInterest,
   getAllClients,
+  getAllStaff,
   getPendingClients,
   markClientMet,
   approveClient,

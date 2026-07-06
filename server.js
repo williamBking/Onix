@@ -574,13 +574,15 @@ async function requireSupabaseAuth(req, res, next) {
 // not that they're an Onix admin. We confirm by re-issuing their own
 // JWT against the public.profiles table — RLS lets a user read their
 // own profile only, which is exactly what we need. Fails closed.
+// Also captures profiles.title so downstream permission middleware
+// (requirePerm) can enforce the Admin/Manager/AE matrix.
 async function requireOnixAdmin(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Auth required' });
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     return res.status(503).json({ error: 'Admin check not configured — SUPABASE_URL/SUPABASE_ANON_KEY missing on server' });
   }
   try {
-    const url = SUPABASE_URL + '/rest/v1/profiles?id=eq.' + encodeURIComponent(req.user.id) + '&select=role,status';
+    const url = SUPABASE_URL + '/rest/v1/profiles?id=eq.' + encodeURIComponent(req.user.id) + '&select=role,status,title';
     const r = await fetch(url, {
       headers: {
         'apikey':        SUPABASE_ANON_KEY,
@@ -599,10 +601,38 @@ async function requireOnixAdmin(req, res, next) {
     }
     req.user.role   = 'admin';
     req.user.status = p.status;
+    // Fall back to 'admin' when title is null (legacy accounts).
+    req.user.title  = (p.title === 'manager' || p.title === 'ae') ? p.title : 'admin';
     next();
   } catch (err) {
     return res.status(503).json({ error: 'Admin check threw', detail: (err && err.message) || String(err) });
   }
+}
+
+// -------- Server-side mirror of the RBAC matrix ----------------
+// Keep in sync with /permissions.js and /permissions-rls.sql. This is
+// the single source of truth for what each title can do on the proxy.
+const RBAC_MATRIX = {
+  admin:   { manageUsers: true,  addClients: true, removeClients: true,  viewProjects: true, editContent: true,  billing: true  },
+  manager: { manageUsers: false, addClients: true, removeClients: false, viewProjects: true, editContent: true,  billing: true  },
+  ae:      { manageUsers: false, addClients: true, removeClients: false, viewProjects: true, editContent: false, billing: false }
+};
+function permsFor(title) { return RBAC_MATRIX[title] || RBAC_MATRIX.admin; }
+
+// Middleware factory. Use as: app.get('/api/x', jwt, requireOnixAdmin,
+// requirePerm('billing'), handler). Returns 403 with a machine-readable
+// perm key so the frontend can map to a friendly Access Denied modal.
+function requirePerm(key) {
+  return function (req, res, next) {
+    const title = (req.user && req.user.title) || 'admin';
+    if (permsFor(title)[key]) return next();
+    return res.status(403).json({
+      error: 'permission_denied',
+      perm: key,
+      title: title,
+      message: 'Your role (' + title + ') does not have permission for ' + key + '.'
+    });
+  };
 }
 
 // -------- Helper: send a proxied response to the frontend ------
@@ -626,8 +656,9 @@ async function proxyAndForward(res, path, opts) {
 // =============================================================
 
 // GET /api/catalogos
-//   No body; returns the upstream JSON verbatim.
-app.get('/api/catalogos', requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, (req, res) =>
+//   Reference data (product names, segments, etc.) — no client-specific
+//   info, so viewProjects is enough. Every staff title can call.
+app.get('/api/catalogos', requireSupabaseAuth, requireOnixAdmin, requirePerm('viewProjects'), requireOUSLogin, (req, res) =>
   proxyAndForward(res, '/catalogos'));
 
 // =============================================================
@@ -663,8 +694,11 @@ function creditosCierreSaldos(req, res) {
     { method: 'GET', body: { fecha_cierre } }
   );
 }
-app.get('/api/creditos-cierre-saldos',  requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosCierreSaldos);
-app.post('/api/creditos-cierre-saldos', requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosCierreSaldos);
+// Closing-balances endpoint exposes every client's outstanding credit
+// with dollar amounts — gate behind the Billing permission (Admin +
+// Manager can call; AE cannot).
+app.get('/api/creditos-cierre-saldos',  requireSupabaseAuth, requireOnixAdmin, requirePerm('billing'), requireOUSLogin, creditosCierreSaldos);
+app.post('/api/creditos-cierre-saldos', requireSupabaseAuth, requireOnixAdmin, requirePerm('billing'), requireOUSLogin, creditosCierreSaldos);
 
 // GET /api/creditos/por-vencer — { dias: <integer> }
 function creditosPorVencer(req, res) {
@@ -679,8 +713,10 @@ function creditosPorVencer(req, res) {
     { method: 'GET', body: { dias } }
   );
 }
-app.get('/api/creditos/por-vencer',  requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosPorVencer);
-app.post('/api/creditos/por-vencer', requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosPorVencer);
+// Credits-coming-due endpoint exposes every client's outstanding balance
+// with dollar amounts — gate behind Billing (Admin + Manager only).
+app.get('/api/creditos/por-vencer',  requireSupabaseAuth, requireOnixAdmin, requirePerm('billing'), requireOUSLogin, creditosPorVencer);
+app.post('/api/creditos/por-vencer', requireSupabaseAuth, requireOnixAdmin, requirePerm('billing'), requireOUSLogin, creditosPorVencer);
 
 // 404 for anything else under /api to make typos obvious in the
 // browser DevTools network tab.

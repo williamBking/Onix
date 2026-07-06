@@ -1432,6 +1432,21 @@
         .map(c => ({ value: c.id, label: (c.full_name || c.email) + ' · ' + c.email })));
   }
 
+  // Staff members eligible to own a deal / client relationship.
+  // "role=admin, status=active" covers admin/manager/ae — the three
+  // permissioned titles. Adds an "— Unassigned —" default (means
+  // admin/manager see the record; AE sees nothing).
+  function staffOptions(profiles) {
+    const TITLE_LABEL = { admin: 'Admin', manager: 'Manager', ae: 'AE' };
+    return [{ value: '', label: '— Unassigned —' }]
+      .concat((profiles || [])
+        .filter(p => p.role === 'admin' && p.status === 'active')
+        .map(p => {
+          const t = TITLE_LABEL[p.title] || 'Admin';
+          return { value: p.id, label: (p.full_name || p.email) + ' · ' + t };
+        }));
+  }
+
   function submitBar(submitLabel) {
     return `<div id="oac-form-err" style="color:#C0392B;font-size:.85rem;margin-bottom:10px;display:none"></div>
       <div class="oac-modal-foot" style="margin-top:0">
@@ -1596,13 +1611,16 @@
 
   // ---------- Add Loan modal ----------
   function openAddLoanModal() {
-    const clients = (window.__onixAdminData && window.__onixAdminData.clients) || [];
+    const data    = window.__onixAdminData || {};
+    const clients = data.clients || [];
+    const staff   = data.staff || [];
     openModal(`
       <h2>Add Loan</h2>
       <div class="sub">Attach a loan to an existing client</div>
       <form id="oac-add-loan-form">
-        <div class="oac-modal-row" style="grid-template-columns:1fr">
+        <div class="oac-modal-row" style="grid-template-columns:1fr 1fr">
           ${field('Client', 'user_id', { required: true, select: clientOptions(clients) })}
+          ${field('Assigned to (Staff)', 'assigned_to', { select: staffOptions(staff) })}
         </div>
         <div class="oac-modal-row">
           ${field('Loan ID',           'loan_id_display',  { placeholder: 'ONX-2026-0123' })}
@@ -1627,6 +1645,7 @@
       const fd = new FormData(form);
       handleFormSubmit(form, () => ({
         user_id:            String(fd.get('user_id')),
+        assigned_to:        strOrNull(fd.get('assigned_to')),
         loan_id_display:    strOrNull(fd.get('loan_id_display')),
         balance:            numOrNull(fd.get('balance')),
         interest_rate:      numOrNull(fd.get('interest_rate')),
@@ -1644,13 +1663,16 @@
 
   // ---------- Add Investment modal ----------
   function openAddInvestmentModal() {
-    const clients = (window.__onixAdminData && window.__onixAdminData.clients) || [];
+    const data = window.__onixAdminData || {};
+    const clients = data.clients || [];
+    const staff   = data.staff || [];
     openModal(`
       <h2>Add Investment</h2>
       <div class="sub">Record a client position in a venture</div>
       <form id="oac-add-inv-form">
-        <div class="oac-modal-row" style="grid-template-columns:1fr">
+        <div class="oac-modal-row" style="grid-template-columns:1fr 1fr">
           ${field('Client', 'user_id', { required: true, select: clientOptions(clients) })}
+          ${field('Assigned to (Staff)', 'assigned_to', { select: staffOptions(staff) })}
         </div>
         <div class="oac-modal-row">
           ${field('Venture Name',      'venture_name',      { required: true, placeholder: 'Bari Caffè Houston' })}
@@ -1669,6 +1691,7 @@
       const fd = new FormData(form);
       handleFormSubmit(form, () => ({
         user_id:         String(fd.get('user_id')),
+        assigned_to:     strOrNull(fd.get('assigned_to')),
         venture_name:    strOrNull(fd.get('venture_name')),
         venture_type:    strOrNull(fd.get('venture_type')),
         amount_invested: numOrNull(fd.get('amount_invested')),
@@ -1725,14 +1748,18 @@
 
   // ---------- Edit Loan modal ----------
   function openEditLoanModal(loan) {
-    const clients = (window.__onixAdminData && window.__onixAdminData.clients) || [];
+    const data = window.__onixAdminData || {};
+    const clients = data.clients || [];
+    const staff   = data.staff || [];
     const clientOpts = clientOptions(clients).map(o => ({ ...o, selected: o.value === loan.user_id }));
+    const staffOpts  = staffOptions(staff).map(o => ({ ...o, selected: o.value === (loan.assigned_to || '') }));
     openModal(`
       <h2>Edit Loan</h2>
       <div class="sub">${esc(loan.loan_id_display || loan.id.slice(0,8))}</div>
       <form id="oac-edit-loan-form">
-        <div class="oac-modal-row" style="grid-template-columns:1fr">
+        <div class="oac-modal-row" style="grid-template-columns:1fr 1fr">
           ${field('Client', 'user_id', { required: true, select: clientOpts })}
+          ${field('Assigned to (Staff)', 'assigned_to', { select: staffOpts })}
         </div>
         <div class="oac-modal-row">
           ${field('Loan ID',           'loan_id_display',  { value: loan.loan_id_display })}
@@ -1760,6 +1787,7 @@
       const fd = new FormData(form);
       handleUpdateSubmit(form, 'loans', loan.id, () => ({
         user_id:            String(fd.get('user_id')),
+        assigned_to:        strOrNull(fd.get('assigned_to')),
         loan_id_display:    strOrNull(fd.get('loan_id_display')),
         balance:            numOrNull(fd.get('balance')),
         interest_rate:      numOrNull(fd.get('interest_rate')),
@@ -1777,14 +1805,18 @@
 
   // ---------- Edit Investment modal ----------
   function openEditInvestmentModal(inv) {
-    const clients = (window.__onixAdminData && window.__onixAdminData.clients) || [];
+    const data = window.__onixAdminData || {};
+    const clients = data.clients || [];
+    const staff   = data.staff || [];
     const clientOpts = clientOptions(clients).map(o => ({ ...o, selected: o.value === inv.user_id }));
+    const staffOpts  = staffOptions(staff).map(o => ({ ...o, selected: o.value === (inv.assigned_to || '') }));
     openModal(`
       <h2>Edit Investment</h2>
       <div class="sub">${esc(inv.venture_name)}</div>
       <form id="oac-edit-inv-form">
-        <div class="oac-modal-row" style="grid-template-columns:1fr">
+        <div class="oac-modal-row">
           ${field('Client', 'user_id', { required: true, select: clientOpts })}
+          ${field('Assigned to (Staff)', 'assigned_to', { select: staffOpts })}
         </div>
         <div class="oac-modal-row">
           ${field('Venture Name',      'venture_name',      { required: true, value: inv.venture_name })}
@@ -1808,6 +1840,7 @@
       const fd = new FormData(form);
       handleUpdateSubmit(form, 'investments', inv.id, () => ({
         user_id:         String(fd.get('user_id')),
+        assigned_to:     strOrNull(fd.get('assigned_to')),
         venture_name:    strOrNull(fd.get('venture_name')),
         venture_type:    strOrNull(fd.get('venture_type')),
         amount_invested: numOrNull(fd.get('amount_invested')),
@@ -1976,6 +2009,11 @@
 
   // ---------- New Client modal ----------
   function openNewClientModal() {
+    const data = window.__onixAdminData || {};
+    const staff = data.staff || [];
+    const staffOptsHtml = staffOptions(staff).map(o =>
+      `<option value="${esc(o.value)}">${esc(o.label)}</option>`
+    ).join('');
     openModal(`
       <h2>Add New Client</h2>
       <div class="sub">Creates an Onix Finance account immediately</div>
@@ -2008,6 +2046,12 @@
               <option value="pending">Pending (needs approval)</option>
             </select>
           </div>
+          <div>
+            <div class="k">Assigned to (Staff)</div>
+            <select name="assigned_to" style="width:100%;padding:10px 12px;border:1px solid #E8E8E8;font-size:.9rem;font-family:inherit;outline:none;background:#fff">
+              ${staffOptsHtml}
+            </select>
+          </div>
         </div>
         <div id="oac-new-client-err" style="color:#C0392B;font-size:.85rem;margin-bottom:10px;display:none"></div>
         <div class="oac-modal-foot" style="margin-top:0">
@@ -2037,6 +2081,19 @@
         errEl.textContent = error.message || 'Could not create client.';
         submitBtn.disabled = false; submitBtn.textContent = 'Create Client';
         return;
+      }
+      // Assign to a staff member if selected. admin_create_client returns the
+      // new user id (uuid or object). We follow up with a direct profiles
+      // update — RLS lets admins update any profile row.
+      const assignedTo = String(fd.get('assigned_to') || '').trim();
+      if (assignedTo) {
+        const newId = (data && typeof data === 'object' && data.id) ? data.id : data;
+        if (newId) {
+          const upd = await OnixDB.client.from('profiles')
+            .update({ assigned_to: assignedTo })
+            .eq('id', newId);
+          if (upd.error) console.warn('[onix-admin] assigned_to update failed:', upd.error);
+        }
       }
       // Close modal and reload data
       document.getElementById('oac-modal').classList.remove('open');
@@ -2618,8 +2675,9 @@
     const greeting = document.getElementById('oac-greeting');
     if (greeting) greeting.textContent = 'Loading data…';
     try {
-      const [clients, pending, loans, investments, raises, applications, payments, distributions, interests] = await Promise.all([
+      const [clients, staff, pending, loans, investments, raises, applications, payments, distributions, interests] = await Promise.all([
         OnixDB.getAllClients(),
+        OnixDB.getAllStaff             ? OnixDB.getAllStaff()            : Promise.resolve([]),
         OnixDB.getPendingClients(),
         OnixDB.getAllLoans(),
         OnixDB.getAllInvestments(),
@@ -2632,7 +2690,7 @@
       // The Live Admin Console drawer is retired; everything renders inside
       // the static admin tabs now. Pending Approvals appears as a banner on
       // the Clients tab (driven by data.pending).
-      paintStaticAdmin({ clients, loans, investments, raises, applications, payments, distributions, pending });
+      paintStaticAdmin({ clients, staff, loans, investments, raises, applications, payments, distributions, pending });
       paintSidebarBadges({ applications, pending, interests });
       renderAdminNotifications({ applications, payments, distributions, pending, interests });
       const newInterest = (interests || []).filter(i => i.status === 'new').length;
