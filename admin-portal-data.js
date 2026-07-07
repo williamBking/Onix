@@ -1210,9 +1210,14 @@
     const v = findView(STATIC_VIEWS.clients); if (!v) return false;
     if (alreadyPainted(v)) return true;
     pending = pending || (clients || []).filter(c => c.status === 'pending');
-    // Per-client loan / investment counts so the admin can see activity at a glance.
-    const loanCounts = {}, invCounts = {};
-    (loans || []).forEach(l => { loanCounts[l.user_id] = (loanCounts[l.user_id] || 0) + 1; });
+    // Per-client loan balances, counts, and investment counts.
+    const loanCounts = {}, loanBalances = {}, invCounts = {};
+    (loans || []).forEach(l => {
+      if (l.status === 'active') {
+        loanCounts[l.user_id] = (loanCounts[l.user_id] || 0) + 1;
+        loanBalances[l.user_id] = (loanBalances[l.user_id] || 0) + Number(l.balance || 0);
+      }
+    });
     (investments || []).forEach(i => { invCounts[i.user_id] = (invCounts[i.user_id] || 0) + 1; });
     // Text-form of the Borrower / LP state — splitRoleColumn (admin-portal.html)
     // reads this textContent to seed the checkbox state when it rewrites the
@@ -1229,6 +1234,7 @@
         <td>${esc(c.full_name || '—')}</td>
         <td>${esc(c.email)}</td>
         <td>${esc(roleText(c))}</td>
+        <td>${loanBalances[c.id] ? fmt.money(loanBalances[c.id]) : '—'}</td>
         <td>${loanCounts[c.id] || '—'}</td>
         <td>${invCounts[c.id] || '—'}</td>
         <td><span class="oac-badge ${esc(c.status || '')}">${esc(c.status || '—')}</span></td>
@@ -1237,7 +1243,7 @@
           <button class="oac-btn outline" data-cl-view="1" type="button">View</button>
           <button class="oac-btn outline" data-cl-docs="1" type="button">Documents</button>
         </td>
-      </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No clients yet.</td></tr>';
+      </tr>`).join('') : '<tr><td colspan="9" class="oac-empty">No clients yet.</td></tr>';
     // Pending Approvals banner — split into "new sign-ups" (just signed up,
     // need an in-person meeting) and "ready to activate" (admin has met with
     // them and is ready to flip the account on).
@@ -1298,7 +1304,7 @@
       pendingBanner +
       newClientBtn +
       `<table class="oac-table" style="width:100%"><thead><tr>
-        <th>Name</th><th>Email</th><th>Role</th><th>Loans</th><th>Investments</th><th>Status</th><th>Joined</th><th></th>
+        <th>Name</th><th>Email</th><th>Role</th><th>Loan Balance</th><th>Loans</th><th>Investments</th><th>Status</th><th>Joined</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>`);
     const btn = v.querySelector('#oac-new-client-btn');
     if (btn) btn.addEventListener('click', (e) => { e.preventDefault(); openNewClientModal(); });
@@ -2497,6 +2503,21 @@
 
     function tryAll() {
       try {
+        // The Bolt bundler replaces the entire <head> on first unpack, which
+        // wipes our injected style sheets. Re-inject whenever they're missing.
+        if (!document.getElementById('onix-admin-styles')) injectStyles();
+        if (!document.getElementById('cal-styles')) injectCalendarStyles();
+
+        // Calendar: ensureCalendarSidebarAndView() is idempotent and safe to
+        // call on every tick. If the bundler wiped the sidebar item + view-calendar
+        // div we previously injected, this recreates them so the calendar is
+        // visible again. renderCalendar() is called only when the grid is empty
+        // (first render or after a bundler wipe) to avoid flickering.
+        if (ensureCalendarSidebarAndView() && calEvents.length) {
+          const grid = document.getElementById('cal-month-grid');
+          if (grid && !grid.firstChild) renderCalendar();
+        }
+
         paintDashboardView(data);
         paintClientsView(data.clients, data.loans, data.investments, data.pending);
         paintLoansView(data.loans);
