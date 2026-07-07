@@ -2496,15 +2496,19 @@
     let reportsChartsWired = false;
 
     function tryAll() {
-      paintDashboardView(data);
-      paintClientsView(data.clients, data.loans, data.investments, data.pending);
-      paintLoansView(data.loans);
-      paintInvestmentsView(data.investments);
-      paintRaisesView(data.raises);
-      paintApplicationsView(data.applications);
-      wireGlobalSearch(data);
-      if (!dashChartsWired) dashChartsWired = updateDashboardCharts(data.loans, data.investments);
-      if (!reportsChartsWired) reportsChartsWired = updateReportsCharts(data.loans, data.payments);
+      try {
+        paintDashboardView(data);
+        paintClientsView(data.clients, data.loans, data.investments, data.pending);
+        paintLoansView(data.loans);
+        paintInvestmentsView(data.investments);
+        paintRaisesView(data.raises);
+        paintApplicationsView(data.applications);
+        wireGlobalSearch(data);
+        if (!dashChartsWired) dashChartsWired = updateDashboardCharts(data.loans, data.investments);
+        if (!reportsChartsWired) reportsChartsWired = updateReportsCharts(data.loans, data.payments);
+      } catch (e) {
+        console.error('[onix-admin] paint error (will retry):', e);
+      }
     }
     tryAll();
     window.__onixAdminData = data;
