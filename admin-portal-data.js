@@ -1157,6 +1157,35 @@
     // Log every run (no once-only flag) so cache busting is obvious in DevTools
     console.log('[onix-admin] dashboard updates:', updated);
 
+    // Inject a live-data status banner once below the page header so the user
+    // can immediately see that real Supabase data is loaded.
+    if (!v.querySelector('#onix-live-banner')) {
+      const pageHd = v.querySelector('.page-hd');
+      const banner = document.createElement('div');
+      banner.id = 'onix-live-banner';
+      banner.style.cssText = 'background:#EBF5EB;border:1px solid #2D6A2D;border-left:4px solid #2D6A2D;padding:10px 16px;margin-bottom:18px;font-family:\'DM Sans\',sans-serif;font-size:.8rem;color:#1A1A1A';
+      const activeClients = clients.filter(c => c.role === 'client' && c.status === 'active').length;
+      const activeLoansCount = loans.filter(l => l.status === 'active').length;
+      banner.innerHTML =
+        '<span style="color:#2D6A2D;font-weight:700">✓ Live data loaded from Supabase</span>' +
+        '<span style="color:#555;margin-left:12px">' +
+          activeClients + ' clients · ' +
+          activeLoansCount + ' loans · ' +
+          fmt.money(loanPortfolio) + ' portfolio' +
+        '</span>' +
+        '<div style="margin-top:5px;color:#555">' +
+          'Click <strong>Clients</strong> in the sidebar to see all clients with loan balances &nbsp;·&nbsp; ' +
+          'Click <strong>Calendar</strong> in the sidebar to see loan closing dates' +
+        '</div>';
+      if (pageHd && pageHd.nextSibling) {
+        pageHd.parentNode.insertBefore(banner, pageHd.nextSibling);
+      } else if (pageHd) {
+        pageHd.parentNode.appendChild(banner);
+      } else {
+        v.insertBefore(banner, v.firstChild);
+      }
+    }
+
     // Replace activity-item rows with live events (preserve container + card chrome).
     const firstActivity = v.querySelector('.activity-item');
     if (firstActivity) {
