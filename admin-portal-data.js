@@ -2342,9 +2342,159 @@
     window.addEventListener('resize', () => { if (box.style.display === 'block') positionBox(); });
   }
 
+  // ── Chart helpers ─────────────────────────────────────────────────────────
+
+  // Return the last N months as 'Mon' labels ending at today.
+  function lastNMonthLabels(n) {
+    const labels = [];
+    const d = new Date();
+    d.setDate(1);
+    for (let i = n - 1; i >= 0; i--) {
+      const m = new Date(d.getFullYear(), d.getMonth() - i, 1);
+      labels.push(m.toLocaleString('en-US', { month: 'short' }));
+    }
+    return labels;
+  }
+
+  // Sum `field` on items grouped by the calendar month of `dateField`,
+  // returning an array aligned to the last N months (0 for missing months).
+  function sumByMonth(items, dateField, field, n) {
+    const now = new Date();
+    const buckets = {};
+    for (let i = n - 1; i >= 0; i--) {
+      const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      buckets[m.getFullYear() + '-' + m.getMonth()] = 0;
+    }
+    items.forEach(item => {
+      if (!item[dateField]) return;
+      const d = new Date(item[dateField]);
+      const key = d.getFullYear() + '-' + d.getMonth();
+      if (key in buckets) buckets[key] += Number(item[field] || 0);
+    });
+    return Object.values(buckets);
+  }
+
+  // Update a Chart.js instance's labels + first dataset data in place.
+  function setChartData(chart, labels, data) {
+    chart.data.labels = labels;
+    chart.data.datasets[0].data = data;
+    chart.update('none');
+  }
+
+  // Find a Chart.js instance by canvas ID (works with Chart.js v3+).
+  function getChart(id) {
+    const canvas = document.getElementById(id);
+    if (!canvas) return null;
+    if (typeof Chart === 'undefined') return null;
+    return typeof Chart.getChart === 'function'
+      ? Chart.getChart(canvas)
+      : (Chart.instances && Object.values(Chart.instances).find(c => c.canvas === canvas)) || null;
+  }
+
+  // Format a raw dollar value as $1.2M or $450K for chart tooltips.
+  function fmtChartDollars(v) {
+    if (v >= 1e6) return '$' + (v / 1e6).toFixed(2) + 'M';
+    if (v >= 1e3) return '$' + (v / 1e3).toFixed(0) + 'K';
+    return '$' + Math.round(v).toLocaleString('en-US');
+  }
+
+  function updateDashboardCharts(loans, investments) {
+    const labels12 = lastNMonthLabels(12);
+
+    // origChart — loan originations by month (balance at origination, $M)
+    const origChart = getChart('origChart');
+    if (origChart) {
+      const vals = sumByMonth(loans, 'created_at', 'balance', 12)
+        .map(v => parseFloat((v / 1e6).toFixed(2)));
+      setChartData(origChart, labels12, vals);
+    }
+
+    // loanTypeChart — active loan portfolio by type: real $ amounts + tooltip shows amount + %
+    const loanTypeChart = getChart('loanTypeChart');
+    if (loanTypeChart) {
+      const activeLoans = loans.filter(l => l.status === 'active');
+      const typeTotals = {};
+      activeLoans.forEach(l => {
+        const t = l.venture_type || 'Other';
+        typeTotals[t] = (typeTotals[t] || 0) + Number(l.balance || 0);
+      });
+      const total = Object.values(typeTotals).reduce((s, v) => s + v, 0);
+      const types = Object.keys(typeTotals).sort((a, b) => typeTotals[b] - typeTotals[a]);
+      const vals = types.map(t => typeTotals[t]);
+      loanTypeChart.data.labels = types;
+      loanTypeChart.data.datasets[0].data = vals;
+      // Tooltip: "CRE: $1.20M (58%)"
+      loanTypeChart.options.plugins = loanTypeChart.options.plugins || {};
+      loanTypeChart.options.plugins.tooltip = loanTypeChart.options.plugins.tooltip || {};
+      loanTypeChart.options.plugins.tooltip.callbacks = {
+        label: c => {
+          const val = c.parsed;
+          const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+          return ` ${c.label}: ${fmtChartDollars(val)} (${pct}%)`;
+        }
+      };
+      // Show legend so type names are visible on the chart
+      loanTypeChart.options.plugins.legend = { display: true, position: 'bottom',
+        labels: { font: { size: 11 }, padding: 12, color: '#555' } };
+      loanTypeChart.update('none');
+    }
+
+    // depositChart — cumulative deposit portfolio growth by month ($M)
+    const depositChart = getChart('depositChart');
+    if (depositChart) {
+      const deposits = investments.filter(i => (i.venture_type || '').toLowerCase() === 'deposit');
+      const monthly = sumByMonth(deposits, 'created_at', 'amount_invested', 12);
+      let cumulative = 0;
+      const vals = monthly.map(v => {
+        cumulative += v;
+        return parseFloat((cumulative / 1e6).toFixed(2));
+      });
+      setChartData(depositChart, labels12, vals);
+    }
+
+    return !!(origChart && loanTypeChart && depositChart);
+  }
+
+  function updateReportsCharts(loans, payments) {
+    const labels6 = lastNMonthLabels(6);
+
+    // revChart — monthly revenue from collected loan payments ($K)
+    const revChart = getChart('revChart');
+    if (revChart) {
+      const paidPayments = payments.filter(p => p.paid_at);
+      const vals = sumByMonth(paidPayments, 'paid_at', 'amount_due', 6)
+        .map(v => parseFloat((v / 1e3).toFixed(1)));
+      setChartData(revChart, labels6, vals);
+    }
+
+    // typeChart — active loan portfolio by type ($M, horizontal bar)
+    const typeChart = getChart('typeChart');
+    if (typeChart) {
+      const activeLoans = loans.filter(l => l.status === 'active');
+      const typeTotals = {};
+      activeLoans.forEach(l => {
+        const t = l.venture_type || 'Other';
+        typeTotals[t] = (typeTotals[t] || 0) + Number(l.balance || 0);
+      });
+      const types = Object.keys(typeTotals).sort((a, b) => typeTotals[b] - typeTotals[a]);
+      const vals = types.map(t => parseFloat((typeTotals[t] / 1e6).toFixed(2)));
+      typeChart.data.labels = types;
+      typeChart.data.datasets[0].data = vals;
+      typeChart.update('none');
+    }
+
+    return !!(revChart && typeChart);
+  }
+
+  // ── /Chart helpers ─────────────────────────────────────────────────────────
+
   function paintStaticAdmin(data) {
     // Invalidate any previously-painted markers so we re-paint with fresh data
     document.querySelectorAll('.' + LIVE_MARKER).forEach(el => el.classList.remove(LIVE_MARKER));
+
+    let dashChartsWired = false;
+    let reportsChartsWired = false;
+
     function tryAll() {
       paintDashboardView(data);
       paintClientsView(data.clients, data.loans, data.investments, data.pending);
@@ -2353,6 +2503,8 @@
       paintRaisesView(data.raises);
       paintApplicationsView(data.applications);
       wireGlobalSearch(data);
+      if (!dashChartsWired) dashChartsWired = updateDashboardCharts(data.loans, data.investments);
+      if (!reportsChartsWired) reportsChartsWired = updateReportsCharts(data.loans, data.payments);
     }
     tryAll();
     window.__onixAdminData = data;
@@ -3755,12 +3907,48 @@
     }
   }
 
+  // ── Role-based permission enforcement ────────────────────────────────────
+  // Managers can view all data and add clients but cannot reject/remove
+  // clients or manage admin team members. We hide the relevant buttons and
+  // the Users tab via CSS injected once, then re-apply via MutationObserver
+  // to catch elements the bundler renders after initial load.
+  function enforceRolePermissions(role) {
+    if (role !== 'manager') return; // admins have no restrictions
+
+    const MANAGER_CSS = `
+      /* Hide reject/remove buttons for clients */
+      [data-act="reject"], [data-pending-act="reject"],
+      #oac-bulk-reject, .oac-btn.danger { display: none !important; }
+      /* Hide the Users/Team management tab in the sidebar */
+      [data-view="users"], [onclick*="showView('users')"],
+      a[href="#users"] { display: none !important; }
+      /* Hide the Users view itself */
+      #view-users { display: none !important; }
+    `;
+
+    if (!document.getElementById('__onix_manager_css')) {
+      const s = document.createElement('style');
+      s.id = '__onix_manager_css';
+      s.textContent = MANAGER_CSS;
+      document.head.appendChild(s);
+    }
+
+    // Re-apply to any elements the bundler injects after initial load
+    const obs = new MutationObserver(() => {
+      document.querySelectorAll('[data-act="reject"], [data-pending-act="reject"], #oac-bulk-reject')
+        .forEach(el => { el.style.display = 'none'; });
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+  }
+  // ── /Role-based permission enforcement ───────────────────────────────────
+
   async function bootstrap() {
     const gate = await OnixDB.requireAdmin();
     if (!gate) return;
     injectStyles();
     buildPanel();
     renderSidebarUser(gate.profile);
+    enforceRolePermissions(gate.profile.role);
     // oac-greeting belongs to the retired Live Admin Console drawer; only
     // set its text if the element actually exists. Without this guard the
     // bootstrap throws and downstream wiring (Calendar tab, etc.) never runs.

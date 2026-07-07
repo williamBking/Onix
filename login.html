@@ -248,16 +248,22 @@ async function doLogin(e) {
  
   // 3. Persist profile to localStorage so the portal pages (which gate on
   //    `onix-user`) recognise the session and don't bounce back to login.
+  // Derive permission title for OnixPerms.currentTitle() in the portal.
+  // Managers have role='manager', no title → must explicitly store 'manager'.
+  // AEs have role='admin', title='ae'. Admins have role='admin', title=null.
+  var permTitle = profile.role === 'manager'
+    ? 'manager'
+    : (profile.title === 'ae' ? 'ae' : 'admin');
   localStorage.setItem('onix-user', JSON.stringify({
     role: profile.role,
-    title: profile.title || 'admin',
+    title: permTitle,
     name: profile.full_name || profile.email,
     email: profile.email,
     id: profile.id
   }));
 
   // 4. Redirect based on role
-  if (profile.role === 'admin') {
+  if (profile.role === 'admin' || profile.role === 'manager') {
     window.location.href = 'admin-portal.html';
   } else {
     window.location.href = 'client-portal.html';

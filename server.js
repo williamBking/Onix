@@ -594,10 +594,11 @@ async function requireOnixAdmin(req, res, next) {
     }
     const rows = await r.json();
     const p = Array.isArray(rows) ? rows[0] : null;
-    if (!p || p.role !== 'admin' || p.status !== 'active') {
+    const ADMIN_ROLES = ['admin', 'manager'];
+    if (!p || !ADMIN_ROLES.includes(p.role) || p.status !== 'active') {
       return res.status(403).json({ error: 'Admin role required' });
     }
-    req.user.role   = 'admin';
+    req.user.role   = p.role;
     req.user.status = p.status;
     next();
   } catch (err) {
