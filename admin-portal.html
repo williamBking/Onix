@@ -130,8 +130,11 @@
     function currentTitle(){
       try {
         var u = JSON.parse(localStorage.getItem('onix-user') || 'null');
-        var t = u && u.title;
-        return (t === 'manager' || t === 'ae') ? t : 'admin';
+        if (!u) return 'admin';
+        // role='manager' is stored directly in the DB — check it first
+        if (u.role === 'manager') return 'manager';
+        // AEs have role='admin' but title='ae' in their profile
+        return (u.title === 'ae') ? 'ae' : 'admin';
       } catch(e) { return 'admin'; }
     }
     function can(key){
@@ -4645,8 +4648,8 @@
   </noscript>
   <!-- Onix Supabase live admin layer -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="supabase.js?v=11"></script>
-  <script defer src="admin-portal-data.js?v=53"></script>
+  <script src="supabase.js?v=12"></script>
+  <script defer src="admin-portal-data.js?v=54"></script>
   <!-- Shared i18n helper: wires EN/ES toggle via event delegation so it
        works even for late-injected DOM (the admin bundle ships its own
        lang script but binds once at load and misses the buttons). -->
