@@ -683,6 +683,91 @@ function creditosPorVencer(req, res) {
 app.get('/api/creditos/por-vencer',  requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosPorVencer);
 app.post('/api/creditos/por-vencer', requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosPorVencer);
 
+// =============================================================
+// OUS payload capture — one-off diagnostic for setting up sync
+//
+// Fires all three OUS endpoints in one shot and writes the raw
+// JSON payloads into the public.ous_raw_capture table so a
+// developer can inspect the field shapes via SQL and build the
+// OUS→Onix field mapping. Safe to leave in production — it just
+// stages data, doesn't modify anything else.
+//
+//   POST /api/ous-capture
+//   Body: { fecha_cierre?: 'YYYY-MM-DD', dias?: number }
+//   Auth: authenticated admin (any staff role)
+// =============================================================
+async function insertCapture(userJwt, endpoint, params, httpStatus, payload, errorMsg) {
+  if (!SUPABASE_URL) return { ok: false, error: 'SUPABASE_URL missing' };
+  const row = {
+    endpoint,
+    params: params || null,
+    http_status: httpStatus,
+    payload: payload || null,
+    error: errorMsg || null
+  };
+  try {
+    const r = await fetch(SUPABASE_URL + '/rest/v1/ous_raw_capture', {
+      method: 'POST',
+      headers: {
+        'apikey':        SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + userJwt,
+        'Content-Type':  'application/json',
+        'Prefer':        'return=minimal'
+      },
+      body: JSON.stringify(row)
+    });
+    if (!r.ok) {
+      const text = await r.text();
+      return { ok: false, error: 'HTTP ' + r.status + ': ' + text.slice(0, 300) };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e) };
+  }
+}
+
+async function captureOne(userJwt, endpoint, ousPath, callOpts, params) {
+  try {
+    const r = await callOUS(ousPath, callOpts || {});
+    const write = await insertCapture(userJwt, endpoint, params, r.status, r.body, null);
+    return { endpoint, http_status: r.status, saved: write.ok, save_error: write.error };
+  } catch (err) {
+    const msg = (err && err.message) || String(err);
+    const write = await insertCapture(userJwt, endpoint, params, null, null, msg);
+    return { endpoint, error: msg, saved: write.ok, save_error: write.error };
+  }
+}
+
+app.post(
+  '/api/ous-capture',
+  requireSupabaseAuth, requireOnixAdmin, requireOUSLogin,
+  async (req, res) => {
+    const fecha_cierre = (req.body && req.body.fecha_cierre) || new Date().toISOString().slice(0, 10);
+    const diasRaw     = (req.body && req.body.dias);
+    const dias        = Number.isFinite(Number(diasRaw)) ? Number(diasRaw) : 90;
+    const jwt         = req.user && req.user.raw_token;
+    if (!jwt) return res.status(401).json({ error: 'Missing JWT for staging write' });
+
+    const results = await Promise.all([
+      captureOne(jwt, '/catalogos', '/catalogos', { method: 'GET' }, {}),
+      captureOne(
+        jwt, '/creditos-cierre-saldos',
+        '/creditos-cierre-saldos' + buildQuery({ fecha_cierre }),
+        { method: 'GET', body: { fecha_cierre } },
+        { fecha_cierre }
+      ),
+      captureOne(
+        jwt, '/creditos/por-vencer',
+        '/creditos/por-vencer' + buildQuery({ dias }),
+        { method: 'GET', body: { dias } },
+        { dias }
+      )
+    ]);
+
+    res.json({ ok: true, params: { fecha_cierre, dias }, results });
+  }
+);
+
 // 404 for anything else under /api to make typos obvious in the
 // browser DevTools network tab.
 app.use('/api', (req, res) =>
