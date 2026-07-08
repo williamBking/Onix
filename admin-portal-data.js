@@ -3579,6 +3579,21 @@
           '</div>' +
         '</div>' +
 
+        // ---- Sync control panel -------------------------------------
+        // Big red button that mirrors OUS Pasiva credits into the Onix
+        // Supabase (profiles + loans), plus a chip showing the latest
+        // scheduled run so admins know how fresh the dashboard is.
+        '<div class="ous-card" style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">' +
+          '<div>' +
+            '<h2 data-en="Sync With OUS" data-es="Sincronizar con OUS">Sync With OUS</h2>' +
+            '<div class="sub" data-en="Pulls the latest closing balances and coming-due data from OUS and writes them into the Onix database. Runs automatically every 15 minutes; click below to run now." data-es="Trae los saldos al cierre y próximos vencimientos desde OUS y los guarda en la base de datos de Onix. Se ejecuta automáticamente cada 15 minutos; haz clic para ejecutar ahora.">Pulls the latest closing balances and coming-due data from OUS and writes them into the Onix database. Runs automatically every 15 minutes; click below to run now.</div>' +
+          '</div>' +
+          '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">' +
+            '<button class="ous-btn" id="ous-sync-btn" type="button" data-en="Sync Now" data-es="Sincronizar Ahora">Sync Now</button>' +
+            '<div id="ous-sync-chip" style="font-size:.72rem;color:#888" data-en="Loading last sync…" data-es="Cargando última sincronización…">Loading last sync…</div>' +
+          '</div>' +
+        '</div>' +
+
         // ---- Catalogos ----------------------------------------------
         '<div class="ous-card">' +
           '<h2 data-en="Catalogs" data-es="Catálogos">Catalogs</h2>' +
@@ -3625,6 +3640,10 @@
       v.querySelector('#ous-cierre-btn').addEventListener('click', () => fetchCierreSaldos());
       v.querySelector('#ous-vencer-btn').addEventListener('click', () => fetchPorVencer());
       v.querySelector('#ous-capture-btn').addEventListener('click', () => captureOUSPayloads());
+      v.querySelector('#ous-sync-btn').addEventListener('click', () => runOUSSync());
+      refreshOUSSyncChip();
+      if (window.__onixOUSSyncPoll) clearInterval(window.__onixOUSSyncPoll);
+      window.__onixOUSSyncPoll = setInterval(refreshOUSSyncChip, 30000);
     }
     return true;
   }
@@ -3919,6 +3938,77 @@
       ousShowResult('ous-capture-result', esc(err.message || String(err)), true);
     } finally {
       btnEl.disabled = false; btnEl.textContent = orig;
+    }
+  }
+
+  // ---------------- OUS sync (mirror OUS Pasiva into Supabase) -------
+  // Hits the Railway proxy's /api/sync-run which fetches OUS then
+  // upserts clients + loans. On success we immediately trigger a
+  // refreshAll() so the admin sees the freshly-synced numbers on the
+  // dashboard / clients / loans tabs without needing to reload.
+  async function runOUSSync() {
+    const btn = document.getElementById('ous-sync-btn');
+    if (!btn) return;
+    const orig = btn.textContent;
+    btn.disabled = true;
+    const lang = activeLang();
+    btn.textContent = lang === 'es' ? 'Sincronizando…' : 'Syncing…';
+    try {
+      const summary = await ousFetch('/api/sync-run', {});
+      const chip = document.getElementById('ous-sync-chip');
+      if (chip) {
+        const parts = [
+          (lang === 'es' ? 'Listo · ' : 'Done · ') +
+          summary.rows_seen + (lang === 'es' ? ' créditos' : ' credits'),
+          summary.clients_upserted + (lang === 'es' ? ' clientes' : ' clients') +
+            (summary.clients_created ? ' (' + summary.clients_created + ' ' + (lang === 'es' ? 'nuevos' : 'new') + ')' : ''),
+          summary.loans_upserted + (lang === 'es' ? ' préstamos' : ' loans'),
+          (summary.duration_ms / 1000).toFixed(1) + 's'
+        ];
+        chip.textContent = parts.join(' · ');
+        chip.style.color = summary.ok ? '#3B8B3B' : '#C0392B';
+      }
+      if (typeof refreshAll === 'function') refreshAll();
+      setTimeout(refreshOUSSyncChip, 3000);
+    } catch (err) {
+      const chip = document.getElementById('ous-sync-chip');
+      if (chip) {
+        chip.textContent = (lang === 'es' ? 'Error: ' : 'Error: ') + (err.message || String(err));
+        chip.style.color = '#C0392B';
+      }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  }
+
+  // Read the last sync from /api/sync-status and paint the chip.
+  async function refreshOUSSyncChip() {
+    const chip = document.getElementById('ous-sync-chip');
+    if (!chip) return;
+    try {
+      const r = await ousFetch('/api/sync-status');
+      const l = r && r.latest;
+      const lang = activeLang();
+      if (!l) {
+        chip.textContent = lang === 'es' ? 'Sin sincronizaciones aún.' : 'No syncs yet.';
+        chip.style.color = '#888';
+        return;
+      }
+      const ago = Math.round((Date.now() - new Date(l.ran_at).getTime()) / 60000);
+      const agoTxt = ago < 1
+        ? (lang === 'es' ? 'hace instantes' : 'moments ago')
+        : (lang === 'es' ? 'hace ' + ago + ' min' : ago + ' min ago');
+      const noun = lang === 'es' ? 'Última sincronización' : 'Last synced';
+      const detail = l.ok
+        ? ' · ' + l.loans_upserted + (lang === 'es' ? ' préstamos' : ' loans') +
+          ' · ' + l.clients_upserted + (lang === 'es' ? ' clientes' : ' clients')
+        : ' · ' + (lang === 'es' ? 'con errores' : 'with errors');
+      chip.textContent = noun + ' ' + agoTxt + detail;
+      chip.style.color = l.ok ? '#3B8B3B' : '#C0392B';
+    } catch (err) {
+      chip.textContent = (activeLang() === 'es' ? 'No se pudo cargar el estado.' : 'Could not load sync status.');
+      chip.style.color = '#888';
     }
   }
 
