@@ -69,8 +69,15 @@ const OUS_API_URL  = (process.env.OUS_API_URL || '').replace(/\/+$/, '');
 //
 // SUPABASE_URL + SUPABASE_ANON_KEY power both the auth check and the
 // per-request role lookup against the public.profiles table.
-const SUPABASE_URL        = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
-const SUPABASE_ANON_KEY   = process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_URL              = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+const SUPABASE_ANON_KEY         = process.env.SUPABASE_ANON_KEY || '';
+// SUPABASE_SERVICE_ROLE_KEY is only used by the OUS sync job (creates
+// placeholder auth users + bypasses RLS on upserts). Not required for
+// day-to-day proxy traffic.
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+// Shared secret for the scheduled sync trigger (pg_cron sends it in the
+// X-Cron-Key header). Not required for the manual admin-triggered path.
+const SYNC_CRON_KEY             = process.env.SYNC_CRON_KEY || '';
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -682,6 +689,380 @@ function creditosPorVencer(req, res) {
 }
 app.get('/api/creditos/por-vencer',  requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosPorVencer);
 app.post('/api/creditos/por-vencer', requireSupabaseAuth, requireOnixAdmin, requireOUSLogin, creditosPorVencer);
+
+// =============================================================
+// OUS Pasiva -> Onix Supabase sync
+//
+// Runs on demand (admin clicks "Refresh from OUS") and on a schedule
+// (pg_cron every 15 min hits POST /api/sync-run with X-Cron-Key).
+//
+// Data flow:
+//   1. login to OUS (reuses existing loginToOUS + token loop)
+//   2. fetch /creditos-cierre-saldos (rich, all active credits)
+//      + /creditos/por-vencer (adds id_cliente, payment freq, renewal)
+//   3. de-dupe clients by RFC. For each unique client:
+//      - find existing profile by RFC
+//      - if none, find by email (may be a manually-created account)
+//      - if none, CREATE a placeholder auth.users + profiles row
+//        (role='client', status='met' — visible in admin, no auth yet)
+//   4. upsert every credit into loans by loan_id_display
+//   5. write a summary row into ous_sync_log per endpoint
+//
+// Requires env vars:
+//   SUPABASE_SERVICE_ROLE_KEY  — writes profiles / loans / auth users
+//   SYNC_CRON_KEY              — optional, only needed for pg_cron path
+// =============================================================
+
+// -------- Small helpers --------------------------------------
+function toNum(v) {
+  if (v == null) return null;
+  const n = Number(String(v).replace(/[^0-9.\-]/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+function parseTermMonths(plazo) {
+  if (!plazo) return null;
+  const m = String(plazo).match(/(\d+)\s*(mes|meses|mo|month|d[íi]a|dia|dias|days|a[ñn]os|year)/i);
+  if (!m) return null;
+  const n = Number(m[1]); if (!Number.isFinite(n)) return null;
+  const unit = m[2].toLowerCase();
+  if (unit.startsWith('mes') || unit.startsWith('mo')) return n;
+  if (unit.startsWith('d')  || unit.startsWith('day')) return Math.round(n / 30);
+  if (unit.startsWith('a')  || unit.startsWith('y'))   return n * 12;
+  return n;
+}
+function mapAccountingStatus(s) {
+  const v = String(s || '').toLowerCase();
+  if (v === 'operativa') return 'active';
+  if (v === 'castigo')   return 'charged_off';
+  return v || 'active';
+}
+function mapPaymentFrequency(t) {
+  const v = String(t || '').toLowerCase();
+  return {
+    'diaria':      'daily',
+    'semanal':     'weekly',
+    'quincenal':   'biweekly',
+    'mensual':     'monthly',
+    'trimestral':  'quarterly',
+    'anual':       'annual'
+  }[v] || v || null;
+}
+
+// -------- Supabase service-role HTTP helpers -----------------
+async function sbFetch(path, init) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error('Supabase sync not configured: set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY');
+  }
+  const h = Object.assign({
+    'apikey':        SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': 'Bearer ' + SUPABASE_SERVICE_ROLE_KEY,
+    'Content-Type':  'application/json',
+    'Accept':        'application/json'
+  }, (init && init.headers) || {});
+  return fetch(SUPABASE_URL + path, Object.assign({}, init, { headers: h }));
+}
+
+// Find an existing profile by RFC, then by email. Returns { id } or null.
+async function findProfileByRfcOrEmail(rfc, email) {
+  if (rfc) {
+    const r = await sbFetch('/rest/v1/profiles?rfc=eq.' + encodeURIComponent(rfc) + '&select=id&limit=1');
+    if (r.ok) { const rows = await r.json(); if (rows && rows[0]) return rows[0]; }
+  }
+  if (email) {
+    const r = await sbFetch('/rest/v1/profiles?email=eq.' + encodeURIComponent(email.toLowerCase()) + '&select=id&limit=1');
+    if (r.ok) { const rows = await r.json(); if (rows && rows[0]) return rows[0]; }
+  }
+  return null;
+}
+
+// Create a placeholder auth.users + linked profiles row. Returns id.
+async function createPlaceholderClient({ email, full_name, rfc, regimen, promotor, bank_clabe, bank_account, ous_id_cliente }) {
+  // 1. Try to reuse an existing auth user with this email (rare but
+  //    possible if the profile was deleted but auth.users survived).
+  const lookup = await sbFetch('/auth/v1/admin/users?email=' + encodeURIComponent(email || ''));
+  let userId = null;
+  if (lookup.ok) {
+    const body = await lookup.json();
+    const list = (body && (body.users || (Array.isArray(body) ? body : []))) || [];
+    if (list[0] && list[0].id) userId = list[0].id;
+  }
+  // 2. Otherwise create the auth user (random password, email confirmed
+  //    so it's usable immediately if we later send a reset link).
+  if (!userId) {
+    if (!email) {
+      // No email → can't create auth user. Skip this client.
+      return null;
+    }
+    const rand = require('crypto').randomBytes(24).toString('base64url');
+    const created = await sbFetch('/auth/v1/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({
+        email:        String(email).toLowerCase(),
+        password:     rand,
+        email_confirm: true,
+        user_metadata: { source: 'ous_sync', full_name: full_name || null }
+      })
+    });
+    if (!created.ok) {
+      const text = await created.text();
+      throw new Error('auth.admin.createUser failed HTTP ' + created.status + ': ' + text.slice(0, 200));
+    }
+    const j = await created.json();
+    userId = j && (j.id || (j.user && j.user.id));
+    if (!userId) throw new Error('createUser returned no id: ' + JSON.stringify(j).slice(0, 200));
+  }
+  // 3. Insert the profile row. If a stray row already exists on this id
+  //    (from a previous partial sync), upsert instead of insert.
+  const profile = {
+    id: userId,
+    email: (email || '').toLowerCase() || null,
+    full_name: full_name || null,
+    rfc: rfc || null,
+    regimen: regimen || null,
+    promotor: promotor || null,
+    bank_clabe: bank_clabe || null,
+    bank_account: bank_account || null,
+    ous_id_cliente: ous_id_cliente || null,
+    role: 'client',
+    status: 'met'
+  };
+  const upserted = await sbFetch('/rest/v1/profiles?on_conflict=id', {
+    method: 'POST',
+    headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(profile)
+  });
+  if (!upserted.ok) {
+    const text = await upserted.text();
+    throw new Error('profiles upsert (create path) failed HTTP ' + upserted.status + ': ' + text.slice(0, 200));
+  }
+  return userId;
+}
+
+// Update the profile with fresh OUS fields, only filling nulls so we
+// don't stomp on manually-edited data.
+async function fillProfileMissing(id, fields) {
+  // Fetch the row so we can decide which fields to update.
+  const r = await sbFetch('/rest/v1/profiles?id=eq.' + encodeURIComponent(id) +
+    '&select=full_name,rfc,regimen,promotor,bank_clabe,bank_account,ous_id_cliente,email');
+  if (!r.ok) return;
+  const rows = await r.json();
+  const cur = rows && rows[0]; if (!cur) return;
+  const patch = {};
+  ['full_name','rfc','regimen','promotor','bank_clabe','bank_account','ous_id_cliente'].forEach(k => {
+    if ((cur[k] == null || cur[k] === '') && fields[k]) patch[k] = fields[k];
+  });
+  if (Object.keys(patch).length === 0) return;
+  await sbFetch('/rest/v1/profiles?id=eq.' + encodeURIComponent(id), {
+    method: 'PATCH',
+    headers: { 'Prefer': 'return=minimal' },
+    body: JSON.stringify(patch)
+  });
+}
+
+// Upsert one loan by loan_id_display. Always takes OUS values.
+async function upsertLoan(row) {
+  const body = {
+    loan_id_display:  row.loan_id_display,
+    user_id:          row.user_id,
+    product:          row.product || null,
+    loan_type:        row.loan_type || null,
+    term_months:      row.term_months,
+    origination_date: row.origination_date || null,
+    maturity_date:    row.maturity_date || null,
+    principal_amount: row.principal_amount,
+    interest_rate:    row.interest_rate,
+    monthly_payment:  row.monthly_payment,
+    balance:          row.balance,
+    status:           row.status || 'active',
+    days_delinquent:  row.days_delinquent || 0,
+    payment_frequency:row.payment_frequency || null,
+    renewal_requested:!!row.renewal_requested,
+    ous_synced_at:    new Date().toISOString()
+  };
+  const r = await sbFetch('/rest/v1/loans?on_conflict=loan_id_display', {
+    method: 'POST',
+    headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error('loans upsert failed HTTP ' + r.status + ': ' + text.slice(0, 200));
+  }
+}
+
+// Write one row to ous_sync_log per endpoint.
+async function logSync({ endpoint, rows_seen, clients_upserted, loans_upserted, clients_created, ok, error, duration_ms }) {
+  await sbFetch('/rest/v1/ous_sync_log', {
+    method: 'POST',
+    headers: { 'Prefer': 'return=minimal' },
+    body: JSON.stringify({
+      endpoint, rows_seen, clients_upserted, loans_upserted,
+      clients_created, ok, error, duration_ms
+    })
+  }).catch(() => {});
+}
+
+// -------- The sync itself ------------------------------------
+async function runOUSSync() {
+  const start = Date.now();
+
+  // 1. Ensure OUS session
+  if (!state.token) await tryLogin('sync-preflight');
+  if (!state.token) throw new Error('OUS login unavailable — sync aborted');
+
+  // 2. Fetch both credit endpoints
+  const today = new Date().toISOString().slice(0, 10);
+  const cs = await callOUS('/creditos-cierre-saldos' + buildQuery({ fecha_cierre: today }),
+    { method: 'GET', body: { fecha_cierre: today } });
+  const pv = await callOUS('/creditos/por-vencer' + buildQuery({ dias: 90 }),
+    { method: 'GET', body: { dias: 90 } });
+
+  const csRows = (cs.body && cs.body.data) || [];
+  const pvRows = (pv.body && pv.body.data) || [];
+  if (!Array.isArray(csRows)) throw new Error('cierre-saldos returned non-array: ' + JSON.stringify(cs.body).slice(0, 200));
+
+  // 3. Index por-vencer rows by id_credito for merge
+  const pvByCredito = {};
+  for (const r of pvRows) if (r && r.id_credito) pvByCredito[String(r.id_credito)] = r;
+
+  // 4. Group credits by client (RFC → info + credit rows)
+  const clientsByRfc = new Map();
+  for (const r of csRows) {
+    const rfc = (r.rfc || '').trim();
+    if (!rfc) continue; // skip credits without a client identity
+    if (!clientsByRfc.has(rfc)) {
+      const pvHit = pvByCredito[String(r.id_credito || '')];
+      clientsByRfc.set(rfc, {
+        rfc,
+        email:         (r.correo || '').toLowerCase() || null,
+        full_name:     r.nombre_cliente || null,
+        regimen:       r.regimen || null,
+        promotor:      r.promotor || null,
+        bank_clabe:    r.clabe || null,
+        bank_account:  r.cuenta || null,
+        ous_id_cliente:(pvHit && pvHit.id_cliente) || null,
+        credits: []
+      });
+    }
+    clientsByRfc.get(rfc).credits.push(r);
+  }
+
+  // 5. Per client: find or create → upsert their loans
+  let clientsUpserted = 0, clientsCreated = 0, loansUpserted = 0;
+  const errors = [];
+
+  for (const [rfc, c] of clientsByRfc.entries()) {
+    let userId;
+    try {
+      const existing = await findProfileByRfcOrEmail(rfc, c.email);
+      if (existing) {
+        userId = existing.id;
+        await fillProfileMissing(userId, c);
+      } else {
+        userId = await createPlaceholderClient(c);
+        if (userId) clientsCreated++;
+      }
+      if (!userId) continue;
+      clientsUpserted++;
+    } catch (e) {
+      errors.push('client ' + rfc + ': ' + (e.message || String(e)));
+      continue;
+    }
+
+    for (const cr of c.credits) {
+      try {
+        const pvHit = pvByCredito[String(cr.id_credito || '')];
+        await upsertLoan({
+          loan_id_display:  String(cr.id_credito || '').trim() || null,
+          user_id:          userId,
+          product:          cr.producto || null,
+          loan_type:        cr.tipo_credito || null,
+          term_months:      parseTermMonths(cr.plazo),
+          origination_date: cr.fecha_inicio || null,
+          maturity_date:    cr.fecha_termino || null,
+          principal_amount: toNum(cr.monto_otorgado),
+          interest_rate:    toNum(cr.tasa_anualizada),
+          monthly_payment:  toNum(cr.cuota),
+          balance:          toNum(cr.saldo_total_capital),
+          status:           mapAccountingStatus(cr.status_contable),
+          days_delinquent:  toNum(cr.dias_mora) || 0,
+          payment_frequency:mapPaymentFrequency(pvHit && pvHit.tipo_pago),
+          renewal_requested:(pvHit && String(pvHit.tiene_solicitud_de_renovacion || '').toUpperCase() === 'SI')
+        });
+        loansUpserted++;
+      } catch (e) {
+        errors.push('loan ' + cr.id_credito + ': ' + (e.message || String(e)));
+      }
+    }
+  }
+
+  const summary = {
+    ok: errors.length === 0,
+    duration_ms: Date.now() - start,
+    endpoints: ['/creditos-cierre-saldos', '/creditos/por-vencer'],
+    rows_seen: csRows.length,
+    clients_upserted: clientsUpserted,
+    clients_created: clientsCreated,
+    loans_upserted:  loansUpserted,
+    errors: errors.slice(0, 20)
+  };
+
+  await logSync({
+    endpoint: '/creditos-cierre-saldos+por-vencer',
+    rows_seen: csRows.length,
+    clients_upserted: clientsUpserted,
+    loans_upserted:   loansUpserted,
+    clients_created:  clientsCreated,
+    ok: summary.ok,
+    error: errors.length ? errors.slice(0, 5).join(' | ') : null,
+    duration_ms: summary.duration_ms
+  });
+
+  return summary;
+}
+
+// -------- Auth: admin JWT OR X-Cron-Key ----------------------
+async function requireAdminOrCronKey(req, res, next) {
+  const key = req.headers['x-cron-key'];
+  if (SYNC_CRON_KEY && key && key === SYNC_CRON_KEY) return next();
+  // Fall through to normal admin gate (JWT via requireSupabaseAuth + requireOnixAdmin)
+  return requireSupabaseAuth(req, res, () => requireOnixAdmin(req, res, next));
+}
+
+// -------- Routes ---------------------------------------------
+// POST /api/sync-run — runs the sync now. Returns summary.
+app.post('/api/sync-run', requireAdminOrCronKey, requireOUSLogin, async (req, res) => {
+  try {
+    const summary = await runOUSSync();
+    return res.json(summary);
+  } catch (err) {
+    console.error('[ous-sync] failed:', err && err.message);
+    // Also log the failure so the "last synced" chip shows it.
+    await logSync({
+      endpoint: '/creditos-cierre-saldos+por-vencer',
+      ok: false,
+      error: (err && err.message) || String(err),
+      duration_ms: 0
+    });
+    return res.status(500).json({ ok: false, error: (err && err.message) || String(err) });
+  }
+});
+
+// GET /api/sync-status — small pass-through so the admin portal doesn't
+// have to hit Supabase separately. Reads the latest ous_sync_log row.
+app.get('/api/sync-status', requireSupabaseAuth, requireOnixAdmin, async (req, res) => {
+  try {
+    const r = await sbFetch('/rest/v1/ous_sync_log?select=ran_at,ok,rows_seen,clients_upserted,loans_upserted,clients_created,error,duration_ms&order=ran_at.desc&limit=1');
+    if (!r.ok) {
+      const text = await r.text();
+      return res.status(502).json({ error: 'sync_status failed', detail: text.slice(0, 200) });
+    }
+    const rows = await r.json();
+    return res.json({ latest: (rows && rows[0]) || null });
+  } catch (err) {
+    return res.status(500).json({ error: (err && err.message) || String(err) });
+  }
+});
 
 // =============================================================
 // OUS payload capture — one-off diagnostic for setting up sync
