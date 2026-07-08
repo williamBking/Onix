@@ -213,7 +213,7 @@ async function rejectClient(userId) {
 async function getAllLoans() {
   const { data, error } = await _supabase
     .from('loans')
-    .select('*, profiles(full_name, email), loan_documents(*)')
+    .select('*, profiles!user_id(full_name, email), loan_documents(*)')
     .order('created_at', { ascending: false })
   if (error) console.error('All loans error:', error)
   return data || []
@@ -222,7 +222,7 @@ async function getAllLoans() {
 async function getAllInvestments() {
   const { data, error } = await _supabase
     .from('investments')
-    .select('*, profiles(full_name, email), investment_documents(*)')
+    .select('*, profiles!user_id(full_name, email), investment_documents(*)')
     .order('created_at', { ascending: false })
   if (error) console.error('All investments error:', error)
   return data || []
@@ -231,7 +231,7 @@ async function getAllInvestments() {
 async function getAllApplications() {
   const { data, error } = await _supabase
     .from('loan_applications')
-    .select('*, profiles(full_name, email)')
+    .select('*, profiles!user_id(full_name, email)')
     .order('submitted_at', { ascending: false })
   if (error) console.error('Applications error:', error)
   return data || []
@@ -249,7 +249,7 @@ async function getAllRaises() {
 async function getAllPayments() {
   const { data, error } = await _supabase
     .from('loan_payments')
-    .select('*, loans(id, loan_id_display, user_id, profiles(full_name, email))')
+    .select('*, loans(id, loan_id_display, user_id, profiles!user_id(full_name, email))')
     .order('due_date', { ascending: false })
   if (error) console.error('All payments error:', error)
   return data || []
@@ -258,7 +258,7 @@ async function getAllPayments() {
 async function getAllDistributions() {
   const { data, error } = await _supabase
     .from('distributions')
-    .select('*, investments(id, venture_name, user_id, profiles(full_name, email))')
+    .select('*, investments(id, venture_name, user_id, profiles!user_id(full_name, email))')
     .order('paid_at', { ascending: false })
   if (error) console.error('All distributions error:', error)
   return data || []
@@ -267,7 +267,7 @@ async function getAllDistributions() {
 async function getAllRaiseInterests() {
   const { data, error } = await _supabase
     .from('raise_interests')
-    .select('*, raises(id, venture_name, venture_type, minimum_investment, status), profiles(full_name, email)')
+    .select('*, raises(id, venture_name, venture_type, minimum_investment, status), profiles!user_id(full_name, email)')
     .order('submitted_at', { ascending: false })
   if (error) console.error('All raise interests error:', error)
   return data || []
