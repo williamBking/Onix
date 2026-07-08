@@ -762,14 +762,21 @@ async function sbFetch(path, init) {
   return fetch(SUPABASE_URL + path, Object.assign({}, init, { headers: h }));
 }
 
-// Find an existing profile by RFC, then by email. Returns { id } or null.
-async function findProfileByRfcOrEmail(rfc, email) {
+// Find an existing profile by RFC, then by email, then by full_name.
+// Returns { id } or null. Name match is case-insensitive and only used as
+// a fallback because OUS Pasiva often ships credits without RFC/email.
+async function findProfileByRfcOrEmailOrName(rfc, email, fullName) {
   if (rfc) {
     const r = await sbFetch('/rest/v1/profiles?rfc=eq.' + encodeURIComponent(rfc) + '&select=id&limit=1');
     if (r.ok) { const rows = await r.json(); if (rows && rows[0]) return rows[0]; }
   }
   if (email) {
     const r = await sbFetch('/rest/v1/profiles?email=eq.' + encodeURIComponent(email.toLowerCase()) + '&select=id&limit=1');
+    if (r.ok) { const rows = await r.json(); if (rows && rows[0]) return rows[0]; }
+  }
+  if (fullName) {
+    // ilike is case- and whitespace-insensitive enough for our use here.
+    const r = await sbFetch('/rest/v1/profiles?full_name=ilike.' + encodeURIComponent(fullName.trim()) + '&select=id&limit=1');
     if (r.ok) { const rows = await r.json(); if (rows && rows[0]) return rows[0]; }
   }
   return null;
@@ -925,17 +932,23 @@ async function runOUSSync() {
   const pvByCredito = {};
   for (const r of pvRows) if (r && r.id_credito) pvByCredito[String(r.id_credito)] = r;
 
-  // 4. Group credits by client (RFC → info + credit rows)
-  const clientsByRfc = new Map();
+  // 4. Group credits by client. Ideal key is RFC, but OUS often ships
+  //    credits with blank RFC — fall back to email, then to name.
+  //    Any credit without ANY identifier is dropped.
+  const clientsByKey = new Map();
   for (const r of csRows) {
-    const rfc = (r.rfc || '').trim();
-    if (!rfc) continue; // skip credits without a client identity
-    if (!clientsByRfc.has(rfc)) {
+    const rfc      = (r.rfc || '').trim();
+    const email    = (r.correo || '').toLowerCase().trim();
+    const fullName = (r.nombre_cliente || '').trim();
+    const key = rfc || email || fullName;
+    if (!key) continue;
+    if (!clientsByKey.has(key)) {
       const pvHit = pvByCredito[String(r.id_credito || '')];
-      clientsByRfc.set(rfc, {
-        rfc,
-        email:         (r.correo || '').toLowerCase() || null,
-        full_name:     r.nombre_cliente || null,
+      clientsByKey.set(key, {
+        key,
+        rfc:           rfc || null,
+        email:         email || null,
+        full_name:     fullName || null,
         regimen:       r.regimen || null,
         promotor:      r.promotor || null,
         bank_clabe:    r.clabe || null,
@@ -944,28 +957,32 @@ async function runOUSSync() {
         credits: []
       });
     }
-    clientsByRfc.get(rfc).credits.push(r);
+    clientsByKey.get(key).credits.push(r);
   }
 
   // 5. Per client: find or create → upsert their loans
-  let clientsUpserted = 0, clientsCreated = 0, loansUpserted = 0;
+  let clientsUpserted = 0, clientsCreated = 0, loansUpserted = 0, loansSkipped = 0;
   const errors = [];
 
-  for (const [rfc, c] of clientsByRfc.entries()) {
+  for (const [key, c] of clientsByKey.entries()) {
     let userId;
     try {
-      const existing = await findProfileByRfcOrEmail(rfc, c.email);
+      const existing = await findProfileByRfcOrEmailOrName(c.rfc, c.email, c.full_name);
       if (existing) {
         userId = existing.id;
         await fillProfileMissing(userId, c);
-      } else {
+      } else if (c.email) {
+        // Only auto-create when we have an email (auth.users needs one).
         userId = await createPlaceholderClient(c);
         if (userId) clientsCreated++;
+      } else {
+        loansSkipped += c.credits.length;
+        continue;
       }
-      if (!userId) continue;
+      if (!userId) { loansSkipped += c.credits.length; continue; }
       clientsUpserted++;
     } catch (e) {
-      errors.push('client ' + rfc + ': ' + (e.message || String(e)));
+      errors.push('client ' + key + ': ' + (e.message || String(e)));
       continue;
     }
 
@@ -1004,6 +1021,7 @@ async function runOUSSync() {
     clients_upserted: clientsUpserted,
     clients_created: clientsCreated,
     loans_upserted:  loansUpserted,
+    loans_skipped:   loansSkipped,
     errors: errors.slice(0, 20)
   };
 
