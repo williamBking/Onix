@@ -2993,12 +2993,12 @@
     const [eventsRes, bdayRes, loansRes, paymentsRes, nextDueRes, clientsRes, allLoansRes] = await Promise.all([
       c.from('calendar_events').select('*'),
       c.from('profiles').select('id, full_name, date_of_birth').not('date_of_birth', 'is', null),
-      c.from('loans').select('id, loan_id_display, maturity_date, profiles(full_name)').eq('status', 'active').not('maturity_date', 'is', null),
-      c.from('loan_payments').select('id, due_date, amount_due, loans(loan_id_display, profiles(full_name))').eq('status', 'pending').not('due_date', 'is', null),
+      c.from('loans').select('id, loan_id_display, maturity_date, profiles!user_id(full_name)').eq('status', 'active').not('maturity_date', 'is', null),
+      c.from('loan_payments').select('id, due_date, amount_due, loans(loan_id_display, profiles!user_id(full_name))').eq('status', 'pending').not('due_date', 'is', null),
       // Loans whose next_due_date is set get a "Payment due" event automatically
-      c.from('loans').select('id, loan_id_display, next_due_date, monthly_payment, profiles(full_name)').eq('status', 'active').not('next_due_date', 'is', null),
+      c.from('loans').select('id, loan_id_display, next_due_date, monthly_payment, profiles!user_id(full_name)').eq('status', 'active').not('next_due_date', 'is', null),
       c.from('profiles').select('id, full_name, email').eq('role', 'client').order('full_name', { ascending: true }),
-      c.from('loans').select('id, loan_id_display, user_id, profiles(full_name)').order('created_at', { ascending: false })
+      c.from('loans').select('id, loan_id_display, user_id, profiles!user_id(full_name)').order('created_at', { ascending: false })
     ]);
     if (eventsRes.error)   console.error('[onix-cal] events fetch failed:',   eventsRes.error);
     if (bdayRes.error)     console.error('[onix-cal] birthdays fetch failed:',bdayRes.error);
