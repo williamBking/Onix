@@ -1103,10 +1103,16 @@
     const activeInvestments = investments.filter(i => i.status === 'active');
     const openRaises        = raises.filter(r => r.status === 'open');
     const pendingApps       = applications.filter(a => !a.status || a.status === 'pending');
-    const loanPortfolio = activeLoans.reduce((s, l) => s + Number(l.balance || 0), 0);
-    const totalDeposits = activeInvestments
+    // The credits mirrored in from OUS Pasiva are Onix's deposit book
+    // (money the institution owes back to depositors), so their balances
+    // belong in Total Deposits — not Loan Portfolio. Real deposit-typed
+    // investments (if any) are added on top of that.
+    const depositInvestments = activeInvestments
       .filter(i => i.venture_type === 'deposit')
       .reduce((s, i) => s + Number(i.amount_invested || 0), 0);
+    const totalDeposits = activeLoans.reduce((s, l) => s + Number(l.balance || 0), 0) + depositInvestments;
+    // Loan Portfolio stays at $0 until true loan-book data is wired.
+    const loanPortfolio = 0;
     const ltv = (loanPortfolio + totalDeposits > 0)
       ? Math.round((loanPortfolio / (loanPortfolio + totalDeposits)) * 100) + '%'
       : '—';
