@@ -3609,11 +3609,22 @@
             '<button class="ous-btn" id="ous-vencer-btn" type="button" data-en="Fetch" data-es="Consultar">Fetch</button>' +
           '</div>' +
           '<div id="ous-vencer-result" class="ous-result"><span class="muted" data-en="No fetch yet." data-es="Sin consulta aún.">No fetch yet.</span></div>' +
+        '</div>' +
+
+        // ---- Payload capture (dev tool for setting up sync) --------
+        '<div class="ous-card" style="border-top-color:#888">' +
+          '<h2 data-en="Capture OUS Payloads" data-es="Capturar Cargas OUS">Capture OUS Payloads</h2>' +
+          '<div class="sub" data-en="Snapshots the raw JSON from all three OUS endpoints into Supabase so the dev team can finalize the sync mapping. Safe to run any time." data-es="Guarda la respuesta cruda de los tres endpoints OUS en Supabase para que el equipo de desarrollo cierre el mapeo de la sincronización. Se puede ejecutar en cualquier momento.">Snapshots the raw JSON from all three OUS endpoints into Supabase so the dev team can finalize the sync mapping. Safe to run any time.</div>' +
+          '<div class="ous-controls">' +
+            '<button class="ous-btn" id="ous-capture-btn" type="button" data-en="Capture Payloads Now" data-es="Capturar Ahora">Capture Payloads Now</button>' +
+          '</div>' +
+          '<div id="ous-capture-result" class="ous-result"><span class="muted" data-en="No capture yet." data-es="Sin captura aún.">No capture yet.</span></div>' +
         '</div>';
       main.appendChild(v);
 
       v.querySelector('#ous-cierre-btn').addEventListener('click', () => fetchCierreSaldos());
       v.querySelector('#ous-vencer-btn').addEventListener('click', () => fetchPorVencer());
+      v.querySelector('#ous-capture-btn').addEventListener('click', () => captureOUSPayloads());
     }
     return true;
   }
@@ -3872,6 +3883,41 @@
     } catch (err) {
       ousShowResult('ous-vencer-result', esc(err.message || String(err)), true);
     }  finally {
+      btnEl.disabled = false; btnEl.textContent = orig;
+    }
+  }
+
+  // ---------------- Payload capture (dev tool) -----------------------
+  // POSTs to /api/ous-capture, which fires all three OUS endpoints in
+  // one shot on the Railway proxy and stages the raw JSON in the
+  // public.ous_raw_capture Supabase table for developer inspection.
+  async function captureOUSPayloads() {
+    const btnEl = document.getElementById('ous-capture-btn');
+    const resEl = document.getElementById('ous-capture-result');
+    if (!btnEl || !resEl) return;
+    const lang = activeLang();
+    const loadingTxt = lang === 'es' ? 'Capturando…' : 'Capturing…';
+    ousShowResult('ous-capture-result', '<span class="muted">' + esc(loadingTxt) + '</span>');
+    btnEl.disabled = true; const orig = btnEl.textContent; btnEl.textContent = loadingTxt;
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const payload = await ousFetch('/api/ous-capture', { fecha_cierre: today, dias: 90 });
+      const rows = (payload && payload.results) || [];
+      const lines = rows.map(r => {
+        const status = r.error ? 'ERROR' : ('HTTP ' + r.http_status);
+        const saved  = r.saved ? '<span style="color:#3B8B3B">saved ✓</span>' : ('<span style="color:#C0392B">save failed: ' + esc(r.save_error || '?') + '</span>');
+        const detail = r.error ? ' — ' + esc(r.error) : '';
+        return '<div><b>' + esc(r.endpoint) + '</b> · ' + status + ' · ' + saved + detail + '</div>';
+      }).join('');
+      const doneNote = (lang === 'es'
+        ? 'Cargas guardadas en Supabase (public.ous_raw_capture). Enviar al equipo de desarrollo.'
+        : 'Payloads staged in Supabase (public.ous_raw_capture). Send to dev team.');
+      ousShowResult('ous-capture-result',
+        lines +
+        '<div style="margin-top:10px;font-size:.72rem;color:#888">' + esc(doneNote) + '</div>');
+    } catch (err) {
+      ousShowResult('ous-capture-result', esc(err.message || String(err)), true);
+    } finally {
       btnEl.disabled = false; btnEl.textContent = orig;
     }
   }
