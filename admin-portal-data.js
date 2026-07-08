@@ -1043,12 +1043,13 @@
   //   view-dashboard, view-clients, view-investors, view-loans, view-raises,
   //   view-applications, view-review, view-documents, view-reports, view-users
   const STATIC_VIEWS = {
-    dashboard:   ['view-dashboard'],
-    clients:     ['view-clients', 'view-users'],
-    loans:       ['view-loans'],
-    investments: ['view-investors'],
-    raises:      ['view-raises'],
-    applications:['view-applications']
+    dashboard:      ['view-dashboard'],
+    clients:        ['view-clients', 'view-users'],
+    loans:          ['view-loans'],
+    investments:    ['view-investors'],
+    activeDeposits: ['view-active-deposits'],
+    raises:         ['view-raises'],
+    applications:   ['view-applications']
   };
 
   // Marker so we know we've already painted a view (and to detect when the
@@ -2129,6 +2130,106 @@
     return true;
   }
 
+  // ---------- Active Deposits view -----------------------------------
+  // Mirrors the Active Loans tab exactly: same columns (Deposit ID, Client,
+  // Balance, Rate, Payment, Next Due, Status, Actions), same action bar
+  // (+ Add Deposit + Export CSV), same View / Contact actions per row.
+  // Only difference: it's fed by investments where venture_type='deposit'.
+  function paintActiveDepositsView(investments) {
+    const v = findView(STATIC_VIEWS.activeDeposits); if (!v) return false;
+    if (alreadyPainted(v)) return true;
+    const deposits = (investments || []).filter(i => (i.venture_type || '').toLowerCase() === 'deposit');
+    const rows = deposits.length ? deposits.map((d, i) => `
+      <tr>
+        <td>${esc(d.venture_name || d.id.slice(0,8))}</td>
+        <td>${esc((d.profiles && (d.profiles.full_name || d.profiles.email)) || d.user_id)}</td>
+        <td>${fmt.money(d.amount_invested)}</td>
+        <td>${d.expected_return != null ? fmt.pct(d.expected_return) : '—'}</td>
+        <td>—</td>
+        <td>${fmt.date(d.start_date)}</td>
+        <td><span class="oac-badge ${esc(d.status || '')}">${esc(d.status || '—')}</span></td>
+        <td style="text-align:right;white-space:nowrap">
+          <a href="#" data-view-static-dep="${i}" style="display:inline-block;background:#C0392B;color:#fff;padding:6px 12px;font:600 .68rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;margin-right:4px;text-decoration:none">View</a>
+          ${contactAnchor(d.profiles && d.profiles.email, 'Deposit ' + (d.venture_name || ''))}
+        </td>
+      </tr>`).join('') : '<tr><td colspan="8" class="oac-empty">No deposits yet.</td></tr>';
+    v.innerHTML = viewShell('Deposits', 'Active and historical client deposits',
+      actionBarBtn('+ Add Deposit', 'oac-add-deposit-btn', 'oac-export-deposits') +
+      `<table class="oac-table" style="width:100%"><thead><tr>
+        <th>Deposit ID</th><th>Client</th><th>Balance</th><th>Rate</th><th>Payment</th><th>Next Due</th><th>Status</th><th style="text-align:right">Actions</th>
+      </tr></thead><tbody>${rows}</tbody></table>`);
+    v.querySelectorAll('[data-view-static-dep]').forEach(b => {
+      b.addEventListener('click', (e) => { e.preventDefault(); viewInvestment(deposits[Number(b.dataset.viewStaticDep)]); });
+    });
+    const addBtn = v.querySelector('#oac-add-deposit-btn');
+    if (addBtn) addBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      // Reuse the Add Investment modal — it already lets the admin pick
+      // venture_type = 'deposit'. Prefilling to 'deposit' would be a nice
+      // follow-up but the current modal defaults to the first option.
+      openAddInvestmentModal();
+    });
+    wireExport(v, 'oac-export-deposits', () => {
+      downloadCsv('onix-deposits-' + isoDate(new Date().toISOString()) + '.csv',
+        ['deposit_id', 'client_name', 'client_email', 'balance', 'expected_return', 'start_date', 'status'],
+        deposits.map(d => ({
+          deposit_id: d.venture_name || d.id,
+          client_name: (d.profiles && d.profiles.full_name) || '',
+          client_email: (d.profiles && d.profiles.email) || '',
+          balance: d.amount_invested,
+          expected_return: d.expected_return,
+          start_date: isoDate(d.start_date),
+          status: d.status
+        })));
+    });
+    return true;
+  }
+
+  // Inject the "Active Deposits" sidebar item + view container. Same
+  // dynamic-inject pattern the Calendar tab uses (see
+  // ensureCalendarSidebarAndView) because the Bolt bundler swaps the
+  // <head>/sidebar out after first load — every tick we make sure the
+  // button + view are still present. Idempotent.
+  function ensureActiveDepositsSidebarAndView() {
+    if (document.getElementById('view-active-deposits') &&
+        document.querySelector('[data-view="active-deposits"]')) return true;
+    const sidebar = document.querySelector('.sidebar');
+    const main    = document.querySelector('.main');
+    if (!sidebar || !main) return false;
+
+    if (!sidebar.querySelector('[data-view="active-deposits"]')) {
+      // Anchor right after the "Active Loans" sidebar button so the new
+      // item sits under Lending.
+      const anchor = sidebar.querySelector('[data-view="loans"]');
+      const btn = document.createElement('button');
+      btn.className = 'sidebar-item';
+      btn.setAttribute('data-view', 'active-deposits');
+      btn.setAttribute('onclick', "showView('active-deposits')");
+      btn.innerHTML =
+        // Piggy-bank / deposit-style icon — coin drop into a slot.
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+          '<rect x="3" y="7" width="18" height="14" rx="2" ry="2"/>' +
+          '<path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>' +
+          '<line x1="12" y1="11" x2="12" y2="17"/>' +
+          '<line x1="9" y1="14" x2="15" y2="14"/>' +
+        '</svg>' +
+        '<span data-en="Active Deposits" data-es="Depósitos Activos">Active Deposits</span>';
+      if (anchor && anchor.parentNode) {
+        anchor.parentNode.insertBefore(btn, anchor.nextSibling);
+      } else {
+        sidebar.appendChild(btn);
+      }
+    }
+
+    if (!document.getElementById('view-active-deposits')) {
+      const v = document.createElement('div');
+      v.className = 'view';
+      v.id = 'view-active-deposits';
+      main.appendChild(v);
+    }
+    return true;
+  }
+
   function paintInvestmentsView(invs) {
     const v = findView(STATIC_VIEWS.investments); if (!v) return false;
     if (alreadyPainted(v)) return true;
@@ -2521,6 +2622,10 @@
         paintDashboardView(data);
         paintClientsView(data.clients, data.loans, data.investments, data.pending);
         paintLoansView(data.loans);
+        // Active Deposits — sidebar item + view are injected dynamically
+        // (same pattern as Calendar) because they're not in the Bolt-
+        // bundled template. Ensure() is idempotent and safe every tick.
+        if (ensureActiveDepositsSidebarAndView()) paintActiveDepositsView(data.investments);
         paintInvestmentsView(data.investments);
         paintRaisesView(data.raises);
         paintApplicationsView(data.applications);
