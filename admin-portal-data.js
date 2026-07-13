@@ -26,6 +26,11 @@
     const s = document.createElement('style');
     s.id = 'onix-admin-styles';
     s.textContent = `
+      /* Reports tab is retired — hide the sidebar button and the view. */
+      [data-view="reports"],
+      [onclick*="showView('reports')"],
+      #view-reports { display: none !important; }
+
       /* Mobile: kill horizontal overflow (the "zoomed in" symptom), make the
          drawer full-height, scroll wide tables, and stack the KPI grids. */
       html,body{max-width:100%;overflow-x:hidden}
