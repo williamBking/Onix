@@ -1099,20 +1099,21 @@
     if (!v) { console.warn('[onix-admin] dashboard view not found in DOM'); return false; }
     // Surgical updates only — preserve the original demo layout, just swap numbers + activity.
     const { clients, loans, investments, raises, applications, payments, distributions } = data;
-    const activeLoans       = loans.filter(l => l.status === 'active');
+    // "Active Deposits" = OUS-synced rows (Onix's deposit book).
+    // "Active Loans" = manually-created loan rows.
+    const activeLoans       = loans.filter(l => l.status === 'active' && !l.ous_synced_at);
+    const activeDeposits    = loans.filter(l => l.status === 'active' &&  l.ous_synced_at);
     const activeInvestments = investments.filter(i => i.status === 'active');
     const openRaises        = raises.filter(r => r.status === 'open');
     const pendingApps       = applications.filter(a => !a.status || a.status === 'pending');
-    // The credits mirrored in from OUS Pasiva are Onix's deposit book
-    // (money the institution owes back to depositors), so their balances
-    // belong in Total Deposits — not Loan Portfolio. Real deposit-typed
-    // investments (if any) are added on top of that.
+    // Loan Portfolio = sum of real-loan balances (empty until a real loan
+    // book source is wired). Total Deposits = sum of OUS-synced credit
+    // balances (Onix's deposit book) plus any true deposit-type investments.
+    const loanPortfolio = activeLoans.reduce((s, l) => s + Number(l.balance || 0), 0);
     const depositInvestments = activeInvestments
       .filter(i => i.venture_type === 'deposit')
       .reduce((s, i) => s + Number(i.amount_invested || 0), 0);
-    const totalDeposits = activeLoans.reduce((s, l) => s + Number(l.balance || 0), 0) + depositInvestments;
-    // Loan Portfolio stays at $0 until true loan-book data is wired.
-    const loanPortfolio = 0;
+    const totalDeposits = activeDeposits.reduce((s, l) => s + Number(l.balance || 0), 0) + depositInvestments;
     const ltv = (loanPortfolio + totalDeposits > 0)
       ? Math.round((loanPortfolio / (loanPortfolio + totalDeposits)) * 100) + '%'
       : '—';
@@ -2088,9 +2089,13 @@
     if (btn) btn.addEventListener('click', e => { e.preventDefault(); onClick(); });
   }
 
-  function paintLoansView(loans) {
+  function paintLoansView(loansAll) {
     const v = findView(STATIC_VIEWS.loans); if (!v) return false;
     if (alreadyPainted(v)) return true;
+    // Rows synced in from OUS Pasiva are deposits, not real loans made by
+    // Onix — those live under the Active Deposits tab. Active Loans only
+    // shows manually-created loan rows (where ous_synced_at is null).
+    const loans = (loansAll || []).filter(l => !l.ous_synced_at);
     const rows = loans.length ? loans.map((l, i) => `
       <tr>
         <td>${esc(l.loan_id_display || l.id.slice(0,8))}</td>
@@ -2147,7 +2152,9 @@
   function paintActiveDepositsView(loans, investments) {
     const v = findView(STATIC_VIEWS.activeDeposits); if (!v) return false;
     if (alreadyPainted(v)) return true;
-    const loanRows = (loans || []).map(l => ({
+    // Only pull rows that were synced in from OUS Pasiva — those are the
+    // real deposits. Manually-created loan rows stay under Active Loans.
+    const loanRows = (loans || []).filter(l => !!l.ous_synced_at).map(l => ({
       _kind: 'loan',
       _src: l,
       deposit_id: l.loan_id_display || l.id.slice(0,8),
