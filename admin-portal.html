@@ -3836,7 +3836,15 @@
           sel.className = '__onix_role_select role-' + sel.value;
           var prev = current;
           current = sel.value;
-          var r = await OnixDB.client.from('profiles').update({ title: sel.value }).eq('email', m.email);
+          // Save BOTH role and title so the read logic on refresh matches
+          // (see the m.role === 'manager' / m.title === 'ae' check above).
+          // Manager needs role='manager' at the DB level so it survives a
+          // reload; admin/AE both use role='admin' with title distinguishing.
+          var patch =
+            sel.value === 'manager' ? { role: 'manager', title: 'manager' } :
+            sel.value === 'ae'      ? { role: 'admin',   title: 'ae' } :
+                                      { role: 'admin',   title: 'admin' };
+          var r = await OnixDB.client.from('profiles').update(patch).eq('email', m.email);
           if (r.error) {
             window.__onix_showToast('Could not change role: ' + r.error.message, '#C0392B');
             sel.value = prev; current = prev; sel.className = '__onix_role_select role-' + prev;
