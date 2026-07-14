@@ -1232,6 +1232,26 @@
       }
     });
     (investments || []).forEach(i => { invCounts[i.user_id] = (invCounts[i.user_id] || 0) + 1; });
+    // Clients confirmed to have zero uploaded documents (checked against
+    // client_documents on 2026-07-09). Static list, not a live lookup —
+    // update by hand if a client's document status changes.
+    const NO_DOCS_CLIENT_IDS = new Set([
+      '864a786d-fd82-4091-8683-a2e923875809', // MACREEL, LLC
+      '96cb5b30-046e-4144-9d9f-4a006a29e73d', // Armida Brozon Alonso
+      '0425019b-34c5-4cec-a3b7-ccde68410102', // Fynso Corp
+      'fc41ee42-631d-4e63-82fa-59744368f786', // Kookaburra Group, LLC
+      '079a6fb6-3edd-4bd0-8769-8988ad862eb8', // Lucia Huergo Cue / Tomas Huergo Cue
+      '8a2be36a-6057-455c-bd4f-9f4c43610e83', // Blanca Deolinda Rosendo Ogando
+      '052345fa-0125-4eea-a8c4-775e01af2eb4', // Maria Andrea Jacobo Aspe
+      'c5143941-6592-43bc-8479-4b6f07817742', // Paula Armida Jimenez Labora
+      'c2108b18-d0e1-4ee0-aabf-3796706ecca7', // 4MX Amigos Foods, LLC
+      '93d826e0-fd68-48c1-8456-ef39753f73bf', // Greta Hagemeister / Norman Hagemeister
+      '4bc424f5-6d08-4f9c-9cf8-be4ef724d6e3', // Sofiluc Inc
+      '2e8247ef-edb0-4571-b532-2276f952ee6b', // Diego Labarthe / Enedida Orendain / Jose Labarthe / Nina Labarthe / Regina Labarthe
+      '2c24283f-9765-45c9-969d-97dff3340cb9', // Honorio Sánchez Morales
+      '85a96c0c-3672-485c-a583-4d90ffa98ab4', // Bison Rise Capital SA
+      '49066316-8647-43cd-9426-3f12c1ee1822'  // Javier Plascencia Reyes / Elsa Salome Saggiante Llorens
+    ]);
     // Text-form of the Borrower / LP state — splitRoleColumn (admin-portal.html)
     // reads this textContent to seed the checkbox state when it rewrites the
     // Role column into two click-to-toggle cells.
@@ -1252,11 +1272,14 @@
         <td>${invCounts[c.id] || '—'}</td>
         <td><span class="oac-badge ${esc(c.status || '')}">${esc(c.status || '—')}</span></td>
         <td>${fmt.date(c.created_at)}</td>
+        <td style="text-align:center">${NO_DOCS_CLIENT_IDS.has(c.id)
+          ? '<span title="No documents" style="color:#B4B2A9;display:inline-flex"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="3" y1="3" x2="21" y2="21"/></svg></span>'
+          : '<span title="Has documents" style="color:#6B6560;display:inline-flex"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>'}</td>
         <td style="white-space:nowrap">
           <button class="oac-btn outline" data-cl-view="1" type="button">View</button>
           <button class="oac-btn outline" data-cl-docs="1" type="button">Documents</button>
         </td>
-      </tr>`).join('') : '<tr><td colspan="9" class="oac-empty">No clients yet.</td></tr>';
+      </tr>`).join('') : '<tr><td colspan="10" class="oac-empty">No clients yet.</td></tr>';
     // Pending Approvals banner — split into "new sign-ups" (just signed up,
     // need an in-person meeting) and "ready to activate" (admin has met with
     // them and is ready to flip the account on).
@@ -1317,7 +1340,7 @@
       pendingBanner +
       newClientBtn +
       `<table class="oac-table" style="width:100%"><thead><tr>
-        <th>Name</th><th>Email</th><th>Role</th><th>Loan Balance</th><th>Loans</th><th>Investments</th><th>Status</th><th>Joined</th><th></th>
+        <th>Name</th><th>Email</th><th>Role</th><th>Loan Balance</th><th>Loans</th><th>Investments</th><th>Status</th><th>Joined</th><th style="text-align:center">Documents</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>`);
     const btn = v.querySelector('#oac-new-client-btn');
     if (btn) btn.addEventListener('click', (e) => { e.preventDefault(); openNewClientModal(); });
