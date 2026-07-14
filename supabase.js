@@ -273,6 +273,14 @@ async function getAllRaiseInterests() {
   return data || []
 }
 
+async function getAllClientDocuments() {
+  const { data, error } = await _supabase
+    .from('client_documents')
+    .select('id, profile_id')
+  if (error) console.error('All client documents error:', error)
+  return data || []
+}
+
 async function setRaiseInterestStatus(id, status) {
   const update = { status, responded_at: new Date().toISOString() }
   const { error } = await _supabase
@@ -312,4 +320,5 @@ window.OnixDB = {
   getAllDistributions,
   getAllRaiseInterests,
   setRaiseInterestStatus,
+  getAllClientDocuments,
 }
