@@ -116,7 +116,7 @@
     });
     if (!card) return;
     const fields = card.querySelectorAll('.field-input');
-    if (fields.length < 4) return;
+    if (fields.length < 5) return;
     // Pre-fill from real profile
     fields[0].value = profile.full_name || '';
     fields[1].value = profile.email || '';
@@ -126,6 +126,9 @@
     fields[1].setAttribute('title', 'Email cannot be changed from here');
     fields[2].value = profile.phone || '';
     fields[3].value = profile.address || '';
+    // date_of_birth is stored as YYYY-MM-DD, which is exactly what
+    // <input type="date"> expects — no conversion needed either direction.
+    fields[4].value = profile.date_of_birth || '';
 
     const saveBtn = card.querySelector('.btn-red');
     if (!saveBtn) return;
@@ -140,9 +143,10 @@
       saveBtn.disabled = true;
       saveBtn.innerHTML = '<span>Saving…</span>';
       const payload = {
-        full_name: (fields[0].value || '').trim() || null,
-        phone:     (fields[2].value || '').trim() || null,
-        address:   (fields[3].value || '').trim() || null
+        full_name:     (fields[0].value || '').trim() || null,
+        phone:         (fields[2].value || '').trim() || null,
+        address:       (fields[3].value || '').trim() || null,
+        date_of_birth: fields[4].value || null
       };
       const { error } = await OnixDB.client
         .from('profiles')
@@ -155,9 +159,10 @@
         return;
       }
       // Reflect the new name everywhere on the page
-      profile.full_name = payload.full_name;
-      profile.phone     = payload.phone;
-      profile.address   = payload.address;
+      profile.full_name     = payload.full_name;
+      profile.phone         = payload.phone;
+      profile.address       = payload.address;
+      profile.date_of_birth = payload.date_of_birth;
       renderUserName(profile);
       // Small inline confirmation
       let banner = card.querySelector('[data-onix-profile-ok]');
@@ -194,9 +199,16 @@
     if (!loan) {
       ['Loan ID', 'Principal', 'Term', 'Origination', 'Maturity', 'Origination Fee', 'Collateral']
         .forEach(l => setDetail(l, '—'));
-      // Also update the Active badge
+      // Also update the Active badge. Setting data-en/data-es too — a
+      // periodic language-toggle sync re-reads those attributes and would
+      // otherwise silently put "Active" back a moment after this runs.
       const badge = card.querySelector('.badge');
-      if (badge) { badge.textContent = 'No loan'; badge.className = 'badge'; }
+      if (badge) {
+        badge.textContent = 'No loan';
+        badge.className = 'badge';
+        badge.setAttribute('data-en', 'No loan');
+        badge.setAttribute('data-es', 'Sin préstamo');
+      }
       return;
     }
     // "Principal" is the ORIGINAL loan amount (does not change as payments are made).
@@ -272,6 +284,9 @@
           ['Current Value', fmt.money(currentValue)],
           ['Total Return', totalReturnPct != null ? fmt.pct(totalReturnPct) : '—']
         ];
+        if (inv._monthly_payment != null) {
+          rows.push(['Monthly Payment', fmt.money(inv._monthly_payment)]);
+        }
         details.innerHTML = rows.map(r =>
           `<div class="detail-row"><span class="detail-key">${escapeHtml(r[0])}</span><span class="detail-val">${escapeHtml(r[1] == null ? '—' : r[1])}</span></div>`
         ).join('');
@@ -679,10 +694,40 @@
   function renderRepaymentProgress(loan, payments) {
     const bar = document.getElementById('loanProgress');
     if (!bar) return;
+    const wrap = bar.closest('.card') || document.querySelector('#view-loans');
 
     if (!loan) {
+      // No active loan — reset the whole card instead of leaving the
+      // bundled demo content (title, dates, paid/remaining figures) showing.
       bar.style.width = '0%';
       bar.setAttribute('aria-valuenow', '0');
+      if (wrap) {
+        const title = wrap.querySelector('.card-title');
+        if (title) {
+          title.textContent = 'Repayment Progress';
+          if (title.hasAttribute('data-en')) title.setAttribute('data-en', title.textContent);
+        }
+        const progressWrap = wrap.querySelector('.progress-wrap');
+        const headerRow = progressWrap ? progressWrap.previousElementSibling : null;
+        if (headerRow) {
+          const spans = headerRow.querySelectorAll('span');
+          if (spans[0]) {
+            spans[0].textContent = 'No active loan';
+            if (spans[0].hasAttribute('data-en')) spans[0].setAttribute('data-en', spans[0].textContent);
+          }
+          if (spans[1]) spans[1].textContent = '—';
+        }
+        const dateRow = progressWrap ? progressWrap.nextElementSibling : null;
+        if (dateRow) {
+          const dateSpans = dateRow.querySelectorAll('span');
+          if (dateSpans[0]) dateSpans[0].textContent = '—';
+          if (dateSpans[1]) dateSpans[1].textContent = '—';
+        }
+        const boxes = wrap.querySelectorAll('div[style*="display:grid"] > div, div[style*="display: grid"] > div');
+        boxes.forEach(box => {
+          if (box.children.length >= 2) box.children[1].textContent = '—';
+        });
+      }
       return;
     }
 
@@ -698,7 +743,6 @@
     bar.style.width = pct.toFixed(2) + '%';
     bar.setAttribute('aria-valuenow', pct.toFixed(1));
 
-    const wrap = bar.closest('.card') || document.querySelector('#view-loans');
     if (!wrap) return;
 
     // 1. Card title — "Repayment Progress · ONX-2025-0042 · 24-month term"
@@ -832,8 +876,22 @@
     ['Outstanding Loan', 'Next Payment Due', 'Next Due', 'Outstanding Balance', 'Interest Rate', 'Monthly Payment']
       .forEach(label => setKpi(label, '—', 'No active loan'));
     renderLoanDetails(null);
+    renderRepaymentProgress(null, []);
+    // "Loan Documents" card on the My Loan tab itself — already handles
+    // loan == null correctly, just was never called from this path.
+    renderLoanDocsCardForLoan(null).catch(err =>
+      console.error('[onix] loan docs render failed:', err)
+    );
     // Empty out the loan documents card on My Documents
     emptyDocsCard(document.querySelector('#view-documents'), 'Loan', 'No loan documents on file.');
+    // The page header's "Active Loan" eyebrow is static demo text — update
+    // it too so the page doesn't imply a loan exists when it doesn't.
+    const eyebrow = document.querySelector('#view-loans .page-hd .eyebrow');
+    if (eyebrow) {
+      eyebrow.textContent = 'No Active Loan';
+      eyebrow.setAttribute('data-en', 'No Active Loan');
+      eyebrow.setAttribute('data-es', 'Sin Préstamo Activo');
+    }
   }
 
   function escapeHtml(s) {
@@ -2172,6 +2230,30 @@
     });
   }
 
+  // Reshapes an OUS-synced loan row into the shape renderInvestments /
+  // wireInvestmentDetailModal / renderPerformanceChart already expect.
+  // Display-only — the underlying loans row is untouched.
+  //   balance         -> amount_invested
+  //   interest_rate   -> expected_return (annual %, shown as "Expected Return")
+  //   monthly_payment -> _monthly_payment (shown as its own "Monthly Payment"
+  //                      detail row — this isn't a real distributions table
+  //                      row, so it doesn't appear in Distribution History)
+  function ousDepositToInvestmentShape(loan) {
+    return {
+      id: loan.id,
+      user_id: loan.user_id,
+      venture_name: loan.loan_id_display || ('Deposit ' + String(loan.id).slice(0, 8)),
+      venture_type: 'deposit',
+      amount_invested: loan.balance,
+      expected_return: loan.interest_rate,
+      ownership_pct: null,
+      status: loan.status === 'active' ? 'active' : (loan.status || 'active'),
+      start_date: loan.origination_date || loan.created_at,
+      investment_documents: loan.loan_documents || [],
+      _monthly_payment: loan.monthly_payment
+    };
+  }
+
   async function bootstrap() {
     if (!window.OnixDB) {
       console.error('[onix] supabase.js not loaded — OnixDB missing');
@@ -2187,9 +2269,10 @@
     wireGlobalSearch();
 
     // Fetch everything in parallel
-    const [loans, investments, raises, payments, distributions] = await Promise.all([
+    const [loans, investments, ousDeposits, raises, payments, distributions] = await Promise.all([
       OnixDB.getMyLoans(userId),
       OnixDB.getMyInvestments(userId),
+      OnixDB.getMyOusDeposits(userId),
       OnixDB.getOpenRaises(),
       OnixDB.getMyPayments(userId),
       OnixDB.getMyDistributions(userId)
@@ -2207,12 +2290,16 @@
       // No active loans — render the Payments tab in its global empty state.
       renderPayments(payments, null);
     }
-    renderInvestments(investments, distributions);
+    // OUS-synced loan rows are actually deposits, not loans — reshape them
+    // to look like investment records (display-only; nothing in the
+    // database is moved) and fold them into My Investments.
+    const allInvestments = (investments || []).concat((ousDeposits || []).map(ousDepositToInvestmentShape));
+    renderInvestments(allInvestments, distributions);
     renderRaises(raises, userId);
     paintClientSidebarBadges({ raises });
     renderDistributions(distributions);
     renderUpcomingEvents(payments, distributions);
-    renderPerformanceChart(investments, distributions);
+    renderPerformanceChart(allInvestments, distributions);
 
     // Bell-icon notifications panel (also fetch the user's applications)
     const { data: applications } = await OnixDB.client
@@ -2231,7 +2318,7 @@
 
     // Stash everything for the global search index
     searchData.loans         = loans || [];
-    searchData.investments   = investments || [];
+    searchData.investments   = allInvestments;
     searchData.raises        = raises || [];
     searchData.payments      = payments || [];
     searchData.distributions = distributions || [];

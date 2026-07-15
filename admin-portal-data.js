@@ -1242,6 +1242,10 @@
       }
     });
     (investments || []).forEach(i => { invCounts[i.user_id] = (invCounts[i.user_id] || 0) + 1; });
+    // Live per-client document counts — both the icon and the number shown
+    // come from this same live count, so they can never contradict each other.
+    const docCounts = {};
+    (clientDocuments || []).forEach(d => { docCounts[d.profile_id] = (docCounts[d.profile_id] || 0) + 1; });
     // Text-form of the Borrower / LP state — splitRoleColumn (admin-portal.html)
     // reads this textContent to seed the checkbox state when it rewrites the
     // Role column into two click-to-toggle cells.
@@ -1262,11 +1266,14 @@
         <td>${invCounts[c.id] || '—'}</td>
         <td><span class="oac-badge ${esc(c.status || '')}">${esc(c.status || '—')}</span></td>
         <td>${fmt.date(c.created_at)}</td>
+        <td style="text-align:center">${(docCounts[c.id] || 0) === 0
+          ? '<span title="No documents" style="display:inline-flex;align-items:center;gap:5px;color:#B4B2A9"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="3" y1="3" x2="21" y2="21"/></svg></span>'
+          : `<span title="${docCounts[c.id]} document${docCounts[c.id] === 1 ? '' : 's'}" style="display:inline-flex;align-items:center;gap:5px;color:#6B6560"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span style="font-size:.8rem">${docCounts[c.id]}</span></span>`}</td>
         <td style="white-space:nowrap">
           <button class="oac-btn outline" data-cl-view="1" type="button">View</button>
           <button class="oac-btn outline" data-cl-docs="1" type="button">Documents</button>
         </td>
-      </tr>`).join('') : '<tr><td colspan="9" class="oac-empty">No clients yet.</td></tr>';
+      </tr>`).join('') : '<tr><td colspan="10" class="oac-empty">No clients yet.</td></tr>';
     // Pending Approvals banner — split into "new sign-ups" (just signed up,
     // need an in-person meeting) and "ready to activate" (admin has met with
     // them and is ready to flip the account on).
@@ -1347,7 +1354,7 @@
       pendingBanner +
       newClientBtn +
       `<table class="oac-table" style="width:100%"><thead><tr>
-        <th>Name</th><th>Email</th><th>Role</th><th>Loan Balance</th><th>Loans</th><th>Investments</th><th>Status</th><th>Joined</th><th></th>
+        <th>Name</th><th>Email</th><th>Role</th><th>Loan Balance</th><th>Loans</th><th>Investments</th><th>Status</th><th>Joined</th><th style="text-align:center">Documents</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>`);
     const btn = v.querySelector('#oac-new-client-btn');
     if (btn) btn.addEventListener('click', (e) => { e.preventDefault(); openNewClientModal(); });
@@ -3009,7 +3016,7 @@
     const greeting = document.getElementById('oac-greeting');
     if (greeting) greeting.textContent = 'Loading data…';
     try {
-      const [clients, pending, loans, investments, raises, applications, payments, distributions, interests, clientDocsRes] = await Promise.all([
+      const [clients, pending, loans, investments, raises, applications, payments, distributions, interests, clientDocuments] = await Promise.all([
         OnixDB.getAllClients(),
         OnixDB.getPendingClients(),
         OnixDB.getAllLoans(),
@@ -3019,12 +3026,8 @@
         OnixDB.getAllPayments         ? OnixDB.getAllPayments()         : Promise.resolve([]),
         OnixDB.getAllDistributions    ? OnixDB.getAllDistributions()    : Promise.resolve([]),
         OnixDB.getAllRaiseInterests   ? OnixDB.getAllRaiseInterests()   : Promise.resolve([]),
-        // Lightweight fetch — just profile_id + category, enough to know
-        // which doc types each client already has for the Clients-tab
-        // "missing document" filter dropdown.
-        OnixDB.client.from('client_documents').select('profile_id, category')
+        OnixDB.getAllClientDocuments  ? OnixDB.getAllClientDocuments()  : Promise.resolve([])
       ]);
-      const clientDocuments = (clientDocsRes && clientDocsRes.data) || [];
       // The Live Admin Console drawer is retired; everything renders inside
       // the static admin tabs now. Pending Approvals appears as a banner on
       // the Clients tab (driven by data.pending).

@@ -73,10 +73,13 @@ async function getMyLoan(userId) {
   // A user can technically have more than one loan in the DB. Pick the most
   // recently created ACTIVE one for the dashboard summary. Falls back to the
   // most recent of any status if none are active.
+  // Excludes OUS-synced rows — those are deposits, not loans (see
+  // getMyOusDeposits) and belong on the My Investments page instead.
   const { data, error } = await _supabase
     .from('loans')
     .select('*, loan_documents(*)')
     .eq('user_id', userId)
+    .is('ous_synced_at', null)
     .order('created_at', { ascending: false })
   if (error) { console.error('Loan fetch error:', error); return null }
   if (!data || !data.length) return null
@@ -84,10 +87,12 @@ async function getMyLoan(userId) {
 }
 
 async function getMyLoans(userId) {
+  // Excludes OUS-synced rows — see getMyOusDeposits.
   const { data, error } = await _supabase
     .from('loans')
     .select('*, loan_documents(*)')
     .eq('user_id', userId)
+    .is('ous_synced_at', null)
     .order('created_at', { ascending: false })
   if (error) { console.error('Loans fetch error:', error); return [] }
   return data || []
@@ -99,6 +104,22 @@ async function getMyInvestments(userId) {
     .select('*, investment_documents(*)')
     .eq('user_id', userId)
   if (error) console.error('Investments fetch error:', error)
+  return data || []
+}
+
+// Loans synced in automatically from the OUS Pasiva system are actually
+// client deposits, not loans (confirmed by the team) — the admin portal
+// already separates these the same way (see admin-portal-data.js). Fetched
+// separately so the client portal can show them under My Investments
+// instead of My Loan.
+async function getMyOusDeposits(userId) {
+  const { data, error } = await _supabase
+    .from('loans')
+    .select('*, loan_documents(*)')
+    .eq('user_id', userId)
+    .not('ous_synced_at', 'is', null)
+    .order('created_at', { ascending: false })
+  if (error) { console.error('OUS deposits fetch error:', error); return [] }
   return data || []
 }
 
@@ -273,6 +294,16 @@ async function getAllRaiseInterests() {
   return data || []
 }
 
+async function getAllClientDocuments() {
+  // category is needed by the Clients tab "missing document" filter so
+  // it can tell which doc types each profile still needs.
+  const { data, error } = await _supabase
+    .from('client_documents')
+    .select('id, profile_id, category')
+  if (error) console.error('All client documents error:', error)
+  return data || []
+}
+
 async function setRaiseInterestStatus(id, status) {
   const update = { status, responded_at: new Date().toISOString() }
   const { error } = await _supabase
@@ -293,6 +324,7 @@ window.OnixDB = {
   requireAdmin,
   getMyLoan,
   getMyLoans,
+  getMyOusDeposits,
   getMyInvestments,
   getMyPayments,
   getMyDistributions,
@@ -312,4 +344,5 @@ window.OnixDB = {
   getAllDistributions,
   getAllRaiseInterests,
   setRaiseInterestStatus,
+  getAllClientDocuments,
 }
