@@ -295,9 +295,11 @@ async function getAllRaiseInterests() {
 }
 
 async function getAllClientDocuments() {
+  // category is needed by the Clients tab "missing document" filter so
+  // it can tell which doc types each profile still needs.
   const { data, error } = await _supabase
     .from('client_documents')
-    .select('id, profile_id')
+    .select('id, profile_id, category')
   if (error) console.error('All client documents error:', error)
   return data || []
 }

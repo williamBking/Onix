@@ -1223,6 +1223,16 @@
     const v = findView(STATIC_VIEWS.clients); if (!v) return false;
     if (alreadyPainted(v)) return true;
     pending = pending || (clients || []).filter(c => c.status === 'pending');
+    // Which doc categories does each profile have? Used by the
+    // "Missing document" filter dropdown next to Export CSV. A row's
+    // data-onix-docs attribute is a comma-separated list of categories
+    // present for that client — the filter hides rows that CONTAIN the
+    // selected category so admins see only clients who are missing it.
+    const docsByProfile = {};
+    (clientDocuments || []).forEach(d => {
+      if (!d || !d.profile_id) return;
+      (docsByProfile[d.profile_id] = docsByProfile[d.profile_id] || new Set()).add(d.category || 'other');
+    });
     // Per-client loan balances, counts, and investment counts.
     const loanCounts = {}, loanBalances = {}, invCounts = {};
     (loans || []).forEach(l => {
@@ -1247,7 +1257,7 @@
       return '—';
     };
     const rows = clients.length ? clients.map(c => `
-      <tr data-profile-id="${esc(c.id)}">
+      <tr data-profile-id="${esc(c.id)}" data-onix-docs="${esc(Array.from(docsByProfile[c.id] || []).join(','))}">
         <td>${esc(c.full_name || '—')}</td>
         <td>${esc(c.email)}</td>
         <td>${esc(roleText(c))}</td>
@@ -1315,9 +1325,29 @@
         ${sectionHtml('Ready to activate', 'Already met with — click Activate Account to send the welcome email.', readyToAct)}
       </div>` : '';
 
+    // Filter dropdown — pick a document category to hide clients who
+    // already have it, leaving only the ones you need to chase. Options
+    // mirror the categories in the Client Documents modal (admin-
+    // portal.html CATEGORY_ORDER / CATEGORY_LABEL). Kept in sync manually.
+    const MISSING_DOC_OPTIONS = [
+      { value: '',                  label: 'Missing doc: (all clients)' },
+      { value: '__any_identity__',  label: 'Missing: ID or Passport' },
+      { value: 'id',                label: 'Missing: ID' },
+      { value: 'passport',          label: 'Missing: Passport' },
+      { value: 'proof_of_address',  label: 'Missing: Proof of Address' },
+      { value: 'tax',               label: 'Missing: RFC / Tax ID' },
+      { value: 'loan_application',  label: 'Missing: Loan Application Docs' },
+      { value: 'loan_doc',          label: 'Missing: Loan Documents' },
+      { value: 'promissory_note',   label: 'Missing: Promissory Notes' }
+    ];
+    const missingOptsHtml = MISSING_DOC_OPTIONS.map(o =>
+      '<option value="' + esc(o.value) + '">' + esc(o.label) + '</option>'
+    ).join('');
     const newClientBtn = `
-      <div style="display:flex;justify-content:flex-end;margin-bottom:14px;gap:0">
-        <a href="#" id="oac-export-clients" style="display:inline-block;background:#fff;color:#1A1A1A;padding:10px 18px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none;margin-right:8px">Export CSV</a>
+      <div style="display:flex;justify-content:flex-end;align-items:center;margin-bottom:14px;gap:8px;flex-wrap:wrap">
+        <select id="oac-clients-missing-doc" style="padding:9px 30px 9px 12px;font:600 .72rem/1 'DM Sans',sans-serif;letter-spacing:.06em;border:1px solid #E8E8E8;background:#fff;color:#1A1A1A;border-radius:2px;cursor:pointer;appearance:none;background-image:url(&quot;data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%236B6560' stroke-width='2.5'><polyline points='6 9 12 15 18 9'/></svg>&quot;);background-repeat:no-repeat;background-position:right 10px center">${missingOptsHtml}</select>
+        <span id="oac-clients-missing-count" style="font-size:.72rem;color:#888;margin-right:4px"></span>
+        <a href="#" id="oac-export-clients" style="display:inline-block;background:#fff;color:#1A1A1A;padding:10px 18px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none">Export CSV</a>
         <a href="#" id="oac-new-client-btn" style="display:inline-block;background:#C0392B;color:#fff;padding:10px 18px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">+ New Client</a>
       </div>`;
     v.innerHTML = viewShell('Clients', 'All accounts in the system',
@@ -1416,6 +1446,37 @@
           created_at: isoDate(c.created_at)
         })));
     });
+
+    // Wire the "Missing document" filter dropdown. When a category is
+    // picked, hide rows whose data-onix-docs already contains it. The
+    // special value "__any_identity__" hides rows that have EITHER id
+    // or passport (a client only needs one of the two identity docs).
+    const filterSel   = v.querySelector('#oac-clients-missing-doc');
+    const countLabel  = v.querySelector('#oac-clients-missing-count');
+    if (filterSel && countLabel) {
+      const applyFilter = () => {
+        const cat = filterSel.value;
+        const clientTable = v.querySelector('table.oac-table:not([data-pending-id])') ||
+                            Array.from(v.querySelectorAll('table.oac-table')).pop();
+        const trs = clientTable ? Array.from(clientTable.querySelectorAll('tbody > tr[data-profile-id]')) : [];
+        let shown = 0;
+        trs.forEach(tr => {
+          const docs = (tr.getAttribute('data-onix-docs') || '').split(',').filter(Boolean);
+          let hasIt;
+          if (cat === '')                    hasIt = false; // show all
+          else if (cat === '__any_identity__') hasIt = docs.indexOf('id') >= 0 || docs.indexOf('passport') >= 0;
+          else                               hasIt = docs.indexOf(cat) >= 0;
+          const hide = cat !== '' && hasIt;
+          tr.style.display = hide ? 'none' : '';
+          if (!hide) shown++;
+        });
+        countLabel.textContent = cat === ''
+          ? ''
+          : shown + ' of ' + trs.length + ' missing';
+      };
+      filterSel.addEventListener('change', applyFilter);
+      applyFilter();
+    }
     return true;
   }
 
