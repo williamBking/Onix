@@ -3005,72 +3005,6 @@
     })();
   }
 
-  // Wire the admin's own Profile tab: fill inputs from the logged-in admin's
-  // own profile row, and make Save Changes update only that row. Self-service
-  // personal info only (name, phone, address) - never role, status, or any
-  // other admin/client's data.
-  function wireAdminProfileForm(profile, userId) {
-    const view = document.querySelector('#view-profile');
-    if (!view) return;
-    const card = Array.from(view.querySelectorAll('.card')).find(c => {
-      const t = c.querySelector('.card-title');
-      return t && /Personal Information/i.test(t.textContent || '');
-    });
-    if (!card) return;
-    const fields = card.querySelectorAll('.field-input');
-    if (fields.length < 4) return;
-    // Pre-fill from the admin's own real profile
-    fields[0].value = profile.full_name || '';
-    fields[1].value = profile.email || '';
-    fields[1].setAttribute('readonly', 'readonly');
-    fields[1].style.background = '#f4f4f4';
-    fields[1].style.cursor = 'not-allowed';
-    fields[1].setAttribute('title', 'Email cannot be changed from here');
-    fields[2].value = profile.phone || '';
-    fields[3].value = profile.address || '';
-
-    const saveBtn = card.querySelector('.btn-red');
-    if (!saveBtn) return;
-    saveBtn.removeAttribute('onclick');
-    if (saveBtn.dataset.onixWired === '1') return;
-    saveBtn.dataset.onixWired = '1';
-    saveBtn.addEventListener('click', async (e) => {
-      e.preventDefault();
-      const orig = saveBtn.innerHTML;
-      saveBtn.disabled = true;
-      saveBtn.innerHTML = '<span>Saving…</span>';
-      const payload = {
-        full_name: (fields[0].value || '').trim() || null,
-        phone:     (fields[2].value || '').trim() || null,
-        address:   (fields[3].value || '').trim() || null
-      };
-      const { error } = await OnixDB.client
-        .from('profiles')
-        .update(payload)
-        .eq('id', userId);
-      saveBtn.disabled = false;
-      saveBtn.innerHTML = orig;
-      if (error) {
-        alert('Could not save profile: ' + error.message);
-        return;
-      }
-      profile.full_name = payload.full_name;
-      profile.phone     = payload.phone;
-      profile.address   = payload.address;
-      renderSidebarUser(profile);
-      let banner = card.querySelector('[data-onix-profile-ok]');
-      if (!banner) {
-        banner = document.createElement('div');
-        banner.setAttribute('data-onix-profile-ok', '1');
-        banner.style.cssText = 'margin-top:14px;padding:10px 12px;background:var(--success-bg);color:var(--success-text);border-left:3px solid var(--success);font-size:.85rem';
-        banner.textContent = '✓ Profile updated';
-        saveBtn.after(banner);
-      }
-      banner.style.opacity = '1';
-      setTimeout(() => { banner.style.transition = 'opacity 1s'; banner.style.opacity = '0'; }, 2500);
-    });
-  }
-
   // ============================================================
   // CALENDAR TAB
   // Injects a Calendar sidebar item + view-calendar div into the
@@ -4336,7 +4270,6 @@
     injectStyles();
     buildPanel();
     renderSidebarUser(gate.profile);
-    wireAdminProfileForm(gate.profile, gate.profile.id);
     enforceRolePermissions(gate.profile.role);
     // oac-greeting belongs to the retired Live Admin Console drawer; only
     // set its text if the element actually exists. Without this guard the
