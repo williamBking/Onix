@@ -116,7 +116,7 @@
     });
     if (!card) return;
     const fields = card.querySelectorAll('.field-input');
-    if (fields.length < 4) return;
+    if (fields.length < 5) return;
     // Pre-fill from real profile
     fields[0].value = profile.full_name || '';
     fields[1].value = profile.email || '';
@@ -126,6 +126,9 @@
     fields[1].setAttribute('title', 'Email cannot be changed from here');
     fields[2].value = profile.phone || '';
     fields[3].value = profile.address || '';
+    // date_of_birth is stored as YYYY-MM-DD, which is exactly what
+    // <input type="date"> expects — no conversion needed either direction.
+    fields[4].value = profile.date_of_birth || '';
 
     const saveBtn = card.querySelector('.btn-red');
     if (!saveBtn) return;
@@ -140,9 +143,10 @@
       saveBtn.disabled = true;
       saveBtn.innerHTML = '<span>Saving…</span>';
       const payload = {
-        full_name: (fields[0].value || '').trim() || null,
-        phone:     (fields[2].value || '').trim() || null,
-        address:   (fields[3].value || '').trim() || null
+        full_name:     (fields[0].value || '').trim() || null,
+        phone:         (fields[2].value || '').trim() || null,
+        address:       (fields[3].value || '').trim() || null,
+        date_of_birth: fields[4].value || null
       };
       const { error } = await OnixDB.client
         .from('profiles')
@@ -155,9 +159,10 @@
         return;
       }
       // Reflect the new name everywhere on the page
-      profile.full_name = payload.full_name;
-      profile.phone     = payload.phone;
-      profile.address   = payload.address;
+      profile.full_name     = payload.full_name;
+      profile.phone         = payload.phone;
+      profile.address       = payload.address;
+      profile.date_of_birth = payload.date_of_birth;
       renderUserName(profile);
       // Small inline confirmation
       let banner = card.querySelector('[data-onix-profile-ok]');
