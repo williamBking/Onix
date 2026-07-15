@@ -272,6 +272,9 @@
           ['Current Value', fmt.money(currentValue)],
           ['Total Return', totalReturnPct != null ? fmt.pct(totalReturnPct) : '—']
         ];
+        if (inv._monthly_payment != null) {
+          rows.push(['Monthly Payment', fmt.money(inv._monthly_payment)]);
+        }
         details.innerHTML = rows.map(r =>
           `<div class="detail-row"><span class="detail-key">${escapeHtml(r[0])}</span><span class="detail-val">${escapeHtml(r[1] == null ? '—' : r[1])}</span></div>`
         ).join('');
@@ -2172,6 +2175,30 @@
     });
   }
 
+  // Reshapes an OUS-synced loan row into the shape renderInvestments /
+  // wireInvestmentDetailModal / renderPerformanceChart already expect.
+  // Display-only — the underlying loans row is untouched.
+  //   balance         -> amount_invested
+  //   interest_rate   -> expected_return (annual %, shown as "Expected Return")
+  //   monthly_payment -> _monthly_payment (shown as its own "Monthly Payment"
+  //                      detail row — this isn't a real distributions table
+  //                      row, so it doesn't appear in Distribution History)
+  function ousDepositToInvestmentShape(loan) {
+    return {
+      id: loan.id,
+      user_id: loan.user_id,
+      venture_name: loan.loan_id_display || ('Deposit ' + String(loan.id).slice(0, 8)),
+      venture_type: 'deposit',
+      amount_invested: loan.balance,
+      expected_return: loan.interest_rate,
+      ownership_pct: null,
+      status: loan.status === 'active' ? 'active' : (loan.status || 'active'),
+      start_date: loan.origination_date || loan.created_at,
+      investment_documents: loan.loan_documents || [],
+      _monthly_payment: loan.monthly_payment
+    };
+  }
+
   async function bootstrap() {
     if (!window.OnixDB) {
       console.error('[onix] supabase.js not loaded — OnixDB missing');
@@ -2187,9 +2214,10 @@
     wireGlobalSearch();
 
     // Fetch everything in parallel
-    const [loans, investments, raises, payments, distributions] = await Promise.all([
+    const [loans, investments, ousDeposits, raises, payments, distributions] = await Promise.all([
       OnixDB.getMyLoans(userId),
       OnixDB.getMyInvestments(userId),
+      OnixDB.getMyOusDeposits(userId),
       OnixDB.getOpenRaises(),
       OnixDB.getMyPayments(userId),
       OnixDB.getMyDistributions(userId)
@@ -2207,12 +2235,16 @@
       // No active loans — render the Payments tab in its global empty state.
       renderPayments(payments, null);
     }
-    renderInvestments(investments, distributions);
+    // OUS-synced loan rows are actually deposits, not loans — reshape them
+    // to look like investment records (display-only; nothing in the
+    // database is moved) and fold them into My Investments.
+    const allInvestments = (investments || []).concat((ousDeposits || []).map(ousDepositToInvestmentShape));
+    renderInvestments(allInvestments, distributions);
     renderRaises(raises, userId);
     paintClientSidebarBadges({ raises });
     renderDistributions(distributions);
     renderUpcomingEvents(payments, distributions);
-    renderPerformanceChart(investments, distributions);
+    renderPerformanceChart(allInvestments, distributions);
 
     // Bell-icon notifications panel (also fetch the user's applications)
     const { data: applications } = await OnixDB.client
@@ -2231,7 +2263,7 @@
 
     // Stash everything for the global search index
     searchData.loans         = loans || [];
-    searchData.investments   = investments || [];
+    searchData.investments   = allInvestments;
     searchData.raises        = raises || [];
     searchData.payments      = payments || [];
     searchData.distributions = distributions || [];
