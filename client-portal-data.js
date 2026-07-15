@@ -194,9 +194,16 @@
     if (!loan) {
       ['Loan ID', 'Principal', 'Term', 'Origination', 'Maturity', 'Origination Fee', 'Collateral']
         .forEach(l => setDetail(l, '—'));
-      // Also update the Active badge
+      // Also update the Active badge. Setting data-en/data-es too — a
+      // periodic language-toggle sync re-reads those attributes and would
+      // otherwise silently put "Active" back a moment after this runs.
       const badge = card.querySelector('.badge');
-      if (badge) { badge.textContent = 'No loan'; badge.className = 'badge'; }
+      if (badge) {
+        badge.textContent = 'No loan';
+        badge.className = 'badge';
+        badge.setAttribute('data-en', 'No loan');
+        badge.setAttribute('data-es', 'Sin préstamo');
+      }
       return;
     }
     // "Principal" is the ORIGINAL loan amount (does not change as payments are made).
@@ -682,10 +689,40 @@
   function renderRepaymentProgress(loan, payments) {
     const bar = document.getElementById('loanProgress');
     if (!bar) return;
+    const wrap = bar.closest('.card') || document.querySelector('#view-loans');
 
     if (!loan) {
+      // No active loan — reset the whole card instead of leaving the
+      // bundled demo content (title, dates, paid/remaining figures) showing.
       bar.style.width = '0%';
       bar.setAttribute('aria-valuenow', '0');
+      if (wrap) {
+        const title = wrap.querySelector('.card-title');
+        if (title) {
+          title.textContent = 'Repayment Progress';
+          if (title.hasAttribute('data-en')) title.setAttribute('data-en', title.textContent);
+        }
+        const progressWrap = wrap.querySelector('.progress-wrap');
+        const headerRow = progressWrap ? progressWrap.previousElementSibling : null;
+        if (headerRow) {
+          const spans = headerRow.querySelectorAll('span');
+          if (spans[0]) {
+            spans[0].textContent = 'No active loan';
+            if (spans[0].hasAttribute('data-en')) spans[0].setAttribute('data-en', spans[0].textContent);
+          }
+          if (spans[1]) spans[1].textContent = '—';
+        }
+        const dateRow = progressWrap ? progressWrap.nextElementSibling : null;
+        if (dateRow) {
+          const dateSpans = dateRow.querySelectorAll('span');
+          if (dateSpans[0]) dateSpans[0].textContent = '—';
+          if (dateSpans[1]) dateSpans[1].textContent = '—';
+        }
+        const boxes = wrap.querySelectorAll('div[style*="display:grid"] > div, div[style*="display: grid"] > div');
+        boxes.forEach(box => {
+          if (box.children.length >= 2) box.children[1].textContent = '—';
+        });
+      }
       return;
     }
 
@@ -701,7 +738,6 @@
     bar.style.width = pct.toFixed(2) + '%';
     bar.setAttribute('aria-valuenow', pct.toFixed(1));
 
-    const wrap = bar.closest('.card') || document.querySelector('#view-loans');
     if (!wrap) return;
 
     // 1. Card title — "Repayment Progress · ONX-2025-0042 · 24-month term"
@@ -835,8 +871,22 @@
     ['Outstanding Loan', 'Next Payment Due', 'Next Due', 'Outstanding Balance', 'Interest Rate', 'Monthly Payment']
       .forEach(label => setKpi(label, '—', 'No active loan'));
     renderLoanDetails(null);
+    renderRepaymentProgress(null, []);
+    // "Loan Documents" card on the My Loan tab itself — already handles
+    // loan == null correctly, just was never called from this path.
+    renderLoanDocsCardForLoan(null).catch(err =>
+      console.error('[onix] loan docs render failed:', err)
+    );
     // Empty out the loan documents card on My Documents
     emptyDocsCard(document.querySelector('#view-documents'), 'Loan', 'No loan documents on file.');
+    // The page header's "Active Loan" eyebrow is static demo text — update
+    // it too so the page doesn't imply a loan exists when it doesn't.
+    const eyebrow = document.querySelector('#view-loans .page-hd .eyebrow');
+    if (eyebrow) {
+      eyebrow.textContent = 'No Active Loan';
+      eyebrow.setAttribute('data-en', 'No Active Loan');
+      eyebrow.setAttribute('data-es', 'Sin Préstamo Activo');
+    }
   }
 
   function escapeHtml(s) {
