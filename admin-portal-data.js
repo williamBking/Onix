@@ -3243,7 +3243,7 @@
     const [eventsRes, bdayRes, loansRes, paymentsRes, nextDueRes, clientsRes, allLoansRes] = await Promise.all([
       c.from('calendar_events').select('*'),
       c.from('profiles').select('id, full_name, date_of_birth').not('date_of_birth', 'is', null),
-      c.from('loans').select('id, loan_id_display, maturity_date, ous_synced_at, profiles!user_id(full_name)').eq('status', 'active').not('maturity_date', 'is', null),
+      c.from('loans').select('id, loan_id_display, maturity_date, balance, ous_synced_at, profiles!user_id(full_name)').eq('status', 'active').not('maturity_date', 'is', null),
       c.from('loan_payments').select('id, due_date, amount_due, loans(loan_id_display, profiles!user_id(full_name))').eq('status', 'pending').not('due_date', 'is', null),
       // Loans whose next_due_date is set get a "Payment due" event automatically
       c.from('loans').select('id, loan_id_display, next_due_date, monthly_payment, profiles!user_id(full_name)').eq('status', 'active').not('next_due_date', 'is', null),
@@ -3280,9 +3280,13 @@
     // Loan Closing type. See CAL_TYPES.deposit_closing / loan_closing.
     (loansRes.data || []).forEach(l => {
       const isDeposit = !!l.ous_synced_at;
+      // Deposit closings are when the client gets paid out (principal +
+      // accrued interest), so show that amount on the calendar. Real loan
+      // closings are the reverse (client owes us), so no amount there.
+      const payout = isDeposit && l.balance != null ? fmt.money(l.balance) + ' · ' : '';
       calEvents.push({
         id: 'closing-' + l.id,
-        title: (isDeposit ? 'Deposit closing · ' : 'Loan closing · ') + (l.loan_id_display || ''),
+        title: (isDeposit ? 'Deposit closing · ' : 'Loan closing · ') + payout + (l.loan_id_display || ''),
         subtitle: (l.profiles && l.profiles.full_name) || '',
         type: isDeposit ? 'deposit_closing' : 'loan_closing',
         date: l.maturity_date,
