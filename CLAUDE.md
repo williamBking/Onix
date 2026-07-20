@@ -10,10 +10,13 @@ a loading shell that decodes and mounts this blob at runtime.
 **Never edit this file with git merge, cherry-pick, rebase, or any other
 line-based tool.** The entire template lives on one line; a line-based
 merge cannot meaningfully resolve conflicts in it, and has silently
-corrupted the file more than once.
+corrupted the file more than once — including cases where corruption only
+appeared *after* GitHub's actual merge, even though the branch-level diff
+looked clean. Branch-level verification alone is not sufficient.
 
 **Only ever edit it via decode → edit → re-encode:**
 
+0. Back up first: `cp admin-portal.html admin-portal.html.bak-<timestamp>`.
 1. Extract the JSON string from the `__bundler/template` script tag.
 2. `JSON.parse()` it to get the real HTML/JS content.
 3. Make the edit as a plain string replacement using a **function**
@@ -53,6 +56,15 @@ corrupted the file more than once.
      and confirm the extracted `textContent` round-trips through
      `JSON.parse()` to the expected length — this is the only check that
      actually simulates what a real page load does.
+6. After pushing, verify **live on the deployed site** (hard-refresh,
+   check browser console) before considering the task done — local and
+   even CI verification have both missed real breakage before.
+
+**Keep changes to this file small and separate.** Do not bundle multiple
+unrelated changes (e.g. a bug fix + a new feature) into one edit pass —
+verify and ship one change at a time. A bundled chart-fix + feature change
+was merged and reverted within the same session with no recorded
+explanation; treat that as the reason this rule exists.
 
 CI enforces the JSON-validity and `node --check` parts of step 5
 automatically via `.github/workflows/validate-admin-bundle.yml` (required
