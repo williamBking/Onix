@@ -1,0 +1,30 @@
+name: Validate admin-portal.html bundle
+
+# admin-portal.html's real content lives inside a single JSON-encoded
+# __bundler/template blob (see CLAUDE.md). It must only ever be edited via
+# a decode -> edit -> re-encode process - never git merge, cherry-pick, or
+# other line-based tooling. This has broken the file twice: local
+# verification passed both times, but the blob was corrupted once actually
+# merged into main. That's why this check has no `paths:` filter and runs
+# on every PR regardless of what changed - and, critically, on the actual
+# PR MERGE RESULT: for `pull_request` events, actions/checkout's default
+# ref is refs/pull/<PR>/merge (the merge of the PR branch into the current
+# target branch), not the PR branch in isolation. That merge-result check
+# is what would have caught both prior incidents before they shipped.
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate-admin-bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Validate __bundler/template blob
+        run: node .github/scripts/validate-admin-bundle.js admin-portal.html
