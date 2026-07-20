@@ -1,29 +1,5 @@
 # Onix Finance — Agent Notes
 
-## admin-portal.html — CRITICAL, read before any edit
-
-This file's entire real content lives inside a single line: a JSON-encoded string assigned to
-a <script type="__bundler/template"> tag (currently around line 4641-4643).
-
-RULES, NO EXCEPTIONS:
-- NEVER use git merge or git cherry-pick on this file. Both have corrupted it in production
-  even when the branch-level diff looked clean — corruption only appeared after GitHub's actual
-  merge, not before, meaning branch-level verification is NOT sufficient on its own.
-- The ONLY safe way to edit this file:
-  1. Back up first (cp admin-portal.html admin-portal.html.bak-<timestamp>)
-  2. Read the blob line, JSON.parse() it to get the real decoded content
-  3. Find insertion/edit points via exact string search, verify each anchor occurs EXACTLY
-     ONCE before touching it
-  4. Use .replace(oldStr, () => newStr) — a FUNCTION, never a plain string — this codebase has
-     literal $ characters that corrupt plain-string replace
-  5. Re-encode via JSON.stringify(), splice back into that one line only
-  6. Verify: line count unchanged, diff confined to one line, re-decoded content diff,
-     node --check the extracted JS
-- Keep changes to this file SMALL and SEPARATE. Do not bundle multiple unrelated changes
-  (e.g. a bug fix + a new feature) into one edit pass — verify and ship one change at a time.
-- After pushing, verify LIVE on the deployed site (hard-refresh, check browser console) before
-  considering the task done.
-
 ## Editing admin-portal.html
 
 This file's real content is **not** the visible HTML — it's a JSON-encoded
@@ -34,10 +10,13 @@ a loading shell that decodes and mounts this blob at runtime.
 **Never edit this file with git merge, cherry-pick, rebase, or any other
 line-based tool.** The entire template lives on one line; a line-based
 merge cannot meaningfully resolve conflicts in it, and has silently
-corrupted the file more than once.
+corrupted the file more than once — including cases where corruption only
+appeared *after* GitHub's actual merge, even though the branch-level diff
+looked clean. Branch-level verification alone is not sufficient.
 
 **Only ever edit it via decode → edit → re-encode:**
 
+0. Back up first: `cp admin-portal.html admin-portal.html.bak-<timestamp>`.
 1. Extract the JSON string from the `__bundler/template` script tag.
 2. `JSON.parse()` it to get the real HTML/JS content.
 3. Make the edit as a plain string replacement using a **function**
@@ -77,6 +56,15 @@ corrupted the file more than once.
      and confirm the extracted `textContent` round-trips through
      `JSON.parse()` to the expected length — this is the only check that
      actually simulates what a real page load does.
+6. After pushing, verify **live on the deployed site** (hard-refresh,
+   check browser console) before considering the task done — local and
+   even CI verification have both missed real breakage before.
+
+**Keep changes to this file small and separate.** Do not bundle multiple
+unrelated changes (e.g. a bug fix + a new feature) into one edit pass —
+verify and ship one change at a time. A bundled chart-fix + feature change
+was merged and reverted within the same session with no recorded
+explanation; treat that as the reason this rule exists.
 
 CI enforces the JSON-validity and `node --check` parts of step 5
 automatically via `.github/workflows/validate-admin-bundle.yml` (required
