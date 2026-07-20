@@ -2051,6 +2051,20 @@
     { key: 'tax',               label: 'RFC or Tax ID' },
     { key: 'other',             label: 'Other' }
   ];
+  // Display grouping for the "My Documents" list below: ID and Passport
+  // render as one combined "ID/Passport" card (either satisfies the
+  // identity-doc requirement — see hasEitherIdent in renderClientDocList).
+  // The upload picker above still lists them separately (CLIENT_DOC_CATEGORIES)
+  // since an uploaded file needs one specific real category value.
+  const CLIENT_DOC_DISPLAY_GROUPS = [
+    { key: 'id_or_passport',   label: 'ID/Passport',                       categories: ['id', 'passport'] },
+    { key: 'proof_of_address', label: 'Proof of Address',                  categories: ['proof_of_address'] },
+    { key: 'loan_application', label: 'Loan Application Supporting Docs',  categories: ['loan_application'] },
+    { key: 'loan_doc',         label: 'Loan Documents',                    categories: ['loan_doc'] },
+    { key: 'promissory_note',  label: 'Promissory Notes',                  categories: ['promissory_note'] },
+    { key: 'tax',              label: 'RFC or Tax ID',                     categories: ['tax'] },
+    { key: 'other',            label: 'Other',                             categories: ['other'] }
+  ];
   const CLIENT_DOC_BUCKET = 'client-documents';
 
   // Reusable so any callsite (upload, list) can fetch the latest docs
@@ -2083,24 +2097,24 @@
     const hasIdDoc       = (byCat['id'] || []).length > 0;
     const hasPassportDoc = (byCat['passport'] || []).length > 0;
     const hasEitherIdent = hasIdDoc || hasPassportDoc;
-    const isMissingFor = key => {
-      if (key === 'id' || key === 'passport') return !hasEitherIdent;
-      if (key === 'proof_of_address')         return (byCat['proof_of_address'] || []).length === 0;
-      if (key === 'tax')                      return (byCat['tax'] || []).length === 0;
+    const isMissingForGroup = key => {
+      if (key === 'id_or_passport')   return !hasEitherIdent;
+      if (key === 'proof_of_address') return (byCat['proof_of_address'] || []).length === 0;
+      if (key === 'tax')              return (byCat['tax'] || []).length === 0;
       return false;
     };
     const missingBadge = '<span class="cl-doc-missing">⚠ Missing</span>';
-    // Always render one card per category (matching the original "Loan /
+    // Always render one card per display group (matching the original "Loan /
     // Investments / Tax & Statements" layout) so clients always see every
-    // type they can have on file. Empty categories show a quiet message.
+    // type they can have on file. Empty groups show a quiet message.
     let html = '';
-    CLIENT_DOC_CATEGORIES.forEach((cat, i) => {
-      const list = byCat[cat.key] || [];
+    CLIENT_DOC_DISPLAY_GROUPS.forEach((group, i) => {
+      const list = group.categories.reduce((acc, k) => acc.concat(byCat[k] || []), []);
       const revealCls = i === 0 ? 'card reveal' : 'card reveal reveal-d' + Math.min(i, 3);
-      const missing = isMissingFor(cat.key);
+      const missing = isMissingForGroup(group.key);
       html +=
         '<div class="' + revealCls + '" style="margin-top:20px' + (missing ? ';border-top:3px solid var(--red);box-shadow:0 0 0 1px rgba(192,57,43,.18)' : '') + '">' +
-          '<div class="card-title">' + escapeHtml(cat.label) +
+          '<div class="card-title">' + escapeHtml(group.label) +
             (list.length
               ? ' <span style="color:var(--light);font-weight:600;margin-left:6px">(' + list.length + ')</span>'
               : '') +
