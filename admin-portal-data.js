@@ -2598,9 +2598,15 @@
   }
 
   // Update a Chart.js instance's labels + first dataset data in place.
+  // Mutates the existing arrays rather than replacing them — Chart.js's
+  // option-scope resolver proxies wrap these objects, and wholesale
+  // replacement on a recurring timer is what caused runaway "Object.set"
+  // recursion (see CLAUDE.md investigation notes).
   function setChartData(chart, labels, data) {
-    chart.data.labels = labels;
-    chart.data.datasets[0].data = data;
+    chart.data.labels.length = 0;
+    chart.data.labels.push(...labels);
+    chart.data.datasets[0].data.length = 0;
+    chart.data.datasets[0].data.push(...data);
     chart.update('none');
   }
 
@@ -2621,92 +2627,109 @@
     return '$' + Math.round(v).toLocaleString('en-US');
   }
 
-  function updateDashboardCharts(loans, investments) {
+  // `wired` is the { orig, loanType, deposit } chart-instance snapshot from
+  // the last successful wiring (or null before the first one). Returning it
+  // unchanged when the same instances are still attached lets the caller
+  // skip redundant chart.update() calls; returning a fresh snapshot when an
+  // instance's identity changed (initDashCharts() destroyed + recreated it)
+  // makes re-wiring automatic instead of permanently skipping that canvas.
+  function updateDashboardCharts(loans, investments, wired) {
     const labels12 = lastNMonthLabels(12);
 
-    // origChart — loan originations by month (balance at origination, $M)
     const origChart = getChart('origChart');
-    if (origChart) {
-      const vals = sumByMonth(loans, 'created_at', 'balance', 12)
-        .map(v => parseFloat((v / 1e6).toFixed(2)));
-      setChartData(origChart, labels12, vals);
-    }
+    const loanTypeChart = getChart('loanTypeChart');
+    const depositChart = getChart('depositChart');
+    if (!origChart || !loanTypeChart || !depositChart) return wired || null;
+
+    const unchanged = wired && wired.orig === origChart &&
+      wired.loanType === loanTypeChart && wired.deposit === depositChart;
+    if (unchanged) return wired;
+
+    // origChart — loan originations by month (balance at origination, $M)
+    const origVals = sumByMonth(loans, 'created_at', 'balance', 12)
+      .map(v => parseFloat((v / 1e6).toFixed(2)));
+    setChartData(origChart, labels12, origVals);
 
     // loanTypeChart — active loan portfolio by type: real $ amounts + tooltip shows amount + %
-    const loanTypeChart = getChart('loanTypeChart');
-    if (loanTypeChart) {
-      const activeLoans = loans.filter(l => l.status === 'active');
-      const typeTotals = {};
-      activeLoans.forEach(l => {
-        const t = l.venture_type || 'Other';
-        typeTotals[t] = (typeTotals[t] || 0) + Number(l.balance || 0);
-      });
-      const total = Object.values(typeTotals).reduce((s, v) => s + v, 0);
-      const types = Object.keys(typeTotals).sort((a, b) => typeTotals[b] - typeTotals[a]);
-      const vals = types.map(t => typeTotals[t]);
-      loanTypeChart.data.labels = types;
-      loanTypeChart.data.datasets[0].data = vals;
-      // Tooltip: "CRE: $1.20M (58%)"
-      loanTypeChart.options.plugins = loanTypeChart.options.plugins || {};
-      loanTypeChart.options.plugins.tooltip = loanTypeChart.options.plugins.tooltip || {};
-      loanTypeChart.options.plugins.tooltip.callbacks = {
-        label: c => {
-          const val = c.parsed;
-          const pct = total > 0 ? Math.round((val / total) * 100) : 0;
-          return ` ${c.label}: ${fmtChartDollars(val)} (${pct}%)`;
-        }
-      };
-      // Show legend so type names are visible on the chart
-      loanTypeChart.options.plugins.legend = { display: true, position: 'bottom',
-        labels: { font: { size: 11 }, padding: 12, color: '#555' } };
-      loanTypeChart.update('none');
-    }
+    const activeLoans = loans.filter(l => l.status === 'active');
+    const typeTotals = {};
+    activeLoans.forEach(l => {
+      const t = l.venture_type || 'Other';
+      typeTotals[t] = (typeTotals[t] || 0) + Number(l.balance || 0);
+    });
+    const total = Object.values(typeTotals).reduce((s, v) => s + v, 0);
+    const types = Object.keys(typeTotals).sort((a, b) => typeTotals[b] - typeTotals[a]);
+    const vals = types.map(t => typeTotals[t]);
+    loanTypeChart.data.labels.length = 0;
+    loanTypeChart.data.labels.push(...types);
+    loanTypeChart.data.datasets[0].data.length = 0;
+    loanTypeChart.data.datasets[0].data.push(...vals);
+    // Tooltip: "CRE: $1.20M (58%)" — mutate the existing plugin objects in
+    // place rather than replacing options.plugins wholesale (see setChartData).
+    const plugins = loanTypeChart.options.plugins || (loanTypeChart.options.plugins = {});
+    if (!plugins.tooltip) plugins.tooltip = {};
+    if (!plugins.tooltip.callbacks) plugins.tooltip.callbacks = {};
+    plugins.tooltip.callbacks.label = c => {
+      const val = c.parsed;
+      const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+      return ` ${c.label}: ${fmtChartDollars(val)} (${pct}%)`;
+    };
+    // Show legend so type names are visible on the chart
+    if (!plugins.legend) plugins.legend = {};
+    plugins.legend.display = true;
+    plugins.legend.position = 'bottom';
+    if (!plugins.legend.labels) plugins.legend.labels = {};
+    plugins.legend.labels.font = { size: 11 };
+    plugins.legend.labels.padding = 12;
+    plugins.legend.labels.color = '#555';
+    loanTypeChart.update('none');
 
     // depositChart — cumulative deposit portfolio growth by month ($M)
-    const depositChart = getChart('depositChart');
-    if (depositChart) {
-      const deposits = investments.filter(i => (i.venture_type || '').toLowerCase() === 'deposit');
-      const monthly = sumByMonth(deposits, 'created_at', 'amount_invested', 12);
-      let cumulative = 0;
-      const vals = monthly.map(v => {
-        cumulative += v;
-        return parseFloat((cumulative / 1e6).toFixed(2));
-      });
-      setChartData(depositChart, labels12, vals);
-    }
+    const deposits = investments.filter(i => (i.venture_type || '').toLowerCase() === 'deposit');
+    const monthly = sumByMonth(deposits, 'created_at', 'amount_invested', 12);
+    let cumulative = 0;
+    const depositVals = monthly.map(v => {
+      cumulative += v;
+      return parseFloat((cumulative / 1e6).toFixed(2));
+    });
+    setChartData(depositChart, labels12, depositVals);
 
-    return !!(origChart && loanTypeChart && depositChart);
+    return { orig: origChart, loanType: loanTypeChart, deposit: depositChart };
   }
 
-  function updateReportsCharts(loans, payments) {
+  // See updateDashboardCharts() for what `wired` tracks and why.
+  function updateReportsCharts(loans, payments, wired) {
     const labels6 = lastNMonthLabels(6);
 
-    // revChart — monthly revenue from collected loan payments ($K)
     const revChart = getChart('revChart');
-    if (revChart) {
-      const paidPayments = payments.filter(p => p.paid_at);
-      const vals = sumByMonth(paidPayments, 'paid_at', 'amount_due', 6)
-        .map(v => parseFloat((v / 1e3).toFixed(1)));
-      setChartData(revChart, labels6, vals);
-    }
+    const typeChart = getChart('typeChart');
+    if (!revChart || !typeChart) return wired || null;
+
+    const unchanged = wired && wired.rev === revChart && wired.type === typeChart;
+    if (unchanged) return wired;
+
+    // revChart — monthly revenue from collected loan payments ($K)
+    const paidPayments = payments.filter(p => p.paid_at);
+    const revVals = sumByMonth(paidPayments, 'paid_at', 'amount_due', 6)
+      .map(v => parseFloat((v / 1e3).toFixed(1)));
+    setChartData(revChart, labels6, revVals);
 
     // typeChart — active loan portfolio by type ($M, horizontal bar)
-    const typeChart = getChart('typeChart');
-    if (typeChart) {
-      const activeLoans = loans.filter(l => l.status === 'active');
-      const typeTotals = {};
-      activeLoans.forEach(l => {
-        const t = l.venture_type || 'Other';
-        typeTotals[t] = (typeTotals[t] || 0) + Number(l.balance || 0);
-      });
-      const types = Object.keys(typeTotals).sort((a, b) => typeTotals[b] - typeTotals[a]);
-      const vals = types.map(t => parseFloat((typeTotals[t] / 1e6).toFixed(2)));
-      typeChart.data.labels = types;
-      typeChart.data.datasets[0].data = vals;
-      typeChart.update('none');
-    }
+    const activeLoans = loans.filter(l => l.status === 'active');
+    const typeTotals = {};
+    activeLoans.forEach(l => {
+      const t = l.venture_type || 'Other';
+      typeTotals[t] = (typeTotals[t] || 0) + Number(l.balance || 0);
+    });
+    const types = Object.keys(typeTotals).sort((a, b) => typeTotals[b] - typeTotals[a]);
+    const vals = types.map(t => parseFloat((typeTotals[t] / 1e6).toFixed(2)));
+    typeChart.data.labels.length = 0;
+    typeChart.data.labels.push(...types);
+    typeChart.data.datasets[0].data.length = 0;
+    typeChart.data.datasets[0].data.push(...vals);
+    typeChart.update('none');
 
-    return !!(revChart && typeChart);
+    return { rev: revChart, type: typeChart };
   }
 
   // ── /Chart helpers ─────────────────────────────────────────────────────────
@@ -2715,8 +2738,12 @@
     // Invalidate any previously-painted markers so we re-paint with fresh data
     document.querySelectorAll('.' + LIVE_MARKER).forEach(el => el.classList.remove(LIVE_MARKER));
 
-    let dashChartsWired = false;
-    let reportsChartsWired = false;
+    // Chart-instance snapshots (not plain booleans) so a destroy+recreate
+    // cycle in initDashCharts()/initReportsCharts() (admin-portal.html)
+    // triggers automatic re-wiring instead of permanently skipping a canvas
+    // that no longer matches the instance we last wired.
+    let dashChartsWired = null;
+    let reportsChartsWired = null;
 
     function tryAll() {
       try {
@@ -2746,8 +2773,8 @@
         paintRaisesView(data.raises);
         paintApplicationsView(data.applications);
         wireGlobalSearch(data);
-        if (!dashChartsWired) dashChartsWired = updateDashboardCharts(data.loans, data.investments);
-        if (!reportsChartsWired) reportsChartsWired = updateReportsCharts(data.loans, data.payments);
+        dashChartsWired = updateDashboardCharts(data.loans, data.investments, dashChartsWired);
+        reportsChartsWired = updateReportsCharts(data.loans, data.payments, reportsChartsWired);
       } catch (e) {
         console.error('[onix-admin] paint error (will retry):', e);
       }
