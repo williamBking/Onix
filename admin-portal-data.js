@@ -3074,7 +3074,8 @@
   const CAL_TYPES = {
     birthday:         { label: 'Birthday',             color: '#C58FB8' },
     payment:          { label: 'Payment Due',          color: '#3B8B3B' },
-    loan_closing:     { label: 'Loan Closing',         color: '#C0392B' },
+    deposit_closing:  { label: 'Deposit Closing',      color: '#C0392B' },
+    loan_closing:     { label: 'Loan Closing',         color: '#7A2A20' },
     loan_renewal:     { label: 'Client Loan Renewal',  color: '#C9952B' },
     quarterly_report: { label: 'Quarterly Report',     color: '#4A6FA5' },
     meeting:          { label: 'Meeting',              color: '#B07330' },
@@ -3215,7 +3216,7 @@
     const [eventsRes, bdayRes, loansRes, paymentsRes, nextDueRes, clientsRes, allLoansRes] = await Promise.all([
       c.from('calendar_events').select('*'),
       c.from('profiles').select('id, full_name, date_of_birth').not('date_of_birth', 'is', null),
-      c.from('loans').select('id, loan_id_display, maturity_date, profiles!user_id(full_name)').eq('status', 'active').not('maturity_date', 'is', null),
+      c.from('loans').select('id, loan_id_display, maturity_date, ous_synced_at, profiles!user_id(full_name)').eq('status', 'active').not('maturity_date', 'is', null),
       c.from('loan_payments').select('id, due_date, amount_due, loans(loan_id_display, profiles!user_id(full_name))').eq('status', 'pending').not('due_date', 'is', null),
       // Loans whose next_due_date is set get a "Payment due" event automatically
       c.from('loans').select('id, loan_id_display, next_due_date, monthly_payment, profiles!user_id(full_name)').eq('status', 'active').not('next_due_date', 'is', null),
@@ -3246,13 +3247,21 @@
         source: 'profile', profileId: p.id, readOnly: true
       });
     });
-    (loansRes.data || []).forEach(l => calEvents.push({
-      id: 'closing-' + l.id,
-      title: 'Loan closing · ' + (l.loan_id_display || ''),
-      subtitle: (l.profiles && l.profiles.full_name) || '',
-      type: 'loan_closing', date: l.maturity_date,
-      source: 'loan', loanId: l.id, readOnly: true
-    }));
+    // OUS-synced rows are deposits, not loans (see Active Deposits tab)
+    // — flag them separately on the calendar so they don't look like
+    // loan closings. Real loan rows (ous_synced_at IS NULL) keep the
+    // Loan Closing type. See CAL_TYPES.deposit_closing / loan_closing.
+    (loansRes.data || []).forEach(l => {
+      const isDeposit = !!l.ous_synced_at;
+      calEvents.push({
+        id: 'closing-' + l.id,
+        title: (isDeposit ? 'Deposit closing · ' : 'Loan closing · ') + (l.loan_id_display || ''),
+        subtitle: (l.profiles && l.profiles.full_name) || '',
+        type: isDeposit ? 'deposit_closing' : 'loan_closing',
+        date: l.maturity_date,
+        source: 'loan', loanId: l.id, readOnly: true
+      });
+    });
     (paymentsRes.data || []).forEach(p => calEvents.push({
       id: 'payment-' + p.id,
       title: fmt.money(p.amount_due) + ' payment due',
