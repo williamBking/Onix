@@ -1381,6 +1381,20 @@
       other: 'Other'
     };
     var CATEGORY_ORDER = ['id','passport','proof_of_address','loan_application','loan_doc','promissory_note','tax','other'];
+    // Display grouping for the doc list below: ID and Passport render as one
+    // combined "ID/Passport" section (either satisfies the identity-doc
+    // requirement — see hasEitherIdent in openClientDocs). The upload picker
+    // above still lists them separately (CATEGORY_ORDER) since an uploaded
+    // file needs one specific real category value.
+    var DOC_DISPLAY_GROUPS = [
+      { key: 'id_or_passport',   label: 'ID/Passport',                   categories: ['id', 'passport'] },
+      { key: 'proof_of_address', label: CATEGORY_LABEL.proof_of_address, categories: ['proof_of_address'] },
+      { key: 'loan_application', label: CATEGORY_LABEL.loan_application, categories: ['loan_application'] },
+      { key: 'loan_doc',         label: CATEGORY_LABEL.loan_doc,         categories: ['loan_doc'] },
+      { key: 'promissory_note',  label: CATEGORY_LABEL.promissory_note,  categories: ['promissory_note'] },
+      { key: 'tax',              label: CATEGORY_LABEL.tax,              categories: ['tax'] },
+      { key: 'other',            label: CATEGORY_LABEL.other,            categories: ['other'] }
+    ];
     var CL_DOCS_BUCKET = 'client-documents';
 
     function ensureDocsModal(){
@@ -1515,25 +1529,25 @@
       var hasIdDoc       = (grouped['id'] || []).length > 0;
       var hasPassportDoc = (grouped['passport'] || []).length > 0;
       var hasEitherIdent = hasIdDoc || hasPassportDoc;
-      function isMissingFor(key){
-        if (key === 'id' || key === 'passport') return !hasEitherIdent;
-        if (key === 'proof_of_address')         return (grouped['proof_of_address'] || []).length === 0;
-        if (key === 'tax')                      return (grouped['tax'] || []).length === 0;
+      function isMissingForGroup(key){
+        if (key === 'id_or_passport')   return !hasEitherIdent;
+        if (key === 'proof_of_address') return (grouped['proof_of_address'] || []).length === 0;
+        if (key === 'tax')              return (grouped['tax'] || []).length === 0;
         return false;
       }
       var missingBadge = '<span class="oac-doc-missing">⚠ Missing</span>';
       var linkStyle = 'font-size:.66rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#C0392B;text-decoration:none;border:1px solid #C0392B;padding:6px 12px;border-radius:2px;cursor:pointer;background:transparent';
-      // Always render a section per category so the admin always sees every
-      // type the client could have on file. Empty categories show a quiet
+      // Always render a section per display group so the admin always sees
+      // every type the client could have on file. Empty groups show a quiet
       // 'No documents uploaded yet' line.
       var html = '';
-      CATEGORY_ORDER.forEach(function(cat){
-        var list = grouped[cat] || [];
-        var missing = isMissingFor(cat);
+      DOC_DISPLAY_GROUPS.forEach(function(group){
+        var list = group.categories.reduce(function(acc, cat){ return acc.concat(grouped[cat] || []); }, []);
+        var missing = isMissingForGroup(group.key);
         html +=
           '<div style="margin-bottom:18px' + (missing ? ';padding:10px 12px;border:1px solid rgba(192,57,43,.25);border-left:3px solid #C0392B;background:#FFF6F5' : '') + '">' +
             '<div style="font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;color:#1A1A1A;font-weight:700;margin-bottom:8px;display:flex;align-items:center;flex-wrap:wrap">' +
-              '<span>' + esc(CATEGORY_LABEL[cat] || cat) + '</span>' +
+              '<span>' + esc(group.label) + '</span>' +
               (list.length ? ' <span style="color:#9B9590;font-weight:600;margin-left:6px">(' + list.length + ')</span>' : '') +
               (missing ? ' ' + missingBadge : '') +
             '</div>';

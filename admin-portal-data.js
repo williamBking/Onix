@@ -1327,13 +1327,14 @@
 
     // Filter dropdown — pick a document category to hide clients who
     // already have it, leaving only the ones you need to chase. Options
-    // mirror the categories in the Client Documents modal (admin-
-    // portal.html CATEGORY_ORDER / CATEGORY_LABEL). Kept in sync manually.
+    // mirror the display groups in the Client Documents modal (admin-
+    // portal.html DOC_DISPLAY_GROUPS). Kept in sync manually. ID and
+    // Passport are one combined option — a client only needs one of the
+    // two identity docs, so separate "Missing: ID" / "Missing: Passport"
+    // options would incorrectly flag a client who has the other one.
     const MISSING_DOC_OPTIONS = [
       { value: '',                  label: 'Missing doc: (all clients)' },
-      { value: '__any_identity__',  label: 'Missing: ID or Passport' },
-      { value: 'id',                label: 'Missing: ID' },
-      { value: 'passport',          label: 'Missing: Passport' },
+      { value: '__any_identity__',  label: 'Missing: ID/Passport' },
       { value: 'proof_of_address',  label: 'Missing: Proof of Address' },
       { value: 'tax',               label: 'Missing: RFC / Tax ID' },
       { value: 'loan_application',  label: 'Missing: Loan Application Docs' },
