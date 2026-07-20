@@ -2522,7 +2522,10 @@
       });
       (d.loans || []).forEach((l, i) => {
         const cn = (l.profiles && (l.profiles.full_name || l.profiles.email)) || '';
-        if (hit(l.loan_id_display) || hit(cn)) results.push({ type: 'Loan', label: l.loan_id_display || l.id.slice(0,8), sub: cn + ' · ' + fmt.money(l.balance), act: () => viewLoan(l) });
+        // OUS-synced rows are deposits, not loans — see Active Deposits tab
+        // and CAL_TYPES.deposit_closing for the same distinction elsewhere.
+        const isDeposit = !!l.ous_synced_at;
+        if (hit(l.loan_id_display) || hit(cn)) results.push({ type: isDeposit ? 'Deposit' : 'Loan', label: l.loan_id_display || l.id.slice(0,8), sub: cn + ' · ' + fmt.money(l.balance), act: () => viewLoan(l) });
       });
       (d.investments || []).forEach(inv => {
         const cn = (inv.profiles && (inv.profiles.full_name || inv.profiles.email)) || '';
