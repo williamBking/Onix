@@ -25,6 +25,21 @@
     if (el && value != null) el.textContent = value;
   }
 
+  // Chart.js only shows tooltips on hover by default. Clicking anywhere
+  // along the X axis finds the nearest point and shows its tooltip too —
+  // handy on touch devices, or for anyone who'd rather click than hover.
+  // Charts here get destroyed and recreated on every re-render, so this
+  // just needs to be called again each time a chart is (re)created.
+  function enableClickToShowValue(chart) {
+    if (!chart) return;
+    chart.canvas.addEventListener('click', (evt) => {
+      const points = chart.getElementsAtEventForMode(evt, 'index', { intersect: false }, true);
+      if (!points.length) return;
+      chart.tooltip.setActiveElements(points, { x: evt.offsetX, y: evt.offsetY });
+      chart.update();
+    });
+  }
+
   // Find every kpi cell whose label matches. Returns an array (a label like
   // "Total Invested" appears on both the Dashboard and the Investments view).
   function kpiCellsByLabel(labelText) {
@@ -418,7 +433,7 @@
     if (canvas && typeof Chart !== 'undefined') {
       try { const ex = Chart.getChart(canvas); if (ex) ex.destroy(); } catch (e) {}
       if (sortedAsc.length) {
-        new Chart(canvas.getContext('2d'), {
+        const cashflowChart = new Chart(canvas.getContext('2d'), {
           type: 'bar',
           data: {
             labels: sortedAsc.map(d => new Date(d.paid_at).toLocaleDateString('en-US', { month: 'short', year: '2-digit' })),
@@ -436,6 +451,7 @@
             }
           }
         });
+        enableClickToShowValue(cashflowChart);
       } else {
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -1764,7 +1780,7 @@
     const g = ctx.createLinearGradient(0, 0, 0, 200);
     g.addColorStop(0, 'rgba(192,57,43,0.15)');
     g.addColorStop(1, 'rgba(192,57,43,0)');
-    new Chart(ctx, {
+    const perfChartInstance = new Chart(ctx, {
       type: 'line',
       data: {
         labels: months.map(m => m.toLocaleString('en-US', { month: 'short' })),
@@ -1782,6 +1798,7 @@
         }
       }
     });
+    enableClickToShowValue(perfChartInstance);
   }
 
   // ---------- main ----------

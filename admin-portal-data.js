@@ -2624,6 +2624,23 @@
       : (Chart.instances && Object.values(Chart.instances).find(c => c.canvas === canvas)) || null;
   }
 
+  // Chart.js only shows tooltips on hover by default. Clicking anywhere
+  // along the X axis finds the nearest point and shows its tooltip too —
+  // handy on touch devices, or for anyone who'd rather click than hover.
+  // Guarded by a flag on the instance since chart instances can get
+  // destroyed/recreated (see `wired` tracking above) and this gets called
+  // again each time that happens.
+  function enableClickToShowValue(chart) {
+    if (!chart || chart.__onixClickWired) return;
+    chart.__onixClickWired = true;
+    chart.canvas.addEventListener('click', (evt) => {
+      const points = chart.getElementsAtEventForMode(evt, 'index', { intersect: false }, true);
+      if (!points.length) return;
+      chart.tooltip.setActiveElements(points, { x: evt.offsetX, y: evt.offsetY });
+      chart.update();
+    });
+  }
+
   // Format a raw dollar value as $1.2M or $450K for chart tooltips.
   function fmtChartDollars(v) {
     if (v >= 1e6) return '$' + (v / 1e6).toFixed(2) + 'M';
@@ -2653,6 +2670,7 @@
     const origVals = sumByMonth(loans, 'created_at', 'balance', 12)
       .map(v => parseFloat((v / 1e6).toFixed(2)));
     setChartData(origChart, labels12, origVals);
+    enableClickToShowValue(origChart);
 
     // loanTypeChart — active LOAN portfolio by type (real $ amounts).
     // Excludes OUS-synced rows, which are deposits, not loans — same
@@ -2724,6 +2742,7 @@
       return parseFloat((cumulative / 1e6).toFixed(2));
     });
     setChartData(depositChart, labels12, depositVals);
+    enableClickToShowValue(depositChart);
 
     return { orig: origChart, loanType: loanTypeChart, deposit: depositChart };
   }
