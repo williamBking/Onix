@@ -2654,11 +2654,17 @@
       .map(v => parseFloat((v / 1e6).toFixed(2)));
     setChartData(origChart, labels12, origVals);
 
-    // loanTypeChart — active loan portfolio by type: real $ amounts + tooltip shows amount + %
-    const activeLoans = loans.filter(l => l.status === 'active');
+    // loanTypeChart — active LOAN portfolio by type (real $ amounts).
+    // Excludes OUS-synced rows, which are deposits, not loans — same
+    // exclusion the "Active Loans" KPI above already applies. There is
+    // currently no loan-origination pipeline feeding real loans in (no
+    // "type" field even exists on the Add Loan form yet), so until that
+    // exists this correctly renders empty rather than showing deposit
+    // dollars mislabeled as a loan-type breakdown.
+    const activeLoans = loans.filter(l => l.status === 'active' && !l.ous_synced_at);
     const typeTotals = {};
     activeLoans.forEach(l => {
-      const t = l.venture_type || 'Other';
+      const t = l.loan_type || 'Uncategorized';
       typeTotals[t] = (typeTotals[t] || 0) + Number(l.balance || 0);
     });
     const total = Object.values(typeTotals).reduce((s, v) => s + v, 0);
@@ -2678,15 +2684,29 @@
       const pct = total > 0 ? Math.round((val / total) * 100) : 0;
       return ` ${c.label}: ${fmtChartDollars(val)} (${pct}%)`;
     };
-    // Show legend so type names are visible on the chart
+    // Custom legend below the chart (#loanTypeLegend) replaces Chart.js's
+    // own legend so we can show a clear "no loans yet" state instead of an
+    // empty legend when there's nothing to break down.
     if (!plugins.legend) plugins.legend = {};
-    plugins.legend.display = true;
-    plugins.legend.position = 'bottom';
-    if (!plugins.legend.labels) plugins.legend.labels = {};
-    plugins.legend.labels.font = { size: 11 };
-    plugins.legend.labels.padding = 12;
-    plugins.legend.labels.color = '#555';
+    plugins.legend.display = false;
     loanTypeChart.update('none');
+    const legendColors = ['#C0392B', '#a93226', '#d56b5e', '#e8a39a'];
+    const legendEl = document.getElementById('loanTypeLegend');
+    if (legendEl) {
+      if (!types.length) {
+        legendEl.innerHTML = '<div style="padding:5px 0;color:#9B9590;font-style:italic">No active loans yet</div>';
+      } else {
+        legendEl.innerHTML = types.map((t, i) => {
+          const pct = total > 0 ? Math.round((typeTotals[t] / total) * 100) : 0;
+          const color = legendColors[i % legendColors.length];
+          const last = i === types.length - 1;
+          return '<div style="display:flex;justify-content:space-between;padding:5px 0' + (last ? '' : ';border-bottom:1px solid #f4f4f4') + '">' +
+                   '<span><span style="display:inline-block;width:8px;height:8px;background:' + color + ';border-radius:50%;margin-right:8px"></span>' + esc(t) + '</span>' +
+                   '<strong>' + pct + '%</strong>' +
+                 '</div>';
+        }).join('');
+      }
+    }
 
     // depositChart — cumulative deposit portfolio growth by month ($M).
     // Same two sources as the "Total Deposits" KPI above: OUS-synced loan
