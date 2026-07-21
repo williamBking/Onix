@@ -3105,6 +3105,7 @@
   const CAL_TYPES = {
     birthday:         { label: 'Birthday',             color: '#C58FB8' },
     payment:          { label: 'Payment Due',          color: '#3B8B3B' },
+    interest_due:     { label: 'Interest Due',          color: '#2F9E8F' },
     deposit_closing:  { label: 'Deposit Closing',      color: '#C0392B' },
     loan_closing:     { label: 'Loan Closing',         color: '#7A2A20' },
     loan_renewal:     { label: 'Client Loan Renewal',  color: '#C9952B' },
@@ -3248,9 +3249,10 @@
       c.from('calendar_events').select('*'),
       c.from('profiles').select('id, full_name, date_of_birth').not('date_of_birth', 'is', null),
       c.from('loans').select('id, loan_id_display, maturity_date, balance, ous_synced_at, profiles!user_id(full_name)').eq('status', 'active').not('maturity_date', 'is', null),
-      c.from('loan_payments').select('id, due_date, amount_due, loans(loan_id_display, profiles!user_id(full_name))').eq('status', 'pending').not('due_date', 'is', null),
-      // Loans whose next_due_date is set get a "Payment due" event automatically
-      c.from('loans').select('id, loan_id_display, next_due_date, monthly_payment, profiles!user_id(full_name)').eq('status', 'active').not('next_due_date', 'is', null),
+      c.from('loan_payments').select('id, due_date, amount_due, loans(loan_id_display, ous_synced_at, profiles!user_id(full_name))').eq('status', 'pending').not('due_date', 'is', null),
+      // Loans whose next_due_date is set get a "Payment due" (or "Interest
+      // due" for OUS-synced deposits) event automatically.
+      c.from('loans').select('id, loan_id_display, next_due_date, monthly_payment, ous_synced_at, profiles!user_id(full_name)').eq('status', 'active').not('next_due_date', 'is', null),
       c.from('profiles').select('id, full_name, email').eq('role', 'client').order('full_name', { ascending: true }),
       c.from('loans').select('id, loan_id_display, user_id, profiles!user_id(full_name)').order('created_at', { ascending: false })
     ]);
@@ -3297,12 +3299,18 @@
         source: 'loan', loanId: l.id, readOnly: true
       });
     });
-    (paymentsRes.data || []).forEach(p => calEvents.push({
-      id: 'payment-' + p.id,
-      title: fmt.money(p.amount_due) + ' payment due',
-      subtitle: (p.loans && (p.loans.loan_id_display || (p.loans.profiles && p.loans.profiles.full_name))) || '',
-      type: 'payment', date: p.due_date, source: 'payment', readOnly: true
-    }));
+    (paymentsRes.data || []).forEach(p => {
+      // Same deposit-vs-loan distinction as closing events: OUS-synced
+      // deposits get paid interest by us, real loans pay us — flip the
+      // wording so it's clear which direction the money moves.
+      const isDeposit = !!(p.loans && p.loans.ous_synced_at);
+      calEvents.push({
+        id: 'payment-' + p.id,
+        title: fmt.money(p.amount_due) + (isDeposit ? ' interest due' : ' payment due'),
+        subtitle: (p.loans && (p.loans.loan_id_display || (p.loans.profiles && p.loans.profiles.full_name))) || '',
+        type: isDeposit ? 'interest_due' : 'payment', date: p.due_date, source: 'payment', readOnly: true
+      });
+    });
     // Loan-level next-payment-due dates (set by admin during Edit Loan after
     // approval). Skip if there's already a loan_payments row for that same
     // loan+date — keeps the calendar from showing duplicate payment chips.
@@ -3312,12 +3320,13 @@
     (nextDueRes.data || []).forEach(l => {
       const key = l.id + '|' + l.next_due_date;
       if (haveLoanPaymentOn.has(key)) return;
+      const isDeposit = !!l.ous_synced_at;
       const amt = l.monthly_payment != null ? fmt.money(l.monthly_payment) + ' ' : '';
       calEvents.push({
         id: 'loan-next-due-' + l.id,
-        title: amt + 'payment due · ' + (l.loan_id_display || ''),
+        title: amt + (isDeposit ? 'interest due · ' : 'payment due · ') + (l.loan_id_display || ''),
         subtitle: (l.profiles && l.profiles.full_name) || '',
-        type: 'payment',
+        type: isDeposit ? 'interest_due' : 'payment',
         date: l.next_due_date,
         source: 'loan-next-due',
         loanId: l.id,
