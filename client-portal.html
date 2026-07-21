@@ -1359,10 +1359,21 @@ function populateUpcoming() {
 let dashInit = false;
 function initDashCharts() {
   if (dashInit) return; dashInit = true;
-  const ctx = document.getElementById('perfChart').getContext('2d');
+  // The live-data overlay (client-portal-data.js) may have already drawn a
+  // real chart on these same canvases by the time this static demo
+  // initializer runs. Destroy any existing instance first so Chart.js
+  // doesn't throw "Canvas is already in use" (matches the admin dashboard's
+  // initDashCharts, which already guards each canvas this way).
+  const perfCanvas = document.getElementById('perfChart');
+  const perfExisting = Chart.getChart(perfCanvas);
+  if (perfExisting) perfExisting.destroy();
+  const ctx = perfCanvas.getContext('2d');
   const g = ctx.createLinearGradient(0,0,0,220); g.addColorStop(0,'rgba(192,57,43,.25)'); g.addColorStop(1,'rgba(192,57,43,0)');
   new Chart(ctx, { type:'line', data:{ labels:['May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar','Apr'], datasets:[{data:[372,378,381,384,389,395,402,408,415,421,428,435],borderColor:'#C0392B',backgroundColor:g,fill:true,tension:.35,borderWidth:2,pointRadius:0,pointHoverRadius:4}]}, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'$'+c.parsed.y+'K'}}},scales:{y:{grid:{color:'#f0f0f0'},ticks:{color:'#888',font:{size:10},callback:v=>'$'+v+'K'}},x:{grid:{display:false},ticks:{color:'#888',font:{size:10}}}}}});
-  const ctx2 = document.getElementById('allocChart').getContext('2d');
+  const allocCanvas = document.getElementById('allocChart');
+  const allocExisting = Chart.getChart(allocCanvas);
+  if (allocExisting) allocExisting.destroy();
+  const ctx2 = allocCanvas.getContext('2d');
   new Chart(ctx2, {type:'doughnut',data:{labels:['Bari Caffè','La Grange','Montrose','Pasadena'],datasets:[{data:[125,100,85,75],backgroundColor:['#C0392B','#a93226','#d56b5e','#e8a39a'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,cutout:'66%',plugins:{legend:{position:'right',labels:{boxWidth:10,font:{size:11},color:'#555'}}}}});
 }
 
