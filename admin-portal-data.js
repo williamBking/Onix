@@ -2688,9 +2688,16 @@
     plugins.legend.labels.color = '#555';
     loanTypeChart.update('none');
 
-    // depositChart — cumulative deposit portfolio growth by month ($M)
-    const deposits = investments.filter(i => (i.venture_type || '').toLowerCase() === 'deposit');
-    const monthly = sumByMonth(deposits, 'created_at', 'amount_invested', 12);
+    // depositChart — cumulative deposit portfolio growth by month ($M).
+    // Same two sources as the "Total Deposits" KPI above: OUS-synced loan
+    // balances (the real deposit book) plus any true deposit-type
+    // investments. This chart previously only looked at investments, so it
+    // stayed flat at zero even though Total Deposits showed $40M+.
+    const depositLoans = loans.filter(l => l.status === 'active' && l.ous_synced_at);
+    const depositInvestments = investments.filter(i => (i.venture_type || '').toLowerCase() === 'deposit');
+    const loanMonthly = sumByMonth(depositLoans, 'created_at', 'balance', 12);
+    const invMonthly = sumByMonth(depositInvestments, 'created_at', 'amount_invested', 12);
+    const monthly = loanMonthly.map((v, i) => v + (invMonthly[i] || 0));
     let cumulative = 0;
     const depositVals = monthly.map(v => {
       cumulative += v;
