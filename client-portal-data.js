@@ -1647,16 +1647,17 @@
     (payments || []).forEach(p => {
       const due = p.due_date ? new Date(p.due_date) : null;
       const paid = p.paid_at ? new Date(p.paid_at) : null;
+      const isDeposit = !!(p.loans && p.loans.ous_synced_at);
       if (paid) {
         items.push({
           ts: paid,
-          msg: 'Loan payment of <b>' + fmt.money(p.amount_due) + '</b> recorded' + ((p.loans && p.loans.loan_id_display) ? ' on ' + p.loans.loan_id_display : ''),
+          msg: (isDeposit ? 'Interest payment of ' : 'Loan payment of ') + '<b>' + fmt.money(p.amount_due) + '</b> recorded' + ((p.loans && p.loans.loan_id_display) ? ' on ' + p.loans.loan_id_display : ''),
           read: (now - paid) > 14 * 86400000
         });
       } else if (due && (due - now) < 7 * 86400000 && (due - now) > -2 * 86400000) {
         items.push({
           ts: due,
-          msg: '<b>Loan payment due</b> ' + fmt.money(p.amount_due) + ' · ' + fmt.date(due),
+          msg: (isDeposit ? '<b>Interest payment coming</b> ' : '<b>Loan payment due</b> ') + fmt.money(p.amount_due) + ' · ' + fmt.date(due),
           read: false
         });
       }
@@ -1704,12 +1705,16 @@
     const events = [];
     (payments || []).forEach(p => {
       if (p.status !== 'paid' && p.due_date) {
+        // OUS-synced deposits pay interest TO the client (money coming in),
+        // the reverse of a genuine loan payment (money owed by the client)
+        // — same distinction as the admin calendar's Interest/Payment Due.
+        const isDeposit = !!(p.loans && p.loans.ous_synced_at);
         events.push({
           date: new Date(p.due_date),
-          title: 'Loan Payment Due',
+          title: isDeposit ? 'Interest Payment' : 'Loan Payment Due',
           sub: fmt.money(p.amount_due) + (p.loans && p.loans.loan_id_display ? ' · ' + p.loans.loan_id_display : ''),
-          accent: 'var(--red)',
-          bg: 'var(--red-light)'
+          accent: isDeposit ? 'var(--success)' : 'var(--red)',
+          bg: isDeposit ? 'var(--bg)' : 'var(--red-light)'
         });
       }
     });
@@ -2309,17 +2314,44 @@
       OnixDB.getMyDistributions(userId)
     ]);
 
+    // The loan_payments table is currently empty for every client — real
+    // payment schedules live on the loan/deposit row itself (next_due_date +
+    // monthly_payment), the same source the admin calendar already falls
+    // back to. Synthesize "next payment due" rows from each OUS-synced
+    // deposit, shaped like a loan_payments row so every existing
+    // payments-consumer (Payments tab, Upcoming card) picks them up for
+    // free. Skipped if a real loan_payments row already covers that same
+    // loan+date, so nothing gets double-counted once real rows exist.
+    const haveLoanPaymentOn = new Set(
+      (payments || []).map(p => (p.loan_id || '') + '|' + p.due_date)
+    );
+    const depositNextDue = (ousDeposits || [])
+      .filter(d => d.next_due_date && !haveLoanPaymentOn.has(d.id + '|' + d.next_due_date))
+      .map(d => ({
+        id: 'ousdue-' + d.id,
+        loan_id: d.id,
+        due_date: d.next_due_date,
+        amount_due: d.monthly_payment,
+        principal: null,
+        interest: null,
+        balance_after: null,
+        paid_at: null,
+        status: 'pending',
+        loans: { id: d.id, loan_id_display: d.loan_id_display, user_id: d.user_id, ous_synced_at: d.ous_synced_at }
+      }));
+    const allPayments = (payments || []).concat(depositNextDue);
+
     // Active loans only — paid-off / closed loans can be added back later
     // via a separate filter on the loan picker if the team wants that.
     const activeLoans = (loans || []).filter(l => l.status !== 'paid' && l.status !== 'closed');
     if (activeLoans.length) {
       // renderLoanView also calls renderPayments(payments, selectedLoan)
       // so the Payments tab is filtered to the same loan as My Loan.
-      renderLoanView(activeLoans, payments);
+      renderLoanView(activeLoans, allPayments);
     } else {
       renderNoLoan();
       // No active loans — render the Payments tab in its global empty state.
-      renderPayments(payments, null);
+      renderPayments(allPayments, null);
     }
     // OUS-synced loan rows are actually deposits, not loans — reshape them
     // to look like investment records (display-only; nothing in the
@@ -2329,7 +2361,7 @@
     renderRaises(raises, userId);
     paintClientSidebarBadges({ raises });
     renderDistributions(distributions);
-    renderUpcomingEvents(payments, distributions);
+    renderUpcomingEvents(allPayments, distributions);
     renderPerformanceChart(allInvestments, distributions);
 
     // Bell-icon notifications panel (also fetch the user's applications)
@@ -2338,7 +2370,7 @@
       .select('id, status, submitted_at, amount_requested')
       .eq('user_id', userId)
       .order('submitted_at', { ascending: false });
-    renderNotifications(payments, distributions, applications || []);
+    renderNotifications(allPayments, distributions, applications || []);
 
     // Client documents (uploaded with applications or by admin)
     const { data: clientDocs } = await OnixDB.client
