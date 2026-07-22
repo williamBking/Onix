@@ -1651,13 +1651,13 @@
       if (paid) {
         items.push({
           ts: paid,
-          msg: (isDeposit ? 'Interest payment of ' : 'Loan payment of ') + '<b>' + fmt.money(p.amount_due) + '</b> recorded' + ((p.loans && p.loans.loan_id_display) ? ' on ' + p.loans.loan_id_display : ''),
+          msg: (isDeposit ? '<b>' + fmt.money(p.amount_due) + '</b> in interest earned' : 'Loan payment of <b>' + fmt.money(p.amount_due) + '</b> recorded') + ((p.loans && p.loans.loan_id_display) ? ' on ' + p.loans.loan_id_display : ''),
           read: (now - paid) > 14 * 86400000
         });
       } else if (due && (due - now) < 7 * 86400000 && (due - now) > -2 * 86400000) {
         items.push({
           ts: due,
-          msg: (isDeposit ? '<b>Interest payment coming</b> ' : '<b>Loan payment due</b> ') + fmt.money(p.amount_due) + ' · ' + fmt.date(due),
+          msg: (isDeposit ? '<b>Interest Earned</b> ' : '<b>Loan payment due</b> ') + fmt.money(p.amount_due) + ' · ' + fmt.date(due),
           read: false
         });
       }
@@ -1711,7 +1711,7 @@
         const isDeposit = !!(p.loans && p.loans.ous_synced_at);
         events.push({
           date: new Date(p.due_date),
-          title: isDeposit ? 'Interest Payment' : 'Loan Payment Due',
+          title: isDeposit ? 'Interest Earned' : 'Loan Payment Due',
           sub: fmt.money(p.amount_due) + (p.loans && p.loans.loan_id_display ? ' · ' + p.loans.loan_id_display : ''),
           accent: isDeposit ? 'var(--success)' : 'var(--red)',
           bg: isDeposit ? 'var(--bg)' : 'var(--red-light)'
