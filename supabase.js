@@ -128,7 +128,7 @@ async function getMyPayments(userId) {
   // show "Loan ONX-XXXX" alongside each payment.
   const { data, error } = await _supabase
     .from('loan_payments')
-    .select('*, loans!inner(id, loan_id_display, user_id)')
+    .select('*, loans!inner(id, loan_id_display, user_id, ous_synced_at)')
     .eq('loans.user_id', userId)
     .order('due_date', { ascending: false })
   if (error) console.error('Payments fetch error:', error)
