@@ -3170,6 +3170,14 @@
     const s = document.createElement('style');
     s.id = 'cal-styles';
     s.textContent = `
+      /* .main is a 1fr track in the outer .app grid (admin-portal.html).
+         Grid tracks default to min-width:auto, so a long unbreakable event
+         title below could force this track — and the whole page — wider
+         than the viewport. This override can't live in admin-portal.html
+         itself (that rule is inside the JSON-encoded bundler blob), so we
+         add it here via the same JS-injected-stylesheet pattern already
+         used elsewhere in this file (e.g. hiding the retired Reports tab). */
+      .main{min-width:0}
       #view-calendar{padding:32px 40px;font-family:'DM Sans',sans-serif;color:#1A1A1A}
       .cal-head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:18px;flex-wrap:wrap}
       .cal-head h1{font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:2rem;margin:0}
@@ -3183,9 +3191,16 @@
       .cal-add{background:#C0392B;color:#fff;border:1px solid #C0392B;padding:10px 16px;cursor:pointer;font:600 .74rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border-radius:2px}
       .cal-add:hover{background:#a93226}
       .cal-add:disabled{opacity:.6;cursor:not-allowed}
+      /* Safety net: if a future long/unbreakable event title still forces
+         the grid wider than its container despite min-width:0 below, this
+         wrapper scrolls locally instead of the whole page. */
+      .cal-month-grid-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
       .cal-month-grid{display:grid;grid-template-columns:repeat(7,1fr);background:#E8E8E8;gap:1px;border:1px solid #E8E8E8;border-top:3px solid #C0392B}
       .cal-dow{background:#F8F7F5;padding:10px 12px;font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:#888;font-weight:700}
-      .cal-cell{background:#fff;min-height:110px;padding:8px 8px 6px;display:flex;flex-direction:column;gap:4px;cursor:pointer;transition:background .12s;position:relative}
+      /* min-width:0 lets a grid cell shrink below its content's intrinsic
+         width so .cal-event-title's ellipsis-truncation actually takes
+         effect, instead of forcing this column (and the page) wider. */
+      .cal-cell{background:#fff;min-height:110px;min-width:0;padding:8px 8px 6px;display:flex;flex-direction:column;gap:4px;cursor:pointer;transition:background .12s;position:relative}
       .cal-cell:hover{background:#FAFAFA}
       .cal-cell.other-month{background:#F8F7F5}
       .cal-cell.other-month .cal-day-num{color:#bbb}
@@ -3272,7 +3287,7 @@
             '<button class="cal-add" id="cal-add-btn" type="button">+ Add Event</button>' +
           '</div>' +
         '</div>' +
-        '<div class="cal-month-grid" id="cal-month-grid"></div>' +
+        '<div class="cal-month-grid-wrap"><div class="cal-month-grid" id="cal-month-grid"></div></div>' +
         '<div class="cal-legend" id="cal-legend"></div>';
       main.appendChild(v);
       v.querySelector('#cal-prev').addEventListener('click', () => {
