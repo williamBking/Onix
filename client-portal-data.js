@@ -1564,7 +1564,12 @@
       card.querySelectorAll('div[style*="background"]').forEach(box => {
         const eyebrow = box.querySelector('[data-en]');
         const label = eyebrow ? (eyebrow.textContent || '').trim().toLowerCase() : '';
-        const val = box.querySelector('div[style*="font-weight:700"]');
+        // The eyebrow label div and the value div both happen to use
+        // font-weight:700, so a substring selector on that matches both —
+        // grabbing the label first left the real value (a sibling right
+        // after it) permanently stuck on its static demo number. The
+        // value is always the very next element, so address it directly.
+        const val = eyebrow ? eyebrow.nextElementSibling : null;
         if (!val) return;
         if (label === 'principal') val.textContent = fmt.money(totalPrincipal);
         else if (label === 'interest') val.textContent = fmt.money(totalInterest);
