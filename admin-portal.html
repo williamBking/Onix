@@ -3977,8 +3977,6 @@
       if (!noteText) { window.__onix_showToast('Please write a note before posting.', '#C0392B'); return; }
       e.preventDefault(); e.stopPropagation();
 
-      // Find the notes thread
-      var notesContainer = card && card.querySelector('[style*="border-bottom:1px solid #f4f4f4"]');
       var notesParent = ta ? ta.parentElement : null;
       if (notesParent) {
         var today = new Date();
