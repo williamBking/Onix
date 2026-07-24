@@ -2120,25 +2120,25 @@
     }
 
     // --- Detect & take over the Documents view --------------------------
+    // Detect by the view's stable internal id, not its heading text. The id
+    // has survived three rename/rework passes on this tab's copy untouched;
+    // the heading text has not — a previous rename to "Financial Reports"
+    // without updating this detection's old text-match regex broke it
+    // silently, falling back to the dead placeholder markup with no error.
     function isDocumentsView() {
-      var hs = document.querySelectorAll('.main h1, .main h2, main h1, main h2, .page-hd h1, .page-hd h2');
-      for (var i = 0; i < hs.length; i++) {
-        var t = (hs[i].textContent || '').trim();
-        if (/^Financial Reports$/i.test(t)) return hs[i];
-      }
-      return null;
+      return document.getElementById('view-documents');
     }
 
     function takeover() {
       injectStyles();
-      var heading = isDocumentsView();
-      if (!heading) {
+      var view = isDocumentsView();
+      if (!view) {
         // Not on Documents — clean up if we previously injected
         var existing = document.getElementById('__onix_docs_root');
         if (existing) {
-          var view = existing.closest('.view') || existing.parentElement;
-          if (view) {
-            [].slice.call(view.children).forEach(function(c){
+          var v = existing.closest('.view') || existing.parentElement;
+          if (v) {
+            [].slice.call(v.children).forEach(function(c){
               if (c.id !== '__onix_docs_root' && c.dataset.onixHidden === '1') {
                 c.style.display = '';
                 delete c.dataset.onixHidden;
@@ -2149,29 +2149,30 @@
         }
         return;
       }
-      // We're on Documents.
-      var view = heading.closest('.view') || heading.closest('section') || heading.parentElement.parentElement;
-      if (!view) return;
       if (view.querySelector('#__onix_docs_root')) return; // already injected
 
+      // Page header (contains the h1 + the bundle's own "+ Upload" button).
+      var pageHd = view.querySelector('.page-hd');
+      if (!pageHd) {
+        console.warn('[onix-docs] Financial Reports tab structure not found — real data view may not have loaded');
+        return;
+      }
+
       // Wire the bundle's "+ Upload" button (if present) to our modal.
-      var pageHd = heading.closest('.page-hd') || heading.parentElement;
-      if (pageHd) {
-        var uploadBtn = null;
-        [].slice.call(pageHd.querySelectorAll('button')).forEach(function(b){
-          var t = (b.textContent || '').trim();
-          if (/^\+\s*(Upload|Subir)/i.test(t) && !b.dataset.onixWired) {
-            uploadBtn = b;
-          }
-        });
-        if (uploadBtn) {
-          uploadBtn.dataset.onixWired = '1';
-          uploadBtn.addEventListener('click', function(e){
-            e.preventDefault();
-            e.stopPropagation();
-            openUploadModal({ scope: nav.cat });
-          });
+      var uploadBtn = null;
+      [].slice.call(pageHd.querySelectorAll('button')).forEach(function(b){
+        var t = (b.textContent || '').trim();
+        if (/^\+\s*(Upload|Subir)/i.test(t) && !b.dataset.onixWired) {
+          uploadBtn = b;
         }
+      });
+      if (uploadBtn) {
+        uploadBtn.dataset.onixWired = '1';
+        uploadBtn.addEventListener('click', function(e){
+          e.preventDefault();
+          e.stopPropagation();
+          openUploadModal({ scope: nav.cat });
+        });
       }
 
       // Hide all children except the page header (the one containing the h1)
