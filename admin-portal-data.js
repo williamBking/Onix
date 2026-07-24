@@ -1167,8 +1167,13 @@
     Object.entries(updates).forEach(([label, value]) => {
       updated[label] = setKpiSurgically(label, value);
     });
-    // Log every run (no once-only flag) so cache busting is obvious in DevTools
-    console.log('[onix-admin] dashboard updates:', updated);
+    // Log every run (no once-only flag) so cache busting is obvious in DevTools —
+    // but only when explicitly opted in, since this repaints every ~600ms and
+    // would otherwise spam the console for the entire session by default.
+    // Enable with: localStorage.setItem('onix-debug', '1')
+    if (localStorage.getItem('onix-debug') === '1') {
+      console.log('[onix-admin] dashboard updates:', updated);
+    }
 
     // Replace activity-item rows with live events (preserve container + card chrome).
     const firstActivity = v.querySelector('.activity-item');
