@@ -1291,19 +1291,32 @@
              '</div>';
     }
 
+    function fmtNoteDate(iso){
+      try { return new Date(iso).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'}); }
+      catch(_) { return ''; }
+    }
+    function notesMetaText(noteRow){
+      if (!noteRow || !noteRow.updated_at) return 'No notes yet.';
+      var who = (noteRow.updated_by_profile && (noteRow.updated_by_profile.full_name || noteRow.updated_by_profile.email)) || 'an admin';
+      return 'Last updated by ' + esc(who) + ' on ' + fmtNoteDate(noteRow.updated_at);
+    }
+
     async function openClientInLPModal(profileId){
       var overlay = document.getElementById('__onix_investor_overlay');
       if (!overlay) return; // built lazily by the Investors block on load
       var c = OnixDB.client;
-      var [pRes, lRes, iRes] = await Promise.all([
+      var [pRes, lRes, iRes, nRes] = await Promise.all([
         c.from('profiles').select('*').eq('id', profileId).single(),
         c.from('loans').select('loan_id_display, balance, principal_amount, interest_rate, maturity_date, status').eq('user_id', profileId),
-        c.from('investments').select('venture_name, amount_invested, status').eq('user_id', profileId)
+        c.from('investments').select('venture_name, amount_invested, status').eq('user_id', profileId),
+        c.from('client_admin_notes').select('notes, updated_at, updated_by, updated_by_profile:profiles!updated_by(full_name, email)').eq('profile_id', profileId).maybeSingle()
       ]);
       if (pRes.error) { console.error('[onix-clients] profile fetch failed:', pRes.error); return; }
+      if (nRes.error) console.error('[onix-clients] admin notes fetch failed:', nRes.error);
       var p = pRes.data || {};
       var loans = lRes.data || [];
       var invs  = iRes.data || [];
+      var noteRow = nRes.data || null;
       var committed = invs.reduce(function(s, x){ return s + Number(x.amount_invested || 0); }, 0);
       var activeDeals = invs.filter(function(x){ return x.status !== 'exited'; }).length;
       // Borrower-side aggregates. Loan Balance = outstanding principal across
@@ -1349,7 +1362,53 @@
                 '</div>';
               }).join('') +
             '</div>'
-          : '');
+          : '') +
+        '<div style="font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:#9B9590;font-weight:700;margin-bottom:10px;margin-top:18px">Admin Notes</div>' +
+        '<textarea id="__onix_iv_notes" rows="4" placeholder="Internal notes about this client — not visible to them" style="width:100%;padding:10px 12px;border:1px solid #E8E8E8;border-radius:2px;font-size:.85rem;font-family:inherit;outline:none;resize:vertical;box-sizing:border-box">' + esc(noteRow ? noteRow.notes || '' : '') + '</textarea>' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px">' +
+          '<span id="__onix_iv_notes_meta" style="font-size:.7rem;color:#9B9590">' + notesMetaText(noteRow) + '</span>' +
+          '<button class="onix-btn onix-btn-primary" id="__onix_iv_notes_save" type="button">Save Notes</button>' +
+        '</div>' +
+        '<div id="__onix_iv_notes_status" style="font-size:.72rem;margin-top:6px"></div>';
+
+      // Wire Save Notes — upsert against client_admin_notes (admin-only RLS,
+      // see profiles.admin_notes gap this replaces). profile_id is the
+      // primary key, so this is always exactly one row per client.
+      var notesSaveBtn = document.getElementById('__onix_iv_notes_save');
+      if (notesSaveBtn) {
+        notesSaveBtn.addEventListener('click', async function(){
+          var ta     = document.getElementById('__onix_iv_notes');
+          var meta   = document.getElementById('__onix_iv_notes_meta');
+          var status = document.getElementById('__onix_iv_notes_status');
+          var me = null;
+          try { me = JSON.parse(localStorage.getItem('onix-user') || 'null'); } catch(_) {}
+
+          notesSaveBtn.disabled = true;
+          var orig = notesSaveBtn.textContent;
+          notesSaveBtn.textContent = 'Saving…';
+          status.style.color = '';
+          status.textContent = '';
+
+          var nowIso = new Date().toISOString();
+          var upd = await c.from('client_admin_notes').upsert({
+            profile_id: profileId,
+            notes: ta.value,
+            updated_at: nowIso,
+            updated_by: (me && me.id) || null
+          }, { onConflict: 'profile_id' });
+
+          notesSaveBtn.disabled = false;
+          notesSaveBtn.textContent = orig;
+          if (upd.error) {
+            status.style.color = '#C0392B';
+            status.textContent = 'Failed to save: ' + upd.error.message;
+            return;
+          }
+          status.style.color = '#3B8B3B';
+          status.textContent = 'Saved.';
+          if (meta) meta.textContent = 'Last updated by ' + ((me && me.name) || 'you') + ' on ' + fmtNoteDate(nowIso);
+        });
+      }
 
       // Wire the Contact button to use the client's email if a contact overlay exists.
       var contactBtn = document.getElementById('__onix_iv_contact');
