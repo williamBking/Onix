@@ -1652,7 +1652,7 @@
     (payments || []).forEach(p => {
       const due = p.due_date ? new Date(p.due_date) : null;
       const paid = p.paid_at ? new Date(p.paid_at) : null;
-      const isDeposit = !!(p.loans && p.loans.ous_synced_at);
+      const isDeposit = !!(p.loans && p.loans.data_source === 'ous_pasiva');
       if (paid) {
         items.push({
           ts: paid,
@@ -1710,10 +1710,10 @@
     const events = [];
     (payments || []).forEach(p => {
       if (p.status !== 'paid' && p.due_date) {
-        // OUS-synced deposits pay interest TO the client (money coming in),
+        // OUS Pasiva deposits pay interest TO the client (money coming in),
         // the reverse of a genuine loan payment (money owed by the client)
         // — same distinction as the admin calendar's Interest/Payment Due.
-        const isDeposit = !!(p.loans && p.loans.ous_synced_at);
+        const isDeposit = !!(p.loans && p.loans.data_source === 'ous_pasiva');
         events.push({
           date: new Date(p.due_date),
           title: isDeposit ? 'Interest Earned' : 'Loan Payment Due',
@@ -2271,9 +2271,11 @@
     });
   }
 
-  // Reshapes an OUS-synced loan row into the shape renderInvestments /
-  // wireInvestmentDetailModal / renderPerformanceChart already expect.
-  // Display-only — the underlying loans row is untouched.
+  // Reshapes an OUS Pasiva deposit row (data_source === 'ous_pasiva') into
+  // the shape renderInvestments / wireInvestmentDetailModal /
+  // renderPerformanceChart already expect. Display-only — the underlying
+  // loans row is untouched. Only ever called on getMyOusDeposits() results
+  // — never on real (manual or OUS Activa) loan rows.
   //   balance         -> amount_invested
   //   interest_rate   -> expected_return (annual %, shown as "Expected Return")
   //   monthly_payment -> _monthly_payment (shown as its own "Monthly Payment"
@@ -2322,7 +2324,7 @@
     // The loan_payments table is currently empty for every client — real
     // payment schedules live on the loan/deposit row itself (next_due_date +
     // monthly_payment), the same source the admin calendar already falls
-    // back to. Synthesize "next payment due" rows from each OUS-synced
+    // back to. Synthesize "next payment due" rows from each OUS Pasiva
     // deposit, shaped like a loan_payments row so every existing
     // payments-consumer (Payments tab, Upcoming card) picks them up for
     // free. Skipped if a real loan_payments row already covers that same
@@ -2342,7 +2344,7 @@
         balance_after: null,
         paid_at: null,
         status: 'pending',
-        loans: { id: d.id, loan_id_display: d.loan_id_display, user_id: d.user_id, ous_synced_at: d.ous_synced_at }
+        loans: { id: d.id, loan_id_display: d.loan_id_display, user_id: d.user_id, data_source: d.data_source }
       }));
     const allPayments = (payments || []).concat(depositNextDue);
 
@@ -2358,7 +2360,7 @@
       // No active loans — render the Payments tab in its global empty state.
       renderPayments(allPayments, null);
     }
-    // OUS-synced loan rows are actually deposits, not loans — reshape them
+    // OUS Pasiva loan rows are actually deposits, not loans — reshape them
     // to look like investment records (display-only; nothing in the
     // database is moved) and fold them into My Investments.
     const allInvestments = (investments || []).concat((ousDeposits || []).map(ousDepositToInvestmentShape));

@@ -483,7 +483,8 @@
         principal_amount: app.amount_requested,
         balance:          app.amount_requested,
         status:           'active',
-        origination_date: today
+        origination_date: today,
+        data_source:      'manual'
       };
 
       const { error: insertErr } = await OnixDB.client.from('loans').insert(insertRow);
@@ -1104,16 +1105,16 @@
     if (!v) { console.warn('[onix-admin] dashboard view not found in DOM'); return false; }
     // Surgical updates only — preserve the original demo layout, just swap numbers + activity.
     const { clients, loans, investments, raises, applications, payments, distributions } = data;
-    // "Active Deposits" = OUS-synced rows (Onix's deposit book).
-    // "Active Loans" = manually-created loan rows.
-    const activeLoans       = loans.filter(l => l.status === 'active' && !l.ous_synced_at);
-    const activeDeposits    = loans.filter(l => l.status === 'active' &&  l.ous_synced_at);
+    // "Active Deposits" = OUS Pasiva rows (Onix's deposit book).
+    // "Active Loans" = real loan rows (manual or OUS Activa).
+    const activeLoans       = loans.filter(l => l.status === 'active' && l.data_source !== 'ous_pasiva');
+    const activeDeposits    = loans.filter(l => l.status === 'active' && l.data_source === 'ous_pasiva');
     const activeInvestments = investments.filter(i => i.status === 'active');
     const openRaises        = raises.filter(r => r.status === 'open');
     const pendingApps       = applications.filter(a => !a.status || a.status === 'pending');
-    // Loan Portfolio = sum of real-loan balances (empty until a real loan
-    // book source is wired). Total Deposits = sum of OUS-synced credit
-    // balances (Onix's deposit book) plus any true deposit-type investments.
+    // Loan Portfolio = sum of real-loan balances (manual or OUS Activa).
+    // Total Deposits = sum of OUS Pasiva credit balances (Onix's deposit
+    // book) plus any true deposit-type investments.
     const loanPortfolio = activeLoans.reduce((s, l) => s + Number(l.balance || 0), 0);
     const depositInvestments = activeInvestments
       .filter(i => i.venture_type === 'deposit')
@@ -2172,9 +2173,9 @@
     const v = findView(STATIC_VIEWS.loans); if (!v) return false;
     if (alreadyPainted(v)) return true;
     // Rows synced in from OUS Pasiva are deposits, not real loans made by
-    // Onix — those live under the Active Deposits tab. Active Loans only
-    // shows manually-created loan rows (where ous_synced_at is null).
-    const loans = (loansAll || []).filter(l => !l.ous_synced_at);
+    // Onix — those live under the Active Deposits tab. Active Loans shows
+    // everything else (manually-created rows and OUS Activa-synced loans).
+    const loans = (loansAll || []).filter(l => l.data_source !== 'ous_pasiva');
     const rows = loans.length ? loans.map((l, i) => `
       <tr>
         <td>${esc(l.loan_id_display || l.id.slice(0,8))}</td>
@@ -2231,9 +2232,9 @@
   function paintActiveDepositsView(loans, investments) {
     const v = findView(STATIC_VIEWS.activeDeposits); if (!v) return false;
     if (alreadyPainted(v)) return true;
-    // Only pull rows that were synced in from OUS Pasiva — those are the
-    // real deposits. Manually-created loan rows stay under Active Loans.
-    const loanRows = (loans || []).filter(l => !!l.ous_synced_at).map(l => ({
+    // Only pull rows sourced from OUS Pasiva — those are the real deposits.
+    // Manual and OUS Activa loan rows stay under Active Loans.
+    const loanRows = (loans || []).filter(l => l.data_source === 'ous_pasiva').map(l => ({
       _kind: 'loan',
       _src: l,
       deposit_id: l.loan_id_display || l.id.slice(0,8),
@@ -2527,9 +2528,9 @@
       });
       (d.loans || []).forEach((l, i) => {
         const cn = (l.profiles && (l.profiles.full_name || l.profiles.email)) || '';
-        // OUS-synced rows are deposits, not loans — see Active Deposits tab
+        // OUS Pasiva rows are deposits, not loans — see Active Deposits tab
         // and CAL_TYPES.deposit_closing for the same distinction elsewhere.
-        const isDeposit = !!l.ous_synced_at;
+        const isDeposit = l.data_source === 'ous_pasiva';
         if (hit(l.loan_id_display) || hit(cn)) results.push({ type: isDeposit ? 'Deposit' : 'Loan', label: l.loan_id_display || l.id.slice(0,8), sub: cn + ' · ' + fmt.money(l.balance), act: () => viewLoan(l) });
       });
       (d.investments || []).forEach(inv => {
@@ -2671,20 +2672,19 @@
       wired.loanType === loanTypeChart && wired.deposit === depositChart;
     if (unchanged) return wired;
 
-    // origChart — loan originations by month (balance at origination, $M)
-    const origVals = sumByMonth(loans, 'created_at', 'balance', 12)
+    // origChart — loan originations by month (balance at origination, $M).
+    // Excludes OUS Pasiva rows, which are deposits, not loans — same
+    // exclusion as the "Active Loans" KPI above.
+    const origLoans = loans.filter(l => l.data_source !== 'ous_pasiva');
+    const origVals = sumByMonth(origLoans, 'created_at', 'balance', 12)
       .map(v => parseFloat((v / 1e6).toFixed(2)));
     setChartData(origChart, labels12, origVals);
     enableClickToShowValue(origChart);
 
     // loanTypeChart — active LOAN portfolio by type (real $ amounts).
-    // Excludes OUS-synced rows, which are deposits, not loans — same
-    // exclusion the "Active Loans" KPI above already applies. There is
-    // currently no loan-origination pipeline feeding real loans in (no
-    // "type" field even exists on the Add Loan form yet), so until that
-    // exists this correctly renders empty rather than showing deposit
-    // dollars mislabeled as a loan-type breakdown.
-    const activeLoans = loans.filter(l => l.status === 'active' && !l.ous_synced_at);
+    // Excludes OUS Pasiva rows, which are deposits, not loans — same
+    // exclusion the "Active Loans" KPI above already applies.
+    const activeLoans = loans.filter(l => l.status === 'active' && l.data_source !== 'ous_pasiva');
     const typeTotals = {};
     activeLoans.forEach(l => {
       const t = l.loan_type || 'Uncategorized';
@@ -2732,11 +2732,11 @@
     }
 
     // depositChart — cumulative deposit portfolio growth by month ($M).
-    // Same two sources as the "Total Deposits" KPI above: OUS-synced loan
+    // Same two sources as the "Total Deposits" KPI above: OUS Pasiva loan
     // balances (the real deposit book) plus any true deposit-type
     // investments. This chart previously only looked at investments, so it
     // stayed flat at zero even though Total Deposits showed $40M+.
-    const depositLoans = loans.filter(l => l.status === 'active' && l.ous_synced_at);
+    const depositLoans = loans.filter(l => l.status === 'active' && l.data_source === 'ous_pasiva');
     const depositInvestments = investments.filter(i => (i.venture_type || '').toLowerCase() === 'deposit');
     const loanMonthly = sumByMonth(depositLoans, 'created_at', 'balance', 12);
     const invMonthly = sumByMonth(depositInvestments, 'created_at', 'amount_invested', 12);
@@ -3314,11 +3314,11 @@
     const [eventsRes, bdayRes, loansRes, paymentsRes, nextDueRes, clientsRes, allLoansRes] = await Promise.all([
       c.from('calendar_events').select('*'),
       c.from('profiles').select('id, full_name, date_of_birth').not('date_of_birth', 'is', null),
-      c.from('loans').select('id, loan_id_display, maturity_date, balance, ous_synced_at, profiles!user_id(full_name)').eq('status', 'active').not('maturity_date', 'is', null),
-      c.from('loan_payments').select('id, due_date, amount_due, loans(loan_id_display, ous_synced_at, profiles!user_id(full_name))').eq('status', 'pending').not('due_date', 'is', null),
+      c.from('loans').select('id, loan_id_display, maturity_date, balance, data_source, profiles!user_id(full_name)').eq('status', 'active').not('maturity_date', 'is', null),
+      c.from('loan_payments').select('id, due_date, amount_due, loans(loan_id_display, data_source, profiles!user_id(full_name))').eq('status', 'pending').not('due_date', 'is', null),
       // Loans whose next_due_date is set get a "Payment due" (or "Interest
-      // due" for OUS-synced deposits) event automatically.
-      c.from('loans').select('id, loan_id_display, next_due_date, monthly_payment, ous_synced_at, profiles!user_id(full_name)').eq('status', 'active').not('next_due_date', 'is', null),
+      // due" for OUS Pasiva deposits) event automatically.
+      c.from('loans').select('id, loan_id_display, next_due_date, monthly_payment, data_source, profiles!user_id(full_name)').eq('status', 'active').not('next_due_date', 'is', null),
       c.from('profiles').select('id, full_name, email').eq('role', 'client').order('full_name', { ascending: true }),
       c.from('loans').select('id, loan_id_display, user_id, profiles!user_id(full_name)').order('created_at', { ascending: false })
     ]);
@@ -3346,12 +3346,12 @@
         source: 'profile', profileId: p.id, readOnly: true
       });
     });
-    // OUS-synced rows are deposits, not loans (see Active Deposits tab)
+    // OUS Pasiva rows are deposits, not loans (see Active Deposits tab)
     // — flag them separately on the calendar so they don't look like
-    // loan closings. Real loan rows (ous_synced_at IS NULL) keep the
+    // loan closings. Real loan rows (data_source != 'ous_pasiva') keep the
     // Loan Closing type. See CAL_TYPES.deposit_closing / loan_closing.
     (loansRes.data || []).forEach(l => {
-      const isDeposit = !!l.ous_synced_at;
+      const isDeposit = l.data_source === 'ous_pasiva';
       // Deposit closings are when the client gets paid out (principal +
       // accrued interest), so show that amount on the calendar. Real loan
       // closings are the reverse (client owes us), so no amount there.
@@ -3366,10 +3366,10 @@
       });
     });
     (paymentsRes.data || []).forEach(p => {
-      // Same deposit-vs-loan distinction as closing events: OUS-synced
+      // Same deposit-vs-loan distinction as closing events: OUS Pasiva
       // deposits get paid interest by us, real loans pay us — flip the
       // wording so it's clear which direction the money moves.
-      const isDeposit = !!(p.loans && p.loans.ous_synced_at);
+      const isDeposit = !!(p.loans && p.loans.data_source === 'ous_pasiva');
       calEvents.push({
         id: 'payment-' + p.id,
         title: fmt.money(p.amount_due) + (isDeposit ? ' interest due' : ' payment due'),
@@ -3386,7 +3386,7 @@
     (nextDueRes.data || []).forEach(l => {
       const key = l.id + '|' + l.next_due_date;
       if (haveLoanPaymentOn.has(key)) return;
-      const isDeposit = !!l.ous_synced_at;
+      const isDeposit = l.data_source === 'ous_pasiva';
       const amt = l.monthly_payment != null ? fmt.money(l.monthly_payment) + ' ' : '';
       calEvents.push({
         id: 'loan-next-due-' + l.id,
