@@ -2769,11 +2769,16 @@
       .map(v => parseFloat((v / 1e3).toFixed(1)));
     setChartData(revChart, labels6, revVals);
 
-    // typeChart — active loan portfolio by type ($M, horizontal bar)
-    const activeLoans = loans.filter(l => l.status === 'active');
+    // typeChart — active loan portfolio by type ($M, horizontal bar).
+    // Grouped by loan_type (the real column on this table — venture_type
+    // belongs to investments and never matched here, so this previously
+    // always rendered a single dead "Other" bucket). Excludes OUS Pasiva
+    // rows, which are deposits, not loans — same exclusion as loanTypeChart
+    // on the Dashboard.
+    const activeLoans = loans.filter(l => l.status === 'active' && l.data_source !== 'ous_pasiva');
     const typeTotals = {};
     activeLoans.forEach(l => {
-      const t = l.venture_type || 'Other';
+      const t = l.loan_type || 'Uncategorized';
       typeTotals[t] = (typeTotals[t] || 0) + Number(l.balance || 0);
     });
     const types = Object.keys(typeTotals).sort((a, b) => typeTotals[b] - typeTotals[a]);
