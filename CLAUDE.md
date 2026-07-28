@@ -215,3 +215,144 @@ first, get credentials/docs from the user's boss, plan Supabase schema
 (with RLS from day one, not bolted on after) before writing sync code,
 likely extend or mirror the existing Railway Express.js proxy pattern
 used for OUS Pasiva.
+
+## Session Handoff Notes
+
+Narrower and more time-sensitive than the sections above — this is what
+happened in the session that just ended, not yet folded into the durable
+summary above. Once acted on, fold anything still relevant up into
+"Project Status & History" and delete it from here; don't let this
+section grow indefinitely.
+
+### Shipped this session, not otherwise documented above
+
+- **Chart.js recursion, root-caused and fixed (merged, PRs #135/#136).**
+  Worth knowing for any future chart work: `admin-portal.html` vendors
+  Chart.js **v4.4.0** itself — gzip+base64 inside the `__bundler/manifest`
+  tag, reconstituted to a `blob:` URL at load, not fetched from a CDN at
+  request time. The original "`Recursion detected: _scriptable->_scriptable`"
+  error came from Chart.js's scriptable-options resolver, which has a
+  deliberate, guarded recursion check (throws a clean error on purpose).
+  After fixing that (canvas-reuse: destroy before recreate), a *different*
+  error surfaced — `RangeError: Maximum call stack size exceeded at
+  Object.set` — from a separate, unguarded `Proxy` `set` trap in Chart.js's
+  option-scope-merger, hit specifically because `admin-portal-data.js`'s
+  `updateDashboardCharts()`/`updateReportsCharts()` were **wholesale-
+  replacing** `chart.data.labels` / `chart.data.datasets[0].data` /
+  `chart.options.plugins` on every repaint tick instead of mutating them
+  in place. Fixed by mutating instead (`array.length = 0; array.push(...)`
+  for data, direct property assignment for options) — Chart.js's own
+  documented pattern. **General rule going forward: never replace
+  `chart.data`/`chart.options` sub-objects wholesale on an existing Chart
+  instance; always mutate in place, then call `chart.update()`.**
+- **Combined the ID and Passport document filters** into one "ID/Passport"
+  option across all three places that grouped by category (admin's Client
+  Documents modal, admin's "Missing document" dropdown, client portal's "My
+  Documents" tab) — display-layer only, `client_documents.category` still
+  stores `'id'`/`'passport'` as distinct real values; upload pickers
+  correctly still offer them separately.
+- **Fixed the admin calendar forcing horizontal scroll** on the whole page
+  (missing `min-width:0` on `.cal-cell`/`.main`, a CSS Grid gotcha — grid
+  items default to `min-width:auto` and can force a track wider than its
+  container).
+- **Four small fixes from a portal audit**, each its own PR: gated
+  `paintDashboardView`'s debug `console.log` behind
+  `localStorage.getItem('onix-debug')` instead of it running unconditionally
+  every ~600ms forever; hardened the Financial Reports tab's detection
+  (`isDocumentsView()`) to key off the stable `id="view-documents"` instead
+  of matching the heading text, which had already broken silently once
+  before when the heading was renamed — now logs a `console.warn` if the
+  expected structure isn't found instead of failing silently; removed a
+  dead, never-read `notesContainer` selector in the admin "Post Note"
+  handler; removed the entire dead Edit Raise modal
+  (`openRaiseEditor`/`saveRaise`/`closeRaiseEditor`/`closeRaise` + its
+  modal HTML) — confirmed unreachable, `saveRaise()` had no real Supabase
+  call at all, just a fake success alert.
+- **Built the Admin Notes feature** (see "What's live and working" above
+  for the `client_admin_notes` table) — UI lives in
+  `openClientInLPModal()` in `admin-portal.html`, a new section right
+  after Active Investments, with an explicit "Save Notes" button (no
+  auto-save) and a "Last updated by [name] on [date]" line. That label
+  is populated from the current admin's own `localStorage['onix-user']`
+  snapshot (set once at login) rather than a second round-trip query —
+  known, accepted tradeoff: it can show a stale name if that admin's own
+  `full_name` changed elsewhere mid-session, but self-corrects the next
+  time the modal is reopened for that client (fresh DB join), and the
+  actual persisted `updated_by`/`updated_at` are never wrong.
+- **Full repo hygiene pass**: deleted 99 confirmed-merged stale branches
+  from the remote (kept `main`, `rbac-comprehensive`, `ous-portal-integration`
+  only). Full git-history secrets scan came back clean (no leaked keys —
+  only the public Supabase anon key, which is meant to be public).
+  GitHub's own secret scanning is disabled on this repo — nobody has
+  turned it on; worth doing since it's a free, automatic backstop for
+  exactly what was manually checked once here.
+
+### Working directory state right now
+
+- Every branch created this session, including the one that added the
+  "Project Status & History" section above (`fix-chart-recursion-v3`,
+  `combine-id-passport-doc-filter`, `fix-calendar-horizontal-overflow`,
+  `gate-dashboard-debug-log`, `harden-financial-reports-detection`,
+  `remove-dead-notes-container-selector`, `remove-dead-edit-raise-modal`,
+  `add-admin-notes-feature`, `update-claude-md-project-status`), is
+  confirmed **merged into `main`** (verified via `git merge-base
+  --is-ancestor` against `origin/main`, not assumed — re-checked fresh
+  right before writing this). This "Session Handoff Notes" section
+  itself is being added on a new branch, `add-session-handoff-notes`,
+  off that same up-to-date `main`.
+- One untracked leftover file: `admin-portal.html.bak-20260723-214625`
+  (a backup made during the Edit Raise modal removal's decode/edit/
+  re-encode process). Harmless, safe to delete, just never cleaned up —
+  same as the five earlier `.bak` files that *were* cleaned up during
+  the branch-hygiene pass.
+- Local clone also has several stale local-only branch refs pointing at
+  already-merged or long-abandoned work (their `[origin/...: gone]`
+  marker means the remote side is already deleted) — cosmetic, `git
+  fetch --prune` plus deleting the local refs would tidy this up
+  whenever convenient, not urgent.
+
+### Working-style expectations confirmed this session
+
+Not written down elsewhere in this file, but consistently how the user
+wants this project worked on:
+
+- **One logical change = one branch = one commit.** Every fix this
+  session, no matter how small (even a one-line debug-log gate that
+  never touched `admin-portal.html`), got its own branch and its own PR
+  rather than being batched with anything else.
+- **Always show the diff and wait for explicit go-ahead before
+  committing** — for every single change, not just `admin-portal.html`
+  edits.
+- **Proposing a better technical alternative to what was literally
+  asked, clearly flagged and justified, is welcomed rather than
+  overstepping** — confirmed repeatedly and explicitly (e.g. tracking
+  chart-instance identity instead of a literal boolean reset; putting a
+  CSS override in the already-existing injected stylesheet instead of
+  editing the blob to add a new attribute; reusing the existing stable
+  `id="view-documents"` instead of adding a new `data-view-id`
+  attribute). The pattern that worked: implement the substitution,
+  then explicitly call out *what* was changed from the literal request
+  and *why*, and let the user confirm or override.
+
+### Unresolved open questions
+
+- **Railway access gap — never answered.** During the Railway health
+  check, the user was asked: grant CLI/API access this session, or
+  check the dashboard themselves and relay findings back? No answer was
+  given before the conversation moved on. This is still open and blocks
+  fully verifying the three Railway items already listed above under
+  "Known pending items."
+- **The new third-party API integration was never described.** The user
+  said they'd share details once the CLAUDE.md comprehension check was
+  confirmed, then asked for this handoff instead. A new session's first
+  real task is almost certainly this — if the user doesn't immediately
+  provide the API details, ask for them rather than waiting.
+
+### Next action for a new session
+
+Expect the user to describe the new third-party API next (or ask them
+for it if they don't). Before writing any integration code: test its
+endpoints in Postman, get credentials/docs from the user's boss, and
+plan the Supabase schema with RLS from day one — per "Upcoming work"
+above. Separately, whenever convenient: resolve the Railway-access
+question above if it becomes relevant again.
