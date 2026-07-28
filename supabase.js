@@ -73,13 +73,13 @@ async function getMyLoan(userId) {
   // A user can technically have more than one loan in the DB. Pick the most
   // recently created ACTIVE one for the dashboard summary. Falls back to the
   // most recent of any status if none are active.
-  // Excludes OUS-synced rows — those are deposits, not loans (see
+  // Excludes OUS Pasiva rows — those are deposits, not loans (see
   // getMyOusDeposits) and belong on the My Investments page instead.
   const { data, error } = await _supabase
     .from('loans')
     .select('*, loan_documents(*)')
     .eq('user_id', userId)
-    .is('ous_synced_at', null)
+    .neq('data_source', 'ous_pasiva')
     .order('created_at', { ascending: false })
   if (error) { console.error('Loan fetch error:', error); return null }
   if (!data || !data.length) return null
@@ -87,12 +87,12 @@ async function getMyLoan(userId) {
 }
 
 async function getMyLoans(userId) {
-  // Excludes OUS-synced rows — see getMyOusDeposits.
+  // Excludes OUS Pasiva rows — see getMyOusDeposits.
   const { data, error } = await _supabase
     .from('loans')
     .select('*, loan_documents(*)')
     .eq('user_id', userId)
-    .is('ous_synced_at', null)
+    .neq('data_source', 'ous_pasiva')
     .order('created_at', { ascending: false })
   if (error) { console.error('Loans fetch error:', error); return [] }
   return data || []
@@ -117,7 +117,7 @@ async function getMyOusDeposits(userId) {
     .from('loans')
     .select('*, loan_documents(*)')
     .eq('user_id', userId)
-    .not('ous_synced_at', 'is', null)
+    .eq('data_source', 'ous_pasiva')
     .order('created_at', { ascending: false })
   if (error) { console.error('OUS deposits fetch error:', error); return [] }
   return data || []
@@ -128,7 +128,7 @@ async function getMyPayments(userId) {
   // show "Loan ONX-XXXX" alongside each payment.
   const { data, error } = await _supabase
     .from('loan_payments')
-    .select('*, loans!inner(id, loan_id_display, user_id, ous_synced_at)')
+    .select('*, loans!inner(id, loan_id_display, user_id, data_source)')
     .eq('loans.user_id', userId)
     .order('due_date', { ascending: false })
   if (error) console.error('Payments fetch error:', error)
