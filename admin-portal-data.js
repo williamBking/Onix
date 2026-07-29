@@ -4414,6 +4414,134 @@
     }
   }
 
+  // ================================================================
+  // PROFILE TAB
+  // Injects a Profile sidebar item + view-profile div into the
+  // unpacked Bolt bundle (same dynamic-injection pattern as Calendar
+  // and OUS above — never edits the JSON-encoded bundler blob
+  // directly). Lets the logged-in admin edit their own Full Name /
+  // Phone / Address. Email is read-only (auth-managed, not editable
+  // here). wireAdminProfileForm always scopes the update to
+  // .eq('id', userId) — the logged-in admin's own row — so it can
+  // never touch role, status, or any other admin/client's data.
+  // ================================================================
+  function ensureProfileSidebarAndView() {
+    if (document.getElementById('view-profile')) return true;
+    const sidebar = document.querySelector('.sidebar');
+    const main    = document.querySelector('.main');
+    if (!sidebar || !main) return false;
+
+    if (!sidebar.querySelector('[data-view="profile"]')) {
+      const anchor = sidebar.querySelector('[data-view="users"]');
+      const btn = document.createElement('button');
+      btn.className = 'sidebar-item';
+      btn.setAttribute('data-view', 'profile');
+      btn.setAttribute('onclick', "showView('profile')");
+      btn.innerHTML =
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+          '<circle cx="12" cy="8" r="4"></circle>' +
+          '<path d="M4 21v-1a8 8 0 0 1 16 0v1"></path>' +
+        '</svg>' +
+        '<span data-en="Profile" data-es="Perfil">Profile</span>';
+      if (anchor && anchor.parentNode) {
+        anchor.parentNode.insertBefore(btn, anchor.nextSibling);
+      } else {
+        sidebar.appendChild(btn);
+      }
+    }
+
+    if (!document.getElementById('view-profile')) {
+      const v = document.createElement('div');
+      v.className = 'view';
+      v.id = 'view-profile';
+      v.innerHTML =
+        '<div class="page-hd reveal">' +
+          '<div class="page-hd-text">' +
+            '<div class="eyebrow" data-en="Account" data-es="Cuenta">Account</div>' +
+            '<h1 data-en="My Profile" data-es="Mi Perfil">My Profile</h1>' +
+            '<div class="rule"></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="card reveal">' +
+          '<div class="card-title" data-en="Personal Information" data-es="Información Personal">Personal Information</div>' +
+          '<div class="form-grid">' +
+            '<div class="form-field"><label class="field-label" data-en="Full Name" data-es="Nombre">Full Name</label><input type="text" class="field-input" id="profile-full-name"></div>' +
+            '<div class="form-field"><label class="field-label" data-en="Email" data-es="Correo">Email</label><input type="email" class="field-input" id="profile-email" readonly></div>' +
+            '<div class="form-field"><label class="field-label" data-en="Phone" data-es="Teléfono">Phone</label><input type="tel" class="field-input" id="profile-phone"></div>' +
+            '<div class="form-field"><label class="field-label" data-en="Address" data-es="Dirección">Address</label><input type="text" class="field-input" id="profile-address"></div>' +
+          '</div>' +
+          '<button class="btn btn-red" type="button" id="profile-save-btn"><span data-en="Save Changes" data-es="Guardar Cambios">Save Changes</span></button>' +
+        '</div>';
+      main.appendChild(v);
+      const emailInput = v.querySelector('#profile-email');
+      emailInput.style.background = '#f4f4f4';
+      emailInput.style.cursor = 'not-allowed';
+      emailInput.setAttribute('title', 'Email cannot be changed from here');
+    }
+    return true;
+  }
+
+  function wireAdminProfileForm(profile, userId) {
+    const view = document.getElementById('view-profile');
+    if (!view) return;
+    const nameInput    = view.querySelector('#profile-full-name');
+    const emailInput   = view.querySelector('#profile-email');
+    const phoneInput   = view.querySelector('#profile-phone');
+    const addressInput = view.querySelector('#profile-address');
+    const saveBtn      = view.querySelector('#profile-save-btn');
+    if (!nameInput || !saveBtn) return;
+
+    nameInput.value    = profile.full_name || '';
+    emailInput.value   = profile.email || '';
+    phoneInput.value   = profile.phone || '';
+    addressInput.value = profile.address || '';
+
+    if (saveBtn.dataset.onixWired === '1') return;
+    saveBtn.dataset.onixWired = '1';
+    saveBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const orig = saveBtn.innerHTML;
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<span>Saving…</span>';
+      const payload = {
+        full_name: (nameInput.value || '').trim() || null,
+        phone:     (phoneInput.value || '').trim() || null,
+        address:   (addressInput.value || '').trim() || null
+      };
+      const { error } = await OnixDB.client
+        .from('profiles')
+        .update(payload)
+        .eq('id', userId);
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = orig;
+      if (error) {
+        alert('Could not save profile: ' + error.message);
+        return;
+      }
+      profile.full_name = payload.full_name;
+      profile.phone     = payload.phone;
+      profile.address   = payload.address;
+      renderSidebarUser(profile);
+      let banner = view.querySelector('[data-onix-profile-ok]');
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.setAttribute('data-onix-profile-ok', '1');
+        banner.style.cssText = 'margin-top:14px;padding:10px 12px;background:var(--success-bg);color:var(--success-text);border-left:3px solid var(--success);font-size:.85rem';
+        saveBtn.after(banner);
+      }
+      banner.textContent = '✓ Profile updated';
+      banner.style.opacity = '1';
+      setTimeout(() => { banner.style.transition = 'opacity 1s'; banner.style.opacity = '0'; }, 2500);
+    });
+  }
+
+  async function wireProfileTab(profile, userId) {
+    let tries = 0;
+    const wait = () => new Promise(r => setTimeout(r, 250));
+    while (tries++ < 40 && !ensureProfileSidebarAndView()) await wait();
+    wireAdminProfileForm(profile, userId);
+  }
+
   // ── Role-based permission enforcement ────────────────────────────────────
   // Managers can view all data and add clients but cannot reject/remove
   // clients or manage admin team members. We hide the relevant buttons and
@@ -4463,6 +4591,7 @@
     if (greet) greet.textContent = 'Signed in as ' + (gate.profile.full_name || gate.profile.email);
     wireCalendarTab();
     wireOUSTab();
+    wireProfileTab(gate.profile, gate.profile.id);
     refreshAll();
   }
 
