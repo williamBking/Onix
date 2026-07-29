@@ -2840,6 +2840,11 @@
         // (same pattern as Calendar) because they're not in the Bolt-
         // bundled template. Ensure() is idempotent and safe every tick.
         if (ensureActiveDepositsSidebarAndView()) paintActiveDepositsView(data.loans, data.investments);
+        // Loan Match Review — same injected-tab pattern. Paint is gated on
+        // activaMatchesLoaded (set once loadActivaMatchesData() resolves)
+        // so this never flashes an empty table before the first fetch
+        // completes — same guard Calendar uses via calEvents.length.
+        if (ensureLoanMatchReviewSidebarAndView() && activaMatchesLoaded) paintLoanMatchReviewView();
         paintInvestmentsView(data.investments);
         paintRaisesView(data.raises);
         paintApplicationsView(data.applications);
@@ -4553,6 +4558,337 @@
     wireAdminProfileForm(profile, userId);
   }
 
+  // ============================================================
+  // LOAN MATCH REVIEW TAB
+  // Injects a "Loan Match Review" sidebar item + view into the
+  // unpacked Bolt bundle — same dynamic-inject pattern as Calendar
+  // (ensureCalendarSidebarAndView) and Active Deposits
+  // (ensureActiveDepositsSidebarAndView). admin-portal.html itself is
+  // never touched. Reviews/verifies rows in ous_activa_client_matches,
+  // replacing the manual Supabase Table Editor / SQL Editor workflow
+  // (see CLAUDE.md "OUS Activa Integration"). All reads/writes go
+  // straight through OnixDB.client with the existing
+  // ous_activa_client_matches_admin_all RLS policy (is_admin()) — no
+  // new backend endpoint.
+  // ============================================================
+  let activaMatches = [];
+  let activaMatchesLoaded = false;
+  let lmrFilters = { verified: 'unverified', confidence: '' };
+  const LMR_CONFIDENCE_COLOR = { high: '#2D6A2D', medium: '#A07818', low: '#C0392B', none: '#888' };
+  const LMR_SELECT_COLS = 'id_credito, nombre_cliente_raw, matched_profile_id, confidence, verified, verified_by, verified_at, first_seen_at, last_seen_at, profiles!matched_profile_id(full_name, email)';
+
+  function injectLoanMatchReviewStyles() {
+    if (document.getElementById('lmr-styles')) return;
+    const s = document.createElement('style');
+    s.id = 'lmr-styles';
+    s.textContent = `
+      #view-loan-match-review{padding:32px 40px;font-family:'DM Sans',sans-serif;color:#1A1A1A}
+      .lmr-filters{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+      .lmr-filters select{padding:8px 10px;border:1px solid #E8E8E8;font:600 .74rem/1 'DM Sans',sans-serif;color:#1A1A1A;background:#fff}
+      .lmr-conf{display:inline-block;padding:2px 8px;font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:2px;color:#fff}
+      .lmr-picker-input{width:100%;padding:9px 11px;border:1px solid #E8E8E8;font-size:.88rem;font-family:inherit;outline:none;box-sizing:border-box}
+      .lmr-picker-input:focus{border-color:#C0392B}
+      .lmr-picker-results{max-height:220px;overflow-y:auto;border:1px solid #E8E8E8;border-top:none;margin-top:-1px}
+      .lmr-picker-row{padding:9px 12px;cursor:pointer;font-size:.84rem;border-bottom:1px solid #f4f4f4}
+      .lmr-picker-row:hover,.lmr-picker-row.sel{background:#FAE8E8}
+      .lmr-picker-row .sub{font-size:.7rem;color:#888;margin-top:1px}
+      .lmr-picker-empty{padding:12px;color:#888;font-style:italic;font-size:.82rem}
+      .lmr-picked{margin-top:10px;padding:10px 12px;background:#F8F7F5;border-left:3px solid #C0392B;font-size:.86rem;display:flex;justify-content:space-between;align-items:center;gap:8px}
+    `;
+    document.head.appendChild(s);
+  }
+
+  function ensureLoanMatchReviewSidebarAndView() {
+    if (document.getElementById('view-loan-match-review') &&
+        document.querySelector('[data-view="loan-match-review"]')) return true;
+    const sidebar = document.querySelector('.sidebar');
+    const main    = document.querySelector('.main');
+    if (!sidebar || !main) return false;
+
+    if (!sidebar.querySelector('[data-view="loan-match-review"]')) {
+      // Anchor right after Active Deposits so the two OUS-sourced tabs
+      // sit together under Lending.
+      const anchor = sidebar.querySelector('[data-view="active-deposits"]') ||
+                     sidebar.querySelector('[data-view="loans"]');
+      const btn = document.createElement('button');
+      btn.className = 'sidebar-item';
+      btn.setAttribute('data-view', 'loan-match-review');
+      btn.setAttribute('onclick', "showView('loan-match-review')");
+      btn.innerHTML =
+        // Magnifying glass over a person — reviewing/matching a client.
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+          '<circle cx="10" cy="10" r="6"/>' +
+          '<line x1="14.5" y1="14.5" x2="20" y2="20"/>' +
+          '<path d="M7 10a3 3 0 0 1 3-3"/>' +
+        '</svg>' +
+        '<span data-en="Loan Match Review" data-es="Revisión de Coincidencias">Loan Match Review</span>';
+      if (anchor && anchor.parentNode) {
+        anchor.parentNode.insertBefore(btn, anchor.nextSibling);
+      } else {
+        sidebar.appendChild(btn);
+      }
+    }
+
+    if (!document.getElementById('view-loan-match-review')) {
+      const v = document.createElement('div');
+      v.className = 'view';
+      v.id = 'view-loan-match-review';
+      main.appendChild(v);
+    }
+    return true;
+  }
+
+  async function loadActivaMatchesData() {
+    const { data, error } = await OnixDB.client
+      .from('ous_activa_client_matches')
+      .select(LMR_SELECT_COLS)
+      .order('verified', { ascending: true })
+      .order('last_seen_at', { ascending: false });
+    if (error) { console.error('[onix-lmr] load failed:', error); return; }
+    activaMatches = data || [];
+  }
+
+  // Builds the view shell + filter controls once (guarded by
+  // alreadyPainted, same convention as every other painted view here).
+  // Row content is rendered by renderLoanMatchReviewRows() below, called
+  // both from here (so a fresh shell always shows current data) and
+  // directly after Verify/Clear actions (no need to rebuild the shell
+  // for those).
+  function paintLoanMatchReviewView() {
+    const v = document.getElementById('view-loan-match-review');
+    if (!v || alreadyPainted(v)) return false;
+    v.innerHTML = viewShell('Loan Match Review',
+      'Verify which OUS Activa credits belong to which client before they become real loans',
+      `<div class="lmr-filters">
+        <select id="lmr-filter-verified">
+          <option value="unverified">Unverified only</option>
+          <option value="">All statuses</option>
+          <option value="verified">Verified only</option>
+        </select>
+        <select id="lmr-filter-confidence">
+          <option value="">All confidence levels</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+          <option value="none">None</option>
+        </select>
+        <button type="button" class="oac-btn outline" id="lmr-refresh-btn">↻ Refresh</button>
+        <span id="lmr-count" style="font-size:.78rem;color:#888"></span>
+      </div>
+      <table class="oac-table" style="width:100%"><thead><tr>
+        <th>Client Name (raw)</th><th>Credit ID</th><th>Confidence</th><th>Last Synced</th><th>Matched To</th><th>Status</th><th style="text-align:right">Actions</th>
+      </tr></thead><tbody id="lmr-tbody"></tbody></table>`);
+
+    v.querySelector('#lmr-filter-verified').value = lmrFilters.verified;
+    v.querySelector('#lmr-filter-confidence').value = lmrFilters.confidence;
+    v.querySelector('#lmr-filter-verified').addEventListener('change', e => {
+      lmrFilters.verified = e.target.value; renderLoanMatchReviewRows();
+    });
+    v.querySelector('#lmr-filter-confidence').addEventListener('change', e => {
+      lmrFilters.confidence = e.target.value; renderLoanMatchReviewRows();
+    });
+    v.querySelector('#lmr-refresh-btn').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Refreshing…';
+      await loadActivaMatchesData();
+      renderLoanMatchReviewRows();
+      btn.disabled = false; btn.textContent = orig;
+    });
+
+    renderLoanMatchReviewRows();
+    return true;
+  }
+
+  function renderLoanMatchReviewRows() {
+    const tbody = document.getElementById('lmr-tbody');
+    const countEl = document.getElementById('lmr-count');
+    if (!tbody) return;
+
+    const filtered = activaMatches.filter(m => {
+      if (lmrFilters.verified === 'verified' && !m.verified) return false;
+      if (lmrFilters.verified === 'unverified' && m.verified) return false;
+      if (lmrFilters.confidence && m.confidence !== lmrFilters.confidence) return false;
+      return true;
+    });
+    if (countEl) countEl.textContent = filtered.length + ' of ' + activaMatches.length + ' rows';
+
+    tbody.innerHTML = filtered.length ? filtered.map((m) => `
+      <tr>
+        <td>${esc(m.nombre_cliente_raw)}</td>
+        <td>${esc(m.id_credito)}</td>
+        <td><span class="lmr-conf" style="background:${LMR_CONFIDENCE_COLOR[m.confidence] || '#888'}">${esc(m.confidence)}</span></td>
+        <td>${fmt.date(m.last_seen_at)}</td>
+        <td>${m.profiles ? esc(m.profiles.full_name || m.profiles.email) : '—'}</td>
+        <td><span class="oac-badge ${m.verified ? 'active' : 'pending'}">${m.verified ? 'Verified' : 'Unverified'}</span></td>
+        <td style="text-align:right;white-space:nowrap">
+          <button type="button" class="oac-btn outline" data-lmr-verify="${esc(m.id_credito)}">${m.matched_profile_id ? 'Edit Match' : 'Verify Match'}</button>
+          ${m.matched_profile_id ? `<button type="button" class="oac-btn danger" data-lmr-clear="${esc(m.id_credito)}">Clear Match</button>` : ''}
+        </td>
+      </tr>`).join('') : '<tr><td colspan="7" class="oac-empty">No rows match the current filters.</td></tr>';
+
+    tbody.querySelectorAll('[data-lmr-verify]').forEach(b => {
+      b.addEventListener('click', () => {
+        const row = activaMatches.find(m => m.id_credito === b.dataset.lmrVerify);
+        if (row) openVerifyMatchModal(row);
+      });
+    });
+    tbody.querySelectorAll('[data-lmr-clear]').forEach(b => {
+      b.addEventListener('click', () => {
+        const row = activaMatches.find(m => m.id_credito === b.dataset.lmrClear);
+        if (row) clearMatch(row);
+      });
+    });
+  }
+
+  // Searchable client picker — reuses window.__onixAdminData.clients
+  // (the same data source wireGlobalSearch reads) and the same
+  // lowercase-substring hit test wireGlobalSearch uses, rendered as an
+  // embeddable list inside the existing modal system (ensureModal/
+  // openModal) rather than the global search's fixed-position dropdown.
+  function openVerifyMatchModal(row) {
+    const clients = ((window.__onixAdminData && window.__onixAdminData.clients) || [])
+      .filter(c => c.role === 'client');
+    let picked = row.matched_profile_id
+      ? clients.find(c => c.id === row.matched_profile_id) || null
+      : null;
+
+    openModal(`
+      <h2>Verify Match</h2>
+      <div class="sub">${esc(row.nombre_cliente_raw)} · Credit ${esc(row.id_credito)} ·
+        <span class="lmr-conf" style="background:${LMR_CONFIDENCE_COLOR[row.confidence] || '#888'}">${esc(row.confidence)}</span>
+      </div>
+      <div class="oac-modal-row" style="grid-template-columns:1fr">
+        <div>
+          <div class="k">Search clients</div>
+          <input type="text" class="lmr-picker-input" id="lmr-search" placeholder="Type a name or email…" autocomplete="off">
+          <div class="lmr-picker-results" id="lmr-results" style="display:none"></div>
+          <div id="lmr-picked-wrap"></div>
+        </div>
+      </div>
+      <div id="lmr-verify-err" style="color:#C0392B;font-size:.85rem;margin-bottom:10px;display:none"></div>
+      <div class="oac-modal-foot" style="margin-top:0">
+        <button type="button" class="oac-btn outline" data-modal-close>Cancel</button>
+        <button type="button" class="oac-btn red" id="lmr-verify-submit" disabled>Verify Match</button>
+      </div>
+    `);
+
+    const searchInput = document.getElementById('lmr-search');
+    const resultsEl   = document.getElementById('lmr-results');
+    const pickedWrap  = document.getElementById('lmr-picked-wrap');
+    const submitBtn   = document.getElementById('lmr-verify-submit');
+
+    function renderPicked() {
+      submitBtn.disabled = !picked;
+      if (!picked) { pickedWrap.innerHTML = ''; return; }
+      pickedWrap.innerHTML = `<div class="lmr-picked">
+        <span>${esc(picked.full_name || picked.email)} · ${esc(picked.email || '')}</span>
+        <button type="button" class="oac-btn outline" id="lmr-picked-clear" style="margin:0">Change</button>
+      </div>`;
+      resultsEl.style.display = 'none';
+      document.getElementById('lmr-picked-clear').addEventListener('click', () => {
+        picked = null; renderPicked(); searchInput.value = ''; searchInput.focus();
+      });
+    }
+
+    function runSearch(q) {
+      q = q.trim().toLowerCase();
+      if (!q) { resultsEl.innerHTML = ''; resultsEl.style.display = 'none'; return; }
+      const hit = s => String(s || '').toLowerCase().includes(q);
+      const matches = clients.filter(c => hit(c.full_name) || hit(c.email)).slice(0, 20);
+      resultsEl.innerHTML = matches.length
+        ? matches.map((c, i) => `<div class="lmr-picker-row" data-pick="${i}">
+            <div>${esc(c.full_name || c.email)}</div>
+            <div class="sub">${esc(c.email || '')}</div>
+          </div>`).join('')
+        : '<div class="lmr-picker-empty">No clients match.</div>';
+      resultsEl.style.display = 'block';
+      resultsEl.querySelectorAll('[data-pick]').forEach(el => {
+        el.addEventListener('click', () => {
+          picked = matches[Number(el.dataset.pick)];
+          renderPicked();
+        });
+      });
+    }
+
+    let t;
+    searchInput.addEventListener('input', () => {
+      clearTimeout(t);
+      t = setTimeout(() => runSearch(searchInput.value), 120);
+    });
+    renderPicked(); // shows the currently-matched client, if any, pre-filled
+
+    submitBtn.addEventListener('click', async () => {
+      if (!picked) return;
+      const err = document.getElementById('lmr-verify-err');
+      err.style.display = 'none';
+      submitBtn.disabled = true; const orig = submitBtn.textContent; submitBtn.textContent = 'Saving…';
+      try {
+        const sess = await OnixDB.client.auth.getSession();
+        const adminId = sess && sess.data && sess.data.session && sess.data.session.user && sess.data.session.user.id;
+        if (!adminId) throw new Error('No active admin session — please sign in again.');
+        const { data, error } = await OnixDB.client
+          .from('ous_activa_client_matches')
+          .update({
+            matched_profile_id: picked.id,
+            verified: true,
+            verified_by: adminId,
+            verified_at: new Date().toISOString()
+          })
+          .eq('id_credito', row.id_credito)
+          .select(LMR_SELECT_COLS)
+          .single();
+        if (error) throw error;
+        const idx = activaMatches.findIndex(m => m.id_credito === row.id_credito);
+        if (idx !== -1) activaMatches[idx] = data;
+        document.getElementById('oac-modal').classList.remove('open');
+        renderLoanMatchReviewRows();
+      } catch (ex) {
+        err.style.display = 'block';
+        err.textContent = ex.message || 'Could not save.';
+        submitBtn.disabled = false; submitBtn.textContent = orig;
+      }
+    });
+  }
+
+  // Clears matched_profile_id/confidence AND verified together, so a
+  // cleared row reads as "not verified" rather than a "verified but
+  // empty" state — a plain confirm() is enough here (matches the
+  // existing precedent for reversible, non-catastrophic actions
+  // elsewhere in this file, e.g. closing a raise, removing a document).
+  async function clearMatch(row) {
+    if (!confirm('Clear the match for ' + row.nombre_cliente_raw + ' (Credit ' + row.id_credito +
+      ')? This unmatches and unverifies the row — it will not delete it from the review queue.')) return;
+    try {
+      const { data, error } = await OnixDB.client
+        .from('ous_activa_client_matches')
+        .update({ matched_profile_id: null, confidence: 'none', verified: false })
+        .eq('id_credito', row.id_credito)
+        .select(LMR_SELECT_COLS)
+        .single();
+      if (error) throw error;
+      const idx = activaMatches.findIndex(m => m.id_credito === row.id_credito);
+      if (idx !== -1) activaMatches[idx] = data;
+      renderLoanMatchReviewRows();
+    } catch (ex) {
+      alert('Could not clear match: ' + (ex.message || ex));
+    }
+  }
+
+  async function wireLoanMatchReviewTab() {
+    let tries = 0;
+    const wait = () => new Promise(r => setTimeout(r, 250));
+    while (tries++ < 40 && !ensureLoanMatchReviewSidebarAndView()) await wait();
+    injectLoanMatchReviewStyles();
+    try {
+      await loadActivaMatchesData();
+      activaMatchesLoaded = true;
+      paintLoanMatchReviewView();
+    } catch (ex) {
+      console.error('[onix-lmr] init failed:', ex);
+    }
+  }
+  // ── /Loan Match Review tab ────────────────────────────────────────────────
+
   // ── Role-based permission enforcement ────────────────────────────────────
   // Managers can view all data and add clients but cannot reject/remove
   // clients or manage admin team members. We hide the relevant buttons and
@@ -4603,6 +4939,7 @@
     wireCalendarTab();
     wireOUSTab();
     wireProfileTab(gate.profile, gate.profile.id);
+    wireLoanMatchReviewTab();
     refreshAll();
   }
 
