@@ -216,6 +216,153 @@ first, get credentials/docs from the user's boss, plan Supabase schema
 likely extend or mirror the existing Railway Express.js proxy pattern
 used for OUS Pasiva.
 
+## OUS Activa Integration (added late July 2026)
+
+Second major API integration, landed as PR #163 (merged 2026-07-29,
+16:35 UTC). A fresh session should be able to work from this section
+alone without re-deriving it from server.js.
+
+### What this is
+
+OUS Activa is a separate API from the already-integrated OUS Pasiva.
+Pasiva = deposits/liability side (client money coming in); Activa =
+real loans/asset side (money Onix lends out). Base URL
+`http://54.165.232.64:7575/api` — same host as Pasiva's confirmed
+`http://54.165.232.64:7070/api` (see server.js's header comment), just
+a different port, which is at least consistent with "same
+business/infrastructure provider" even though the two are treated as
+fully independent in code. Documented in the official OUS Activa API
+manual; ask the user for the actual document if it's needed for
+reference — it doesn't live in this repo. Login credentials are the
+same as Pasiva's per the business side, but nothing in code assumes
+that: separate session state, separate everything (see below),
+specifically because it was never actually confirmed to be the same
+underlying backend, only the same vendor.
+
+### Key architecture decisions (and why)
+
+- **`loans.data_source`** (text, `NOT NULL`, default `'ous_pasiva'` —
+  confirmed live) added to distinguish real loans from deposits, since
+  `ous_synced_at` alone was being overloaded as a type discriminator in
+  ~14 places across the codebase (admin dashboard KPIs, Loans/Active
+  Deposits views, global search, dashboard + Reports charts, calendar,
+  client My Loan/My Investments/Payments, supabase.js query filters).
+  All updated to check `data_source !== 'ous_pasiva'` instead (PRs
+  #159/#160). A same-day follow-up (PR #162, not from this line of
+  work — landed via a teammate, "Wells") found and fixed a few more
+  spots on the admin Clients views with the same underlying bug in a
+  different shape.
+- **`ous_activa_client_matches`** — a *persistent* review/matching
+  table, not a one-time thing like the Google Drive folder migration
+  was, because this API is synced repeatedly (every ~15 min). An admin
+  verifies a match once; future syncs just refresh `last_seen_at`
+  without re-matching or touching the review fields.
+- **CRITICAL SAFETY PROPERTY** — confirmed live: `loans.user_id` is
+  `uuid NOT NULL` with no default. A loan is structurally incapable of
+  being inserted without a real `user_id`, so "no match at all" can
+  never leak into `loans`. But "matched-but-unverified" leaking in is
+  **not** database-enforced — it's only prevented by
+  `runOUSActivaSync()`'s own `if (!matchRow.verified || …) continue`
+  check. Worth knowing before anyone touches that function.
+- **Fully separate infrastructure from Pasiva, by design**: separate
+  sync function (`runOUSActivaSync`), separate route
+  (`/api/activa-sync-run`), separate cron job
+  (`ous-activa-sync-15min`, confirmed live — offset 5 min from
+  Pasiva's `ous-pasiva-sync-15min`, both `active: true`), separate log
+  table (`ous_activa_sync_log`, confirmed live), separate env vars
+  (`OUS_ACTIVA_LOGIN`/`PASSWORD`/`API_URL`, `ACTIVA_SYNC_CRON_KEY` —
+  confirmed to never cross-reference `SYNC_CRON_KEY` anywhere in
+  server.js). Deliberately not merged with Pasiva's sync: different
+  field shapes, different matching/review requirements (Activa
+  requires human verification; Pasiva auto-creates with zero review).
+- **Client auto-creation differs between the two systems.** Pasiva
+  auto-creates a placeholder client unconditionally on every sync (no
+  human review) whenever an email exists. Activa deliberately does
+  *not* — unmatched borrowers just accumulate in
+  `ous_activa_client_matches` for manual admin review/creation. A
+  deliberate divergence, not an oversight — see "Not yet built" below
+  for the admin action this implies but doesn't have yet.
+
+### Known quirks worth knowing
+
+- **pg_net's cron trigger has a 5-second timeout — confirmed via
+  `net.http_post`'s actual signature** (`timeout_milliseconds integer
+  DEFAULT 5000`, not overridden by either `ous_sync_trigger()` or
+  `ous_activa_sync_trigger()`), while the one real Activa sync so far
+  took 24,952ms (~25s). This is expected and harmless for both syncs:
+  `net.http_post` queues the request and returns immediately
+  (fire-and-forget via `net.http_request_queue`) — it doesn't block
+  waiting for a response, so the 5s figure only affects how long
+  pg_net's background worker waits to *record* a response, not
+  whether Railway keeps executing the request. Check
+  `ous_sync_log`/`ous_activa_sync_log` for the real result, never
+  whether the trigger call itself "succeeded."
+- **`parseTermMonths()`** (shared helper, used by both syncs) was
+  fixed to handle `"N SEMANAS"` (weeks), not just `"N DÍAS"`/months —
+  a real latent bug that silently produced `NULL` `term_months` for
+  week-denominated loans (confirmed against real sample data: `"52
+  SEMANAS"` credits exist).
+- **`mapActivaStatus()`** deliberately only returns `'active'`/
+  `'review'`, never `'charged_off'` — Pasiva's equivalent
+  (`mapAccountingStatus()`) has a latent bug where it *can* produce
+  `'charged_off'`, which violates the `loans.status` `CHECK`
+  constraint (`active`/`paid`/`review` only) and silently fails that
+  one credit's upsert every sync cycle, forever. Found, not fixed
+  (out of scope at the time) — worth fixing later, but don't
+  accidentally reintroduce the same bug into the Activa path.
+- **Source data quality**: `nombre_cliente` in Activa's payload has no
+  uniqueness guarantee, and a meaningful fraction of `rfc` values are
+  obvious placeholder junk (repeated-letter patterns like
+  `"HAAAAAAAAAAAA"`, no digits at all — a real RFC always has a
+  6-digit birthdate segment). Any future matching logic must apply a
+  plausibility filter before trusting `rfc` as a signal — the manual
+  batch-matching pass that seeded this table did; a future automated
+  version needs to as well.
+- **`verified_at`/`verified_by` aren't being populated consistently**
+  today — confirmed live: of the 14 currently-verified rows, 6 have a
+  real `verified_at` timestamp (all 6 are the Hagemeister-family rows
+  and share one exact timestamp, consistent with a single batch
+  action) and 8 have `verified_at = null`, meaning `verified` was
+  flipped directly via SQL/Table Editor without setting the other two
+  columns alongside it. Not a bug, but worth being deliberate about
+  all three columns together in whatever manual workflow is used
+  until a real admin UI exists (see "Not yet built").
+- **A verified match with no live-sync coverage yet writes no loan.**
+  Confirmed live: id_credito 380 (Ignacio Arroyo Kuribreña) is
+  verified with a matched profile, but its `last_seen_at` has never
+  advanced past its original batch-population timestamp — meaning the
+  one real sync run so far didn't include that credit in OUS's
+  response (closed/renewed/reissued between the original sample and
+  the live pull, most likely). No loan gets written until a future
+  sync actually sees that `id_credito` again. This is why "verified
+  count" and "loans written count" don't line up 1:1 — expected
+  behavior, not a bug, but easy to misdiagnose as one.
+
+### Current state (verify against live data — this will drift)
+
+As of this writing: one successful automated sync has run, 2026-07-29
+16:56 UTC — 105 credits seen, 13 loans written to the real `loans`
+table (`data_source = 'ous_activa'`, all linked to admin-verified
+profiles — confirmed matching count in both `ous_activa_sync_log` and
+`loans` directly), 0 auto-created clients (by design), took ~25s. The
+review queue (`ous_activa_client_matches`) currently holds 126 credit
+rows across 86 distinct borrower names: 14 rows (10 distinct names)
+verified with a matched profile, 112 rows (76 distinct names) still
+unverified awaiting admin attention. (An earlier draft of this section
+said "101 unmatched" — that was stale; verify the live counts above
+rather than trusting this paragraph blindly next time either.)
+
+### Not yet built
+
+- Admin UI for reviewing/verifying `ous_activa_client_matches`
+  (currently done directly via Supabase Table Editor + SQL Editor —
+  see the `verified_at` inconsistency above, a direct symptom of this)
+- "Create new client" admin action for genuinely new borrowers with no
+  existing profile match
+- Integration of the other 2 documented OUS Activa endpoints
+  (`proximo-pagos`, `historico-pagos`) — not yet decided if/when these
+  are needed
+
 ## Session Handoff Notes
 
 Narrower and more time-sensitive than the sections above — this is what
