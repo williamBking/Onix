@@ -1121,10 +1121,17 @@
       var loanCounts = {}, invCounts = {};
       if (ids.length){
         var [lRes, iRes] = await Promise.all([
-          c.from('loans').select('user_id').in('user_id', ids),
+          c.from('loans').select('user_id, data_source').in('user_id', ids),
           c.from('investments').select('user_id').in('user_id', ids)
         ]);
-        (lRes.data || []).forEach(function(r){ loanCounts[r.user_id] = (loanCounts[r.user_id] || 0) + 1; });
+        // OUS-synced rows (data_source: 'ous_pasiva') are deposits, not loans —
+        // fold them into the Investments count instead so a depositor still
+        // shows an active position here (see paintClientsView in
+        // admin-portal-data.js, which fixes the same mislabeling).
+        (lRes.data || []).forEach(function(r){
+          if (r.data_source === 'ous_pasiva') invCounts[r.user_id] = (invCounts[r.user_id] || 0) + 1;
+          else loanCounts[r.user_id] = (loanCounts[r.user_id] || 0) + 1;
+        });
         (iRes.data || []).forEach(function(r){ invCounts[r.user_id] = (invCounts[r.user_id] || 0) + 1; });
       }
 
@@ -1307,7 +1314,7 @@
       var c = OnixDB.client;
       var [pRes, lRes, iRes, nRes] = await Promise.all([
         c.from('profiles').select('*').eq('id', profileId).single(),
-        c.from('loans').select('loan_id_display, balance, principal_amount, interest_rate, maturity_date, status').eq('user_id', profileId),
+        c.from('loans').select('loan_id_display, balance, principal_amount, interest_rate, maturity_date, status, data_source').eq('user_id', profileId),
         c.from('investments').select('venture_name, amount_invested, status').eq('user_id', profileId),
         c.from('client_admin_notes').select('notes, updated_at, updated_by, updated_by_profile:profiles!updated_by(full_name, email)').eq('profile_id', profileId).maybeSingle()
       ]);
@@ -1321,9 +1328,16 @@
       var activeDeals = invs.filter(function(x){ return x.status !== 'exited'; }).length;
       // Borrower-side aggregates. Loan Balance = outstanding principal across
       // all active loans; Principal Disbursed = original amounts granted.
-      var activeLoanRows = loans.filter(function(x){ return x.status !== 'paid_off' && x.status !== 'closed'; });
-      var loanBalance     = activeLoanRows.reduce(function(s, x){ return s + Number(x.balance || 0); }, 0);
+      // OUS-synced rows (data_source: 'ous_pasiva') are deposits, not loans —
+      // split them out into their own Active Deposits section instead of
+      // counting them as loans (same distinction paintClientsView and the
+      // Dashboard already make).
+      var notClosed = function(x){ return x.status !== 'paid_off' && x.status !== 'closed'; };
+      var activeLoanRows    = loans.filter(function(x){ return notClosed(x) && x.data_source !== 'ous_pasiva'; });
+      var activeDepositRows = loans.filter(function(x){ return notClosed(x) && x.data_source === 'ous_pasiva'; });
+      var loanBalance        = activeLoanRows.reduce(function(s, x){ return s + Number(x.balance || 0); }, 0);
       var principalDisbursed = activeLoanRows.reduce(function(s, x){ return s + Number(x.principal_amount || x.balance || 0); }, 0);
+      var depositBalance     = activeDepositRows.reduce(function(s, x){ return s + Number(x.balance || 0); }, 0);
       var name = p.full_name || p.email || 'Client';
       var statusLabel = (p.status || '—').replace(/^./, function(ch){ return ch.toUpperCase(); });
 
@@ -1336,15 +1350,29 @@
           ivCell('Status', statusLabel) +
           ivCell('Client Since', yearOf(p.created_at)) +
           ivCell('Active Loans', activeLoanRows.length) +
+          ivCell('Active Deposits', activeDepositRows.length) +
           ivCell('Active Investments', activeDeals) +
           ivCell('Loan Balance', fmtMoney(loanBalance)) +
           ivCell('Principal Disbursed', fmtMoney(principalDisbursed)) +
+          ivCell('Deposit Balance', fmtMoney(depositBalance)) +
           ivCell('Capital Committed (Investments)', fmtMoney(committed), true) +
         '</div>' +
         (activeLoanRows.length
           ? '<div style="font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:#9B9590;font-weight:700;margin-bottom:10px">Active Loans</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:18px">' +
               activeLoanRows.map(function(x){
+                var rate = x.interest_rate != null ? ' · ' + Number(x.interest_rate).toFixed(2) + '%' : '';
+                var mat  = x.maturity_date ? ' · matures ' + x.maturity_date : '';
+                return '<div style="padding:10px 14px;background:#F8F7F5;border-left:3px solid #C0392B;font-size:.84rem;font-weight:600">' +
+                  '#' + esc(x.loan_id_display || '—') + ' — ' + fmtMoney(x.balance) + rate + mat +
+                '</div>';
+              }).join('') +
+            '</div>'
+          : '') +
+        (activeDepositRows.length
+          ? '<div style="font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:#9B9590;font-weight:700;margin-bottom:10px">Active Deposits</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:18px">' +
+              activeDepositRows.map(function(x){
                 var rate = x.interest_rate != null ? ' · ' + Number(x.interest_rate).toFixed(2) + '%' : '';
                 var mat  = x.maturity_date ? ' · matures ' + x.maturity_date : '';
                 return '<div style="padding:10px 14px;background:#F8F7F5;border-left:3px solid #C0392B;font-size:.84rem;font-weight:600">' +
@@ -4501,7 +4529,7 @@
   <!-- Onix Supabase live admin layer -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="supabase.js?v=17"></script>
-  <script defer src="admin-portal-data.js?v=76"></script>
+  <script defer src="admin-portal-data.js?v=77"></script>
   <!-- Shared i18n helper: wires EN/ES toggle via event delegation so it
        works even for late-injected DOM (the admin bundle ships its own
        lang script but binds once at load and misses the buttons). -->

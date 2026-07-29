@@ -182,11 +182,15 @@
 
   function viewLoan(loan) {
     const c = loan.profiles || {};
+    // Shared with the Active Deposits tab (paintActiveDepositsView), whose
+    // rows are OUS-synced deposits, not loans — label the modal accordingly
+    // so it doesn't call a client's deposit a "Loan".
+    const isDeposit = loan.data_source === 'ous_pasiva';
     openModal(`
-      <h2>Loan ${esc(loan.loan_id_display || loan.id.slice(0,8))}</h2>
+      <h2>${isDeposit ? 'Deposit' : 'Loan'} ${esc(loan.loan_id_display || loan.id.slice(0,8))}</h2>
       <div class="sub">${esc(c.full_name || c.email || 'Unknown client')}</div>
       <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
-        <a href="#" data-edit-loan style="display:inline-block;background:#C0392B;color:#fff;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">Edit Loan</a>
+        <a href="#" data-edit-loan style="display:inline-block;background:#C0392B;color:#fff;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">Edit ${isDeposit ? 'Deposit' : 'Loan'}</a>
         <a href="#" data-add-payment style="display:inline-block;background:#fff;color:#1A1A1A;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none">+ Add Payment</a>
       </div>
       <div class="oac-modal-row">
@@ -1239,13 +1243,20 @@
       if (!d || !d.profile_id) return;
       (docsByProfile[d.profile_id] = docsByProfile[d.profile_id] || new Set()).add(d.category || 'other');
     });
-    // Per-client loan balances, counts, and investment counts.
+    // Per-client loan balances, counts, and investment counts. Excludes
+    // OUS-synced rows (data_source: 'ous_pasiva') from Loans — those are
+    // deposits, not loans — and folds them into the Investments count
+    // instead, so a depositor still shows an active position here rather
+    // than disappearing from both columns.
     const loanCounts = {}, loanBalances = {}, invCounts = {};
     (loans || []).forEach(l => {
-      if (l.status === 'active') {
-        loanCounts[l.user_id] = (loanCounts[l.user_id] || 0) + 1;
-        loanBalances[l.user_id] = (loanBalances[l.user_id] || 0) + Number(l.balance || 0);
+      if (l.status !== 'active') return;
+      if (l.data_source === 'ous_pasiva') {
+        invCounts[l.user_id] = (invCounts[l.user_id] || 0) + 1;
+        return;
       }
+      loanCounts[l.user_id] = (loanCounts[l.user_id] || 0) + 1;
+      loanBalances[l.user_id] = (loanBalances[l.user_id] || 0) + Number(l.balance || 0);
     });
     (investments || []).forEach(i => { invCounts[i.user_id] = (invCounts[i.user_id] || 0) + 1; });
     // Live per-client document counts — both the icon and the number shown
