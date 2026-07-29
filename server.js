@@ -20,6 +20,10 @@
  *   GET  /api/catalogos                        — no body
  *   GET|POST /api/creditos-cierre-saldos       — body: { fecha_cierre }
  *   GET|POST /api/creditos/por-vencer          — body: { dias }
+ *   POST /api/sync-run                         — runs the Pasiva sync now
+ *   POST /api/activa-sync-run                  — runs the OUS Activa sync
+ *     now (see runOUSActivaSync() — a deliberately separate integration,
+ *     its own session/credentials/log table, not a Pasiva extension)
  *
  * Required environment variables (set these in Railway → Variables):
  *   OUS_LOGIN     — OUS Pasiva username
@@ -30,6 +34,12 @@
  *   PORT          — Railway sets this automatically (defaults to 3000 locally)
  *   ALLOWED_ORIGINS — comma-separated allowlist for CORS. Defaults to
  *                   the GH Pages site + the eventual custom domain.
+ *   OUS_ACTIVA_LOGIN / OUS_ACTIVA_PASSWORD / OUS_ACTIVA_API_URL —
+ *                   required only for /api/activa-sync-run; unset means
+ *                   that route always fails with a clear "not configured"
+ *                   error instead of touching the network.
+ *   ACTIVA_SYNC_CRON_KEY — like SYNC_CRON_KEY, but Activa's own, separate
+ *                   secret for its pg_cron path.
  *
  * Dependencies (see package.json):
  *   express, node-fetch
@@ -59,6 +69,17 @@ const OUS_LOGIN    = process.env.OUS_LOGIN    || '';
 const OUS_PASSWORD = process.env.OUS_PASSWORD || '';
 const OUS_API_URL  = (process.env.OUS_API_URL || '').replace(/\/+$/, '');
 
+// OUS Activa — separate credentials/session from OUS Pasiva above. Same
+// underlying vendor is plausible (field shapes mirror each other closely)
+// but unconfirmed, so this is treated as a fully independent system until
+// proven otherwise: its own env vars, its own login/session state
+// (stateActiva, below), its own base URL. Unset by default — the Activa
+// sync route fails fast with a clear "not configured" error rather than
+// attempting any network call when these are empty.
+const OUS_ACTIVA_LOGIN    = process.env.OUS_ACTIVA_LOGIN    || '';
+const OUS_ACTIVA_PASSWORD = process.env.OUS_ACTIVA_PASSWORD || '';
+const OUS_ACTIVA_API_URL  = (process.env.OUS_ACTIVA_API_URL || '').replace(/\/+$/, '');
+
 // Supabase auth gate for /api/* — validates each request's Supabase
 // session token against Supabase's /auth/v1/user endpoint so the public
 // Railway URL stops being an open back door into the OUS data. We use
@@ -78,6 +99,10 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 // Shared secret for the scheduled sync trigger (pg_cron sends it in the
 // X-Cron-Key header). Not required for the manual admin-triggered path.
 const SYNC_CRON_KEY             = process.env.SYNC_CRON_KEY || '';
+// Separate cron secret for the Activa sync — deliberately not the same
+// value as SYNC_CRON_KEY, so a leaked key only ever exposes one of the
+// two sync routes, not both.
+const ACTIVA_SYNC_CRON_KEY      = process.env.ACTIVA_SYNC_CRON_KEY || '';
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -234,6 +259,101 @@ async function tryLogin(label) {
   }
 }
 
+// ---------------------------------------------------------------
+// OUS Activa auth state — fully independent of the `state` object
+// above. Deliberately NOT wired into startAuthLoop()/boot: until
+// OUS_ACTIVA_* env vars are confirmed and set, an eager boot-time
+// login would just spam Railway's logs with failures for a feature
+// nobody's using yet. Login happens lazily instead, the first time
+// runOUSActivaSync() runs — same "sync-preflight" fallback
+// runOUSSync() already uses for Pasiva internally (see below).
+// ---------------------------------------------------------------
+const stateActiva = {
+  token: null,      // current OUS Activa bearer token, or null when logged out
+  acquiredAt: null,
+  lastError: null
+};
+
+/**
+ * Log in to OUS Activa and store the token on stateActiva.
+ *
+ * ======================================================================
+ *  CONFIRMED — POST { login, password } → { status, data: { token, tipo,
+ *  expira_en } }, verified against the official OUS Activa API manual
+ *  (§2) and a live Postman test, not inferred from Pasiva's shape. Same
+ *  structure Pasiva happens to use, confirmed independently rather than
+ *  assumed from it.
+ * ======================================================================
+ */
+async function loginToOUSActiva() {
+  if (!OUS_ACTIVA_LOGIN || !OUS_ACTIVA_PASSWORD || !OUS_ACTIVA_API_URL) {
+    throw new Error('OUS Activa sync not configured: set OUS_ACTIVA_LOGIN + OUS_ACTIVA_PASSWORD + OUS_ACTIVA_API_URL');
+  }
+
+  const LOGIN_PATH = '/auth/login';
+  const LOGIN_BODY = { login: OUS_ACTIVA_LOGIN, password: OUS_ACTIVA_PASSWORD };
+  const tokenFromResponse = (json, headers) =>
+    (json.data && (json.data.token || json.data.access_token || json.data.jwt)) ||
+    json.token || json.access_token || json.jwt ||
+    headers.get('authorization') || null;
+
+  const redact = (s) => OUS_ACTIVA_PASSWORD
+    ? String(s).split(OUS_ACTIVA_PASSWORD).join('[redacted]')
+    : String(s);
+
+  const url = OUS_ACTIVA_API_URL + LOGIN_PATH;
+  console.log('[ous-activa-proxy] login → POST ' + url +
+              ' (body fields: ' + Object.keys(LOGIN_BODY).join(', ') + ')');
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify(LOGIN_BODY)
+  });
+
+  const rawText = await res.text();
+  let json = {};
+  try { json = JSON.parse(rawText); } catch { /* not JSON */ }
+
+  const contentType = res.headers.get('content-type') || '(no content-type)';
+  console.log('[ous-activa-proxy] login ← HTTP ' + res.status + ' ' + contentType +
+              ' — body preview: ' + redact(rawText.slice(0, 400)));
+
+  if (!res.ok) {
+    throw new Error('OUS Activa login HTTP ' + res.status + ': ' + redact((rawText || '').slice(0, 300)));
+  }
+
+  let token = tokenFromResponse(json, res.headers);
+  if (typeof token === 'string') token = token.replace(/^Bearer\s+/i, '').trim();
+  if (!token) {
+    throw new Error('OUS Activa login succeeded (HTTP ' + res.status + ') but no token in response. ' +
+      'Body was: ' + redact(JSON.stringify(json).slice(0, 300)));
+  }
+
+  stateActiva.token      = token;
+  stateActiva.acquiredAt = Date.now();
+  stateActiva.lastError  = null;
+  console.log('[ous-activa-proxy] OUS Activa login OK at ' + new Date(stateActiva.acquiredAt).toISOString() +
+              ' — token length=' + token.length);
+}
+
+/**
+ * Try to log in to OUS Activa, recording any failure on
+ * `stateActiva.lastError`. Returns true on success, false on failure
+ * (never throws).
+ */
+async function tryLoginActiva(label) {
+  try {
+    await loginToOUSActiva();
+    return true;
+  } catch (err) {
+    stateActiva.token     = null;
+    stateActiva.lastError = err && err.message ? err.message : String(err);
+    console.error('[ous-activa-proxy] ' + label + ' login failed:', stateActiva.lastError);
+    return false;
+  }
+}
+
 /**
  * Boot loop: try once immediately, then retry every BOOT_RETRY_MS
  * until we get a token. Once successful, no further proactive logins
@@ -334,6 +454,60 @@ async function callOUS(path, { method = 'GET', body = null } = {}) {
     const ok = await tryLogin('reactive');
     if (ok) {
       baseHeaders.Authorization = 'Bearer ' + state.token;
+      r = await doRequest();
+    }
+  }
+
+  let json;
+  try { json = JSON.parse(r.rawText); } catch { json = { raw: r.rawText }; }
+  return { status: r.status, body: json };
+}
+
+// Activa's equivalent of callOUS() above — same shape (401 retry via
+// tryLoginActiva, GET-with-body via rawHttpRequest), but reads/writes
+// stateActiva + OUS_ACTIVA_API_URL exclusively. rawHttpRequest() is a
+// pure low-level HTTP helper with no session state of its own, so it's
+// shared as-is between both — the thing being kept independent here is
+// the token/session, not this kind of stateless plumbing.
+async function callOUSActiva(path, { method = 'GET', body = null } = {}) {
+  if (!stateActiva.token) {
+    const err = new Error('OUS Activa proxy is not logged in yet');
+    err.code = 'NOT_LOGGED_IN';
+    throw err;
+  }
+  const url = OUS_ACTIVA_API_URL + (path.startsWith('/') ? path : '/' + path);
+  const baseHeaders = {
+    'Authorization': 'Bearer ' + stateActiva.token,
+    'Accept':        'application/json'
+  };
+
+  const useRaw = (method === 'GET' || method === 'HEAD') && body != null;
+
+  const doRequest = async () => {
+    if (useRaw) {
+      const r = await rawHttpRequest(url, {
+        method, body,
+        headers: Object.assign({}, baseHeaders, { 'Content-Type': 'application/json' })
+      });
+      return { status: r.status, rawText: r.text };
+    }
+    const init = { method, headers: Object.assign({}, baseHeaders) };
+    if (body != null) {
+      init.headers['Content-Type'] = 'application/json';
+      init.body = JSON.stringify(body);
+    }
+    const res = await fetch(url, init);
+    const rawText = await res.text();
+    return { status: res.status, rawText };
+  };
+
+  let r = await doRequest();
+
+  if (r.status === 401) {
+    console.warn('[ous-activa-proxy] got 401 from OUS Activa — re-logging in and retrying');
+    const ok = await tryLoginActiva('reactive');
+    if (ok) {
+      baseHeaders.Authorization = 'Bearer ' + stateActiva.token;
       r = await doRequest();
     }
   }
@@ -719,15 +893,22 @@ function toNum(v) {
   const n = Number(String(v).replace(/[^0-9.\-]/g, ''));
   return Number.isFinite(n) ? n : null;
 }
+// Shared by both syncs — pure string parsing, no session/business state,
+// so fixing it here benefits Pasiva too (it had the same silent gap) at
+// zero risk to Pasiva's existing mes/dia/año branches (additive only).
+// The semana/week branch was added for OUS Activa: confirmed via real
+// sample data that some Activa credits use plazo values like
+// "52 SEMANAS", which fell through to `null` before this fix.
 function parseTermMonths(plazo) {
   if (!plazo) return null;
-  const m = String(plazo).match(/(\d+)\s*(mes|meses|mo|month|d[íi]a|dia|dias|days|a[ñn]os|year)/i);
+  const m = String(plazo).match(/(\d+)\s*(mes|meses|mo|month|d[íi]a|dia|dias|days|semana|semanas|week|weeks|a[ñn]os|year)/i);
   if (!m) return null;
   const n = Number(m[1]); if (!Number.isFinite(n)) return null;
   const unit = m[2].toLowerCase();
-  if (unit.startsWith('mes') || unit.startsWith('mo')) return n;
-  if (unit.startsWith('d')  || unit.startsWith('day')) return Math.round(n / 30);
-  if (unit.startsWith('a')  || unit.startsWith('y'))   return n * 12;
+  if (unit.startsWith('mes') || unit.startsWith('mo'))   return n;
+  if (unit.startsWith('sem') || unit.startsWith('week')) return Math.round(n / 4.345);
+  if (unit.startsWith('d')   || unit.startsWith('day'))  return Math.round(n / 30);
+  if (unit.startsWith('a')   || unit.startsWith('y'))    return n * 12;
   return n;
 }
 function mapAccountingStatus(s) {
@@ -1039,6 +1220,334 @@ async function runOUSSync() {
   return summary;
 }
 
+// =============================================================
+// OUS Activa -> Onix Supabase sync
+//
+// Deliberately a fully separate implementation from runOUSSync()
+// above, not a shared/merged one — see PR description. Shares only
+// genuinely stateless, generic helpers (sbFetch, buildQuery, toNum,
+// parseTermMonths, mapPaymentFrequency, fillProfileMissing,
+// rawHttpRequest) that carry no Pasiva-specific business logic or
+// session state.
+//
+// Runs on demand (admin action) and on its own schedule (pg_cron
+// hits POST /api/activa-sync-run with its own X-Cron-Key — see the
+// accompanying SQL for ous_activa_sync_trigger() + the cron.job
+// registration).
+//
+// Data flow, per the agreed design:
+//   1. Resolve fecha_cierre from Activa's own /catalogos (falls back to
+//      today's date, with a warning, only on an actual fetch failure or
+//      response-shape surprise — data.fechaCierre is a real, documented
+//      field, confirmed via the official OUS Activa API manual §3.6 and
+//      a live Postman test, not inferred from Pasiva's shape).
+//   2. Fetch /creditos-cierre-saldos (rich, all active credits) +
+//      /creditos/por-vencer (adds producto, tipo_pago, renewal flag),
+//      merged by id_credito — confirmed present for Activa via the
+//      manual §3.3, same two-endpoint pattern as Pasiva.
+//   3. Per credit: upsert the ous_activa_client_matches review-queue
+//      row (id_credito, nombre_cliente_raw, last_seen_at ONLY — never
+//      matched_profile_id/confidence/verified/verified_by/verified_at,
+//      so an admin's prior review work can never be overwritten by a
+//      sync run), then branch on its current verified state:
+//        - verified = true  → upsert a real loans row
+//          (data_source = 'ous_activa')
+//        - verified = false → do NOT touch loans; if a loans row from
+//          a PRIOR verified state still exists, flag it status='review'
+//          rather than leaving it silently stale
+//   4. Write one summary row to ous_activa_sync_log (a table fully
+//      separate from Pasiva's ous_sync_log — see accompanying SQL).
+//
+// Idempotency: every write here is an upsert or a targeted, no-op-safe
+// UPDATE — there are no deletes anywhere in this function. Running it
+// twice in a row with unchanged upstream data produces byte-identical
+// rows except for last_seen_at/ous_synced_at (which are *supposed* to
+// advance every run — that's the "last synced" contract, not a
+// idempotency violation). See PR description for the fuller argument.
+//
+// Requires env vars:
+//   OUS_ACTIVA_LOGIN / OUS_ACTIVA_PASSWORD / OUS_ACTIVA_API_URL
+//   SUPABASE_SERVICE_ROLE_KEY  (already required for Pasiva; reused —
+//                                this is a Supabase-side credential,
+//                                not an OUS one, so there's exactly one
+//                                of these regardless of OUS source)
+//   ACTIVA_SYNC_CRON_KEY       — optional, only needed for the pg_cron path
+// =============================================================
+
+// Maps loans.status for an Activa credit. Deliberately only ever
+// returns one of the three values the CHECK constraint on loans.status
+// actually allows ('active' | 'paid' | 'review'). Pasiva's own
+// mapAccountingStatus() returns 'charged_off' for castigo status, which
+// is NOT in that CHECK list — a live, latent bug there (any Pasiva
+// credit hitting that branch fails its upsert silently, every sync,
+// forever). Not fixed here (out of scope / a separate, Pasiva-only
+// change) but deliberately not copied into this new code either.
+function mapActivaStatus(fecha_castigo) {
+  return fecha_castigo ? 'review' : 'active';
+}
+
+// Upserts the review-queue row for one credit. CRITICAL: only ever
+// sends id_credito / nombre_cliente_raw / last_seen_at — matched_
+// profile_id, confidence, verified, verified_by, verified_at are
+// deliberately never included in this payload, not even as null, so
+// PostgREST's merge-duplicates upsert never touches them on an
+// existing row. An admin's prior review work must survive every sync
+// run untouched; only the sync-owned fields (name-as-last-seen,
+// last_seen_at) ever move. Uses return=representation to read back the
+// row's current — possibly admin-set — review state in the same
+// request, rather than a separate round-trip SELECT.
+async function upsertActivaClientMatch(id_credito, nombre_cliente_raw) {
+  const r = await sbFetch('/rest/v1/ous_activa_client_matches?on_conflict=id_credito', {
+    method: 'POST',
+    headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' },
+    body: JSON.stringify({
+      id_credito,
+      nombre_cliente_raw,
+      last_seen_at: new Date().toISOString()
+    })
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error('ous_activa_client_matches upsert failed HTTP ' + r.status + ': ' + text.slice(0, 200));
+  }
+  const rows = await r.json();
+  return rows[0];
+}
+
+// If a credit that is currently NOT verified has a live loans row from
+// a PRIOR verified state (admin verified it, we wrote the loan, admin
+// later un-verified the match — e.g. caught a mistake), flag that loan
+// status='review' rather than silently leaving it looking untouched.
+// Scoped to data_source='ous_activa' so this can never reach a Pasiva
+// or manually-created loan (belt-and-suspenders: loan_id_display is
+// already globally UNIQUE, so at most one row could ever match on that
+// alone — the data_source filter just makes the intent unambiguous to
+// a future reader). The status=neq.review filter just avoids a wasted
+// no-op write when already flagged. Safe to call unconditionally — a
+// non-match is simply zero rows patched, not an error.
+async function flagUnverifiedActivaLoan(id_credito) {
+  const r = await sbFetch(
+    '/rest/v1/loans?loan_id_display=eq.' + encodeURIComponent(id_credito) +
+    '&data_source=eq.ous_activa&status=neq.review',
+    {
+      method: 'PATCH',
+      headers: { 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ status: 'review' })
+    }
+  );
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error('flag-unverified-activa-loan failed HTTP ' + r.status + ': ' + text.slice(0, 200));
+  }
+}
+
+// Upsert one Activa-sourced loan by loan_id_display (= id_credito) —
+// same on_conflict + merge-duplicates idempotent pattern as Pasiva's
+// upsertLoan(), targeting the same shared loans table, but always
+// stamped data_source = 'ous_activa' and never called except from the
+// verified=true branch below.
+async function upsertActivaLoan(row) {
+  const body = {
+    loan_id_display:   row.id_credito,
+    user_id:           row.user_id,
+    data_source:       'ous_activa',
+    balance:           toNum(row.balance),
+    principal_amount:  toNum(row.principal_amount),
+    interest_rate:     toNum(row.interest_rate),
+    maturity_date:     row.maturity_date || null,
+    origination_date:  row.origination_date || null,
+    term_months:       row.term_months,
+    days_delinquent:   row.days_delinquent || 0,
+    loan_type:         row.loan_type || null,
+    monthly_payment:   row.monthly_payment,
+    status:            row.status,
+    product:           row.product || null,
+    payment_frequency: row.payment_frequency || null,
+    renewal_requested: !!row.renewal_requested,
+    ous_synced_at:     new Date().toISOString()
+  };
+  const r = await sbFetch('/rest/v1/loans?on_conflict=loan_id_display', {
+    method: 'POST',
+    headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error('activa loans upsert failed HTTP ' + r.status + ': ' + text.slice(0, 200));
+  }
+}
+
+// Writes one row per run to ous_activa_sync_log — see accompanying SQL
+// for why this is a separate table from Pasiva's ous_sync_log rather
+// than a shared one with a source column.
+async function logActivaSync({ endpoint, rows_seen, clients_upserted, loans_upserted, clients_created, ok, error, duration_ms }) {
+  await sbFetch('/rest/v1/ous_activa_sync_log', {
+    method: 'POST',
+    headers: { 'Prefer': 'return=minimal' },
+    body: JSON.stringify({
+      endpoint, rows_seen, clients_upserted, loans_upserted,
+      clients_created, ok, error, duration_ms
+    })
+  }).catch(() => {});
+}
+
+async function runOUSActivaSync() {
+  const start = Date.now();
+
+  // 1. Ensure OUS Activa session (independent of Pasiva's — see
+  //    stateActiva above). Lazy: this is the only place Activa login
+  //    is ever attempted.
+  if (!stateActiva.token) await tryLoginActiva('sync-preflight');
+  if (!stateActiva.token) {
+    throw new Error('OUS Activa login unavailable — sync aborted' +
+      (stateActiva.lastError ? ': ' + stateActiva.lastError : ''));
+  }
+
+  // 2. Resolve fecha_cierre (+ a lookahead window for por-vencer) from
+  //    Activa's own /catalogos. data.fechaCierre and data.rangoVencimiento
+  //    Proximo (e.g. [30, 60, 90]) are confirmed real fields for Activa
+  //    (official API manual §3.6 + live Postman test) — the fallback
+  //    below is defensive against a network hiccup or API downtime, not
+  //    a hedge against an unconfirmed response shape.
+  let fecha_cierre;
+  let fechaCierreSource;
+  let dias = 30;
+  try {
+    const cat = await callOUSActiva('/catalogos', { method: 'GET' });
+    const d = cat.body && cat.body.data;
+    if (d && d.fechaCierre) {
+      fecha_cierre = d.fechaCierre;
+      fechaCierreSource = 'catalogos';
+    } else {
+      fecha_cierre = new Date().toISOString().slice(0, 10);
+      fechaCierreSource = 'fallback-missing-field';
+      console.warn('[ous-activa-sync] /catalogos did not return data.fechaCierre (got: ' +
+        JSON.stringify(cat.body).slice(0, 200) + ') — falling back to today\'s date: ' + fecha_cierre);
+    }
+    if (d && Array.isArray(d.rangoVencimientoProximo) && d.rangoVencimientoProximo.length) {
+      dias = d.rangoVencimientoProximo[Math.floor(d.rangoVencimientoProximo.length / 2)];
+    }
+  } catch (err) {
+    fecha_cierre = new Date().toISOString().slice(0, 10);
+    fechaCierreSource = 'fallback-catalogos-error';
+    console.warn('[ous-activa-sync] /catalogos fetch failed (' + ((err && err.message) || err) +
+      ') — falling back to today\'s date: ' + fecha_cierre);
+  }
+
+  // 3. Fetch both credit endpoints. por-vencer is enrichment only
+  //    (producto, tipo_pago, renewal flag) — if it fails, continue
+  //    with cierre-saldos data alone rather than aborting the sync.
+  const cs = await callOUSActiva('/creditos-cierre-saldos' + buildQuery({ fecha_cierre }),
+    { method: 'GET', body: { fecha_cierre } });
+  const csRows = (cs.body && cs.body.data) || [];
+  if (!Array.isArray(csRows)) {
+    throw new Error('Activa cierre-saldos returned non-array: ' + JSON.stringify(cs.body).slice(0, 200));
+  }
+
+  let pvRows = [];
+  try {
+    const pv = await callOUSActiva('/creditos/por-vencer' + buildQuery({ dias }),
+      { method: 'GET', body: { dias } });
+    pvRows = (pv.body && pv.body.data) || [];
+  } catch (err) {
+    console.warn('[ous-activa-sync] /creditos/por-vencer fetch failed (' +
+      ((err && err.message) || err) + ') — continuing without producto/tipo_pago/renewal enrichment');
+  }
+  const pvByCredito = {};
+  for (const r of pvRows) if (r && r.id_credito) pvByCredito[String(r.id_credito)] = r;
+
+  // 4. Per credit: upsert the review-queue row, read back its current
+  //    state, branch on verified.
+  let matchesUpserted = 0, loansUpserted = 0, loansSkippedUnverified = 0;
+  const errors = [];
+
+  for (const cr of csRows) {
+    const id_credito = String(cr.id_credito || '').trim();
+    if (!id_credito) continue;
+    const nombre_cliente_raw = String(cr.nombre_cliente || '').trim();
+
+    let matchRow;
+    try {
+      matchRow = await upsertActivaClientMatch(id_credito, nombre_cliente_raw);
+      matchesUpserted++;
+    } catch (e) {
+      errors.push('match-upsert ' + id_credito + ': ' + (e.message || String(e)));
+      continue;
+    }
+
+    if (!matchRow.verified || !matchRow.matched_profile_id) {
+      loansSkippedUnverified++;
+      try {
+        await flagUnverifiedActivaLoan(id_credito);
+      } catch (e) {
+        errors.push('unverify-flag ' + id_credito + ': ' + (e.message || String(e)));
+      }
+      continue;
+    }
+
+    const pvHit = pvByCredito[id_credito];
+    const numCuotas = toNum(cr.num_cuotas_contratadas);
+    try {
+      await upsertActivaLoan({
+        id_credito,
+        user_id:           matchRow.matched_profile_id,
+        balance:            cr.saldo_total_vigente,
+        principal_amount:   cr.capital,
+        interest_rate:      cr.tasa,
+        maturity_date:       cr.fecha_termino || null,
+        origination_date:    cr.fecha_inicio || null,
+        term_months:         parseTermMonths(cr.plazo),
+        days_delinquent:     toNum(cr.dias_mora) || 0,
+        loan_type:           cr.segmento || null,
+        // Only a real "monthly payment" for multi-installment loans —
+        // for single-installment/bullet credits (num_cuotas_contratadas
+        // == 1, common in this data) monto_cuota_por_devengar is the
+        // full payoff amount, not a recurring monthly figure.
+        monthly_payment:     (numCuotas != null && numCuotas > 1) ? toNum(cr.monto_cuota_por_devengar) : null,
+        status:              mapActivaStatus(cr.fecha_castigo),
+        product:             (pvHit && pvHit.producto) || null,
+        payment_frequency:   mapPaymentFrequency(pvHit && pvHit.tipo_pago),
+        renewal_requested:   !!(pvHit && String(pvHit.tiene_solicitud_de_renovacion || '').toUpperCase() === 'SI')
+      });
+      loansUpserted++;
+
+      // promotor is a client-level (profiles) field, not a loan-level
+      // one — same distinction as Pasiva's placeholder-client creation.
+      // fillProfileMissing only fills currently-blank fields, so this
+      // can never clobber a manually-edited profile.
+      if (cr.promotor && cr.promotor !== 'SIN PROMOTOR') {
+        await fillProfileMissing(matchRow.matched_profile_id, { promotor: cr.promotor });
+      }
+    } catch (e) {
+      errors.push('loan-upsert ' + id_credito + ': ' + (e.message || String(e)));
+    }
+  }
+
+  const summary = {
+    ok: errors.length === 0,
+    duration_ms: Date.now() - start,
+    fecha_cierre, fecha_cierre_source: fechaCierreSource, dias,
+    credits_seen: csRows.length,
+    matches_upserted: matchesUpserted,
+    loans_upserted: loansUpserted,
+    loans_skipped_unverified: loansSkippedUnverified,
+    errors: errors.slice(0, 20)
+  };
+
+  await logActivaSync({
+    endpoint: 'activa/creditos-cierre-saldos+por-vencer',
+    rows_seen: csRows.length,
+    clients_upserted: matchesUpserted,
+    loans_upserted: loansUpserted,
+    clients_created: 0,
+    ok: summary.ok,
+    error: errors.length ? errors.slice(0, 5).join(' | ') : null,
+    duration_ms: summary.duration_ms
+  });
+
+  return summary;
+}
+
 // -------- Auth: admin JWT OR X-Cron-Key ----------------------
 async function requireAdminOrCronKey(req, res, next) {
   const key = req.headers['x-cron-key'];
@@ -1079,6 +1588,40 @@ app.get('/api/sync-status', requireSupabaseAuth, requireOnixAdmin, async (req, r
     return res.json({ latest: (rows && rows[0]) || null });
   } catch (err) {
     return res.status(500).json({ error: (err && err.message) || String(err) });
+  }
+});
+
+// -------- Auth: admin JWT OR X-Cron-Key, Activa's own key ----
+// Deliberately a separate secret from SYNC_CRON_KEY (ACTIVA_SYNC_
+// CRON_KEY) — a leaked key only ever exposes one of the two sync
+// routes, not both. Falls through to the same admin-JWT gate as
+// Pasiva's requireAdminOrCronKey — that part genuinely is generic
+// (just "is this caller an Onix admin"), not Pasiva-specific.
+async function requireAdminOrActivaCronKey(req, res, next) {
+  const key = req.headers['x-cron-key'];
+  if (ACTIVA_SYNC_CRON_KEY && key && key === ACTIVA_SYNC_CRON_KEY) return next();
+  return requireSupabaseAuth(req, res, () => requireOnixAdmin(req, res, next));
+}
+
+// POST /api/activa-sync-run — runs the OUS Activa sync now. Returns
+// summary. No requireOUSLogin-equivalent gate here (unlike Pasiva's
+// route) — Activa's session is lazy/on-demand inside
+// runOUSActivaSync() itself (see stateActiva above), so there's
+// nothing meaningful to pre-check; the function reports a clear
+// "not configured" / "login unavailable" error on its own instead.
+app.post('/api/activa-sync-run', requireAdminOrActivaCronKey, async (req, res) => {
+  try {
+    const summary = await runOUSActivaSync();
+    return res.json(summary);
+  } catch (err) {
+    console.error('[ous-activa-sync] failed:', err && err.message);
+    await logActivaSync({
+      endpoint: 'activa/creditos-cierre-saldos+por-vencer',
+      ok: false,
+      error: (err && err.message) || String(err),
+      duration_ms: 0
+    });
+    return res.status(500).json({ ok: false, error: (err && err.message) || String(err) });
   }
 });
 
@@ -1180,6 +1723,10 @@ app.listen(PORT, () => {
   console.log('[ous-proxy] listening on :' + PORT);
   console.log('[ous-proxy] OUS_API_URL=' + (OUS_API_URL || '(unset)'));
   console.log('[ous-proxy] allowed origins=' + ALLOWED_ORIGINS.join(', '));
+  // OUS Activa has no boot-time login (see stateActiva above) — just
+  // log whether it's configured at all, so a misconfigured deploy is
+  // visible in the Railway log tail without needing to hit the route.
+  console.log('[ous-proxy] OUS_ACTIVA_API_URL=' + (OUS_ACTIVA_API_URL || '(unset — /api/activa-sync-run will fail until set)'));
   // Kick off the auth loop after the HTTP listener is up so /healthz
   // is reachable while we're still fetching the first token.
   startAuthLoop().catch(err =>
