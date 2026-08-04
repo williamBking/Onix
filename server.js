@@ -963,44 +963,58 @@ async function findProfileByRfcOrEmailOrName(rfc, email, fullName) {
   return null;
 }
 
-// Create a placeholder auth.users + linked profiles row. Returns id.
-async function createPlaceholderClient({ email, full_name, rfc, regimen, promotor, bank_clabe, bank_account, ous_id_cliente }) {
+// Finds an existing auth.users row by email, or creates a new one with a
+// random pre-confirmed password. Pure Auth-API plumbing with no
+// business-specific logic (no OUS field mapping, no profiles-table
+// shape), so it's shared as-is between the Pasiva sync's
+// createPlaceholderClient() below and the Activa admin action
+// (createActivaAdminClient) — extracted verbatim from what was
+// previously inlined here, not rewritten. Returns { userId, created }:
+// created=false means an existing account was found and reused — callers
+// must never delete a reused account on a later failure, only one they
+// just created.
+async function findOrCreateAuthUser(email, userMetadata) {
   // 1. Try to reuse an existing auth user with this email (rare but
   //    possible if the profile was deleted but auth.users survived).
   const lookup = await sbFetch('/auth/v1/admin/users?email=' + encodeURIComponent(email || ''));
-  let userId = null;
   if (lookup.ok) {
     const body = await lookup.json();
     const list = (body && (body.users || (Array.isArray(body) ? body : []))) || [];
-    if (list[0] && list[0].id) userId = list[0].id;
+    if (list[0] && list[0].id) return { userId: list[0].id, created: false };
   }
   // 2. Otherwise create the auth user (random password, email confirmed
   //    so it's usable immediately if we later send a reset link).
-  if (!userId) {
-    if (!email) {
-      // No email → can't create auth user. Skip this client.
-      return null;
-    }
-    const rand = require('crypto').randomBytes(24).toString('base64url');
-    const created = await sbFetch('/auth/v1/admin/users', {
-      method: 'POST',
-      body: JSON.stringify({
-        email:        String(email).toLowerCase(),
-        password:     rand,
-        email_confirm: true,
-        user_metadata: { source: 'ous_sync', full_name: full_name || null }
-      })
-    });
-    if (!created.ok) {
-      const text = await created.text();
-      throw new Error('auth.admin.createUser failed HTTP ' + created.status + ': ' + text.slice(0, 200));
-    }
-    const j = await created.json();
-    userId = j && (j.id || (j.user && j.user.id));
-    if (!userId) throw new Error('createUser returned no id: ' + JSON.stringify(j).slice(0, 200));
+  if (!email) return { userId: null, created: false };
+  const rand = require('crypto').randomBytes(24).toString('base64url');
+  const created = await sbFetch('/auth/v1/admin/users', {
+    method: 'POST',
+    body: JSON.stringify({
+      email:        String(email).toLowerCase(),
+      password:     rand,
+      email_confirm: true,
+      user_metadata: userMetadata || {}
+    })
+  });
+  if (!created.ok) {
+    const text = await created.text();
+    throw new Error('auth.admin.createUser failed HTTP ' + created.status + ': ' + text.slice(0, 200));
   }
-  // 3. Insert the profile row. If a stray row already exists on this id
-  //    (from a previous partial sync), upsert instead of insert.
+  const j = await created.json();
+  const userId = j && (j.id || (j.user && j.user.id));
+  if (!userId) throw new Error('createUser returned no id: ' + JSON.stringify(j).slice(0, 200));
+  return { userId, created: true };
+}
+
+// Create a placeholder auth.users + linked profiles row. Returns id.
+async function createPlaceholderClient({ email, full_name, rfc, regimen, promotor, bank_clabe, bank_account, ous_id_cliente }) {
+  const { userId } = await findOrCreateAuthUser(email, { source: 'ous_sync', full_name: full_name || null });
+  if (!userId) {
+    // No email, and no existing account found → can't create auth user.
+    // Skip this client (same behavior as before the extraction).
+    return null;
+  }
+  // Insert the profile row. If a stray row already exists on this id
+  // (from a previous partial sync), upsert instead of insert.
   const profile = {
     id: userId,
     email: (email || '').toLowerCase() || null,
@@ -1622,6 +1636,115 @@ app.post('/api/activa-sync-run', requireAdminOrActivaCronKey, async (req, res) =
       duration_ms: 0
     });
     return res.status(500).json({ ok: false, error: (err && err.message) || String(err) });
+  }
+});
+
+// -------- Activa admin: create a new client + link it to a credit ------
+// Deliberate manual admin action from the Loan Match Review tab, distinct
+// from the automatic OUS Pasiva sync's createPlaceholderClient() above —
+// reuses only the stateless findOrCreateAuthUser() plumbing, not any of
+// the sync-specific field mapping or the 'ous_sync' metadata tag.
+//
+// profiles + ous_activa_client_matches are written atomically together
+// via the activa_admin_create_client() Postgres function (see
+// accompanying SQL) — if the match row was already claimed by a
+// concurrent request, that function raises and the whole transaction
+// (including the profile insert) rolls back. auth.users creation can't
+// share that transaction (different system, Admin Auth API) — if the
+// RPC fails after we created a *fresh* auth user (not a reused one), we
+// delete it so a retry with the same email doesn't hit "already exists."
+async function createActivaAdminClient({ id_credito, full_name, email, phone, address, adminId }) {
+  const existing = await sbFetch('/rest/v1/ous_activa_client_matches?id_credito=eq.' +
+    encodeURIComponent(id_credito) + '&select=id_credito,verified,matched_profile_id');
+  if (!existing.ok) {
+    const text = await existing.text();
+    throw new Error('match lookup failed HTTP ' + existing.status + ': ' + text.slice(0, 200));
+  }
+  const existingRows = await existing.json();
+  const matchRow = existingRows && existingRows[0];
+  if (!matchRow) {
+    const err = new Error('No ous_activa_client_matches row for id_credito ' + id_credito);
+    err.status = 404;
+    throw err;
+  }
+  if (matchRow.verified && matchRow.matched_profile_id) {
+    const err = new Error('This credit is already matched and verified.');
+    err.status = 409;
+    throw err;
+  }
+
+  const { userId, created } = await findOrCreateAuthUser(email, {
+    source: 'ous_activa_admin_created',
+    full_name: full_name || null,
+    created_by_admin_id: adminId,
+    id_credito
+  });
+  if (!userId) {
+    const err = new Error('Could not create or find an account for that email.');
+    err.status = 400;
+    throw err;
+  }
+
+  const rpcRes = await sbFetch('/rest/v1/rpc/activa_admin_create_client', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_user_id:    userId,
+      p_email:      String(email).trim().toLowerCase(),
+      p_full_name:  String(full_name).trim(),
+      p_phone:      phone   ? String(phone).trim()   : null,
+      p_address:    address ? String(address).trim() : null,
+      p_id_credito: id_credito,
+      p_admin_id:   adminId
+    })
+  });
+  if (!rpcRes.ok) {
+    const text = await rpcRes.text();
+    // Only clean up an auth user we just created this call — never touch
+    // one that was found and reused (it predates this request).
+    if (created) {
+      await sbFetch('/auth/v1/admin/users/' + encodeURIComponent(userId), { method: 'DELETE' }).catch(() => {});
+    }
+    throw new Error('activa_admin_create_client failed HTTP ' + rpcRes.status + ': ' + text.slice(0, 300));
+  }
+  const rpcBody = await rpcRes.json();
+  const match = Array.isArray(rpcBody) ? rpcBody[0] : rpcBody;
+  return { profileId: userId, linkedExistingAccount: !created, match };
+}
+
+// POST /api/activa-create-client — admin-only, never a cron path (no
+// requireAdminOrActivaCronKey here on purpose: this must always be a
+// real human admin, never automated).
+app.post('/api/activa-create-client', requireSupabaseAuth, requireOnixAdmin, async (req, res) => {
+  const body = req.body || {};
+  const id_credito = body.id_credito;
+  const full_name  = (body.full_name || '').trim();
+  const email      = (body.email || '').trim();
+  const phone      = body.phone;
+  const address    = body.address;
+
+  if (!id_credito || !String(id_credito).trim()) {
+    return res.status(400).json({ ok: false, error: 'id_credito is required' });
+  }
+  if (!full_name) {
+    return res.status(400).json({ ok: false, error: 'full_name is required' });
+  }
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ ok: false, error: 'A valid email is required' });
+  }
+
+  try {
+    const result = await createActivaAdminClient({
+      id_credito, full_name, email, phone, address, adminId: req.user.id
+    });
+    return res.json({
+      ok: true,
+      profile_id: result.profileId,
+      linked_existing_account: result.linkedExistingAccount,
+      match: result.match
+    });
+  } catch (err) {
+    console.error('[activa-create-client] failed:', err && err.message);
+    return res.status(err.status || 500).json({ ok: false, error: (err && err.message) || String(err) });
   }
 });
 

@@ -4722,7 +4722,9 @@
         <td><span class="oac-badge ${m.verified ? 'active' : 'pending'}">${m.verified ? 'Verified' : 'Unverified'}</span></td>
         <td style="text-align:right;white-space:nowrap">
           <button type="button" class="oac-btn outline" data-lmr-verify="${esc(m.id_credito)}">${m.matched_profile_id ? 'Edit Match' : 'Verify Match'}</button>
-          ${m.matched_profile_id ? `<button type="button" class="oac-btn danger" data-lmr-clear="${esc(m.id_credito)}">Clear Match</button>` : ''}
+          ${m.matched_profile_id
+            ? `<button type="button" class="oac-btn danger" data-lmr-clear="${esc(m.id_credito)}">Clear Match</button>`
+            : `<button type="button" class="oac-btn outline" data-lmr-create="${esc(m.id_credito)}">Create New Client</button>`}
         </td>
       </tr>`).join('') : '<tr><td colspan="7" class="oac-empty">No rows match the current filters.</td></tr>';
 
@@ -4736,6 +4738,12 @@
       b.addEventListener('click', () => {
         const row = activaMatches.find(m => m.id_credito === b.dataset.lmrClear);
         if (row) clearMatch(row);
+      });
+    });
+    tbody.querySelectorAll('[data-lmr-create]').forEach(b => {
+      b.addEventListener('click', () => {
+        const row = activaMatches.find(m => m.id_credito === b.dataset.lmrCreate);
+        if (row) openCreateClientModal(row);
       });
     });
   }
@@ -4845,6 +4853,77 @@
       } catch (ex) {
         err.style.display = 'block';
         err.textContent = ex.message || 'Could not save.';
+        submitBtn.disabled = false; submitBtn.textContent = orig;
+      }
+    });
+  }
+
+  // "Create New Client" — Piece 2. For rows with no existing candidate
+  // match at all. Needs a real backend endpoint (POST /api/activa-
+  // create-client) rather than a direct Supabase write like Verify/Clear
+  // use — creating a real login-capable account requires the Admin Auth
+  // API + service role key, which can't happen from the browser (same
+  // reason createPlaceholderClient() lives in server.js). Uses the
+  // existing field()/submitBar() form helpers (same as openAddLoanModal)
+  // rather than a bespoke layout, since this is a plain field-entry
+  // form, and ousFetch() (same helper the OUS Pasiva tab already uses)
+  // rather than handleFormSubmit(), since this posts to the Railway
+  // proxy, not a direct Supabase insert.
+  function openCreateClientModal(row) {
+    openModal(`
+      <h2>Create New Client</h2>
+      <div class="sub">${esc(row.nombre_cliente_raw)} · Credit ${esc(row.id_credito)} ·
+        <span class="lmr-conf" style="background:${LMR_CONFIDENCE_COLOR[row.confidence] || '#888'}">${esc(row.confidence)}</span>
+      </div>
+      <form id="lmr-create-form">
+        <div class="oac-modal-row" style="grid-template-columns:1fr">
+          ${field('Full Name', 'full_name', { required: true, value: row.nombre_cliente_raw })}
+        </div>
+        <div class="oac-modal-row" style="grid-template-columns:1fr">
+          ${field('Email', 'email', { required: true, type: 'email', placeholder: 'client@example.com' })}
+        </div>
+        <div class="oac-modal-row">
+          ${field('Phone (optional)', 'phone', { placeholder: '(713) 555-0100' })}
+          ${field('Address (optional)', 'address', { placeholder: '1842 Montrose Blvd, Houston, TX' })}
+        </div>
+        <div style="font-size:.76rem;color:#888;margin-bottom:14px">
+          Creates a real login-capable account (status: Ready to Activate) and links it to this credit as a verified match.
+        </div>
+        ${submitBar('Create Client')}
+      </form>
+    `);
+
+    const form = document.getElementById('lmr-create-form');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const submitBtn = form.querySelector('[data-form-submit]');
+      const errEl = form.querySelector('#oac-form-err');
+      errEl.style.display = 'none';
+      const orig = submitBtn.textContent;
+      submitBtn.disabled = true; submitBtn.textContent = 'Creating…';
+      try {
+        const fd = new FormData(form);
+        // ousFetch() throws on any non-2xx response (see the OUS Pasiva
+        // tab above), so reaching the line after this is success.
+        const resp = await ousFetch('/api/activa-create-client', {
+          id_credito: row.id_credito,
+          full_name:  String(fd.get('full_name') || '').trim(),
+          email:      String(fd.get('email') || '').trim(),
+          phone:      strOrNull(fd.get('phone')),
+          address:    strOrNull(fd.get('address'))
+        });
+        const idx = activaMatches.findIndex(m => m.id_credito === row.id_credito);
+        if (idx !== -1 && resp.match) activaMatches[idx] = resp.match;
+        document.getElementById('oac-modal').classList.remove('open');
+        renderLoanMatchReviewRows();
+        // Unlike Verify/Clear, this adds a brand-new client — refresh the
+        // shared client list (window.__onixAdminData.clients) so it's
+        // immediately searchable in the Verify Match picker for other
+        // rows, and so Dashboard/Clients reflect the new account too.
+        if (typeof refreshAll === 'function') refreshAll();
+      } catch (ex) {
+        errEl.style.display = 'block';
+        errEl.textContent = ex.message || 'Could not create client.';
         submitBtn.disabled = false; submitBtn.textContent = orig;
       }
     });
