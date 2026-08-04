@@ -1286,23 +1286,40 @@ function mapActivaStatus(fecha_castigo) {
   return fecha_castigo ? 'review' : 'active';
 }
 
+// Loose structural check for a real Mexican RFC, not a full checksum
+// validator: 3-4 letters, then exactly 6 digits (the YYMMDD birthdate
+// segment CLAUDE.md's notes call out), then 3 alphanumeric homoclave
+// chars. This alone rejects the observed junk pattern ("HAAAAAAAAAAAA"
+// — no digit run at all). The extra low-entropy guard is belt-and-
+// suspenders against a pathological value that could still match the
+// shape (e.g. a repeated-letter prefix landing next to a real-looking
+// digit run by coincidence).
+function isPlausibleRfc(raw) {
+  if (!raw) return false;
+  const rfc = String(raw).trim().toUpperCase();
+  if (!/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(rfc)) return false;
+  if (new Set(rfc).size < 3) return false;
+  return rfc;
+}
+
 // Upserts the review-queue row for one credit. CRITICAL: only ever
-// sends id_credito / nombre_cliente_raw / last_seen_at — matched_
+// sends id_credito / nombre_cliente_raw / rfc / last_seen_at — matched_
 // profile_id, confidence, verified, verified_by, verified_at are
 // deliberately never included in this payload, not even as null, so
 // PostgREST's merge-duplicates upsert never touches them on an
 // existing row. An admin's prior review work must survive every sync
-// run untouched; only the sync-owned fields (name-as-last-seen,
+// run untouched; only the sync-owned fields (name-as-last-seen, rfc,
 // last_seen_at) ever move. Uses return=representation to read back the
 // row's current — possibly admin-set — review state in the same
 // request, rather than a separate round-trip SELECT.
-async function upsertActivaClientMatch(id_credito, nombre_cliente_raw) {
+async function upsertActivaClientMatch(id_credito, nombre_cliente_raw, rfc) {
   const r = await sbFetch('/rest/v1/ous_activa_client_matches?on_conflict=id_credito', {
     method: 'POST',
     headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' },
     body: JSON.stringify({
       id_credito,
       nombre_cliente_raw,
+      rfc: rfc || null,
       last_seen_at: new Date().toISOString()
     })
   });
@@ -1312,6 +1329,42 @@ async function upsertActivaClientMatch(id_credito, nombre_cliente_raw) {
   }
   const rows = await r.json();
   return rows[0];
+}
+
+// Suggests a match by exact RFC lookup against profiles.rfc — RFC is a
+// unique government tax ID, so an exact single hit is treated as a
+// high-confidence suggestion, not a guess. Deliberately does NOT set
+// verified=true: it only pre-fills matched_profile_id + confidence so
+// the existing Loan Match Review admin UI shows the client already
+// picked, one click away from a real human confirming it (same as if
+// an admin had searched and picked manually) — runOUSActivaSync()'s
+// own verified-gate still decides whether a loan actually gets
+// written. Never touches a row an admin has already worked on
+// (matched and/or verified) — both the app-level check before calling
+// this and the WHERE clause below guard that independently. A row with
+// zero or multiple RFC hits is left alone rather than guessed at.
+async function tryAutoMatchByRfc(matchRow, rawRfc) {
+  if (matchRow.verified || matchRow.matched_profile_id) return matchRow;
+  const rfc = isPlausibleRfc(rawRfc);
+  if (!rfc) return matchRow;
+
+  const lookup = await sbFetch('/rest/v1/profiles?rfc=eq.' + encodeURIComponent(rfc) + '&select=id&limit=2');
+  if (!lookup.ok) return matchRow; // best-effort — never fail the sync over this
+  const hits = await lookup.json();
+  if (!hits || hits.length !== 1) return matchRow; // no match, or ambiguous — leave for manual review
+
+  const patch = await sbFetch(
+    '/rest/v1/ous_activa_client_matches?id_credito=eq.' + encodeURIComponent(matchRow.id_credito) +
+    '&verified=eq.false&matched_profile_id=is.null',
+    {
+      method: 'PATCH',
+      headers: { 'Prefer': 'return=representation' },
+      body: JSON.stringify({ matched_profile_id: hits[0].id, confidence: 'high' })
+    }
+  );
+  if (!patch.ok) return matchRow; // best-effort here too
+  const rows = await patch.json();
+  return (rows && rows[0]) || matchRow;
 }
 
 // If a credit that is currently NOT verified has a live loans row from
@@ -1458,7 +1511,7 @@ async function runOUSActivaSync() {
 
   // 4. Per credit: upsert the review-queue row, read back its current
   //    state, branch on verified.
-  let matchesUpserted = 0, loansUpserted = 0, loansSkippedUnverified = 0;
+  let matchesUpserted = 0, loansUpserted = 0, loansSkippedUnverified = 0, rfcAutoMatched = 0;
   const errors = [];
 
   for (const cr of csRows) {
@@ -1468,11 +1521,19 @@ async function runOUSActivaSync() {
 
     let matchRow;
     try {
-      matchRow = await upsertActivaClientMatch(id_credito, nombre_cliente_raw);
+      matchRow = await upsertActivaClientMatch(id_credito, nombre_cliente_raw, cr.rfc);
       matchesUpserted++;
     } catch (e) {
       errors.push('match-upsert ' + id_credito + ': ' + (e.message || String(e)));
       continue;
+    }
+
+    try {
+      const beforeMatch = matchRow.matched_profile_id;
+      matchRow = await tryAutoMatchByRfc(matchRow, cr.rfc);
+      if (!beforeMatch && matchRow.matched_profile_id) rfcAutoMatched++;
+    } catch (e) {
+      errors.push('rfc-auto-match ' + id_credito + ': ' + (e.message || String(e)));
     }
 
     if (!matchRow.verified || !matchRow.matched_profile_id) {
@@ -1529,6 +1590,7 @@ async function runOUSActivaSync() {
     fecha_cierre, fecha_cierre_source: fechaCierreSource, dias,
     credits_seen: csRows.length,
     matches_upserted: matchesUpserted,
+    rfc_auto_matched: rfcAutoMatched,
     loans_upserted: loansUpserted,
     loans_skipped_unverified: loansSkippedUnverified,
     errors: errors.slice(0, 20)
