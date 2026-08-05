@@ -3440,6 +3440,7 @@
         id: 'payment-' + p.id,
         title: fmt.money(p.amount_due) + (isDeposit ? ' interest due' : ' payment due'),
         subtitle: (p.loans && (p.loans.loan_id_display || (p.loans.profiles && p.loans.profiles.full_name))) || '',
+        amount: p.amount_due,
         type: isDeposit ? 'interest_due' : 'payment', date: p.due_date, source: 'payment', readOnly: true
       });
     });
@@ -3458,6 +3459,7 @@
         id: 'loan-next-due-' + l.id,
         title: amt + (isDeposit ? 'interest due · ' : 'payment due · ') + (l.loan_id_display || ''),
         subtitle: (l.profiles && l.profiles.full_name) || '',
+        amount: l.monthly_payment,
         type: isDeposit ? 'interest_due' : 'payment',
         date: l.next_due_date,
         source: 'loan-next-due',
@@ -3579,7 +3581,36 @@
       const dateStr = cy + '-' + String(cm + 1).padStart(2, '0') + '-' + String(cd).padStart(2, '0');
       const isToday = dateStr === todayStr;
       const events  = byDate[dateStr] || [];
-      const eventsHtml = events.slice(0, 3).map(ev => {
+
+      // Group same-type cashflow events (payment / interest due) into one
+      // summary row per type when a day has more than one — a loan-heavy
+      // day was otherwise showing a full pill per individual loan. Clicking
+      // the cell still opens the day panel, which lists every payment in
+      // full individual detail, so nothing is lost, just condensed here.
+      const CASHFLOW_GROUP_LABEL = {
+        payment:      n => n + ' payments due',
+        interest_due: n => n + ' interest payments due'
+      };
+      const cashflowByType = {};
+      events.forEach(ev => {
+        if (!CASHFLOW_GROUP_LABEL[ev.type]) return;
+        (cashflowByType[ev.type] = cashflowByType[ev.type] || []).push(ev);
+      });
+      const groupedTypeEmitted = {};
+      const displayEvents = events.reduce((out, ev) => {
+        const group = CASHFLOW_GROUP_LABEL[ev.type] && cashflowByType[ev.type];
+        if (!group || group.length === 1) { out.push(ev); return out; }
+        if (groupedTypeEmitted[ev.type]) return out; // summary row already added for this type
+        groupedTypeEmitted[ev.type] = true;
+        const total = group.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+        out.push({
+          title: fmt.money(total) + ' · ' + CASHFLOW_GROUP_LABEL[ev.type](group.length),
+          type: ev.type, grouped: true, groupedEvents: group
+        });
+        return out;
+      }, []);
+
+      const eventsHtml = displayEvents.slice(0, 3).map(ev => {
         const color = (CAL_TYPES[ev.type] || CAL_TYPES.other).color;
         const recMark = (ev.recurrence && ev.recurrence !== 'none')
           ? '<span class="cal-event-rec" title="Recurring (' + esc(ev.recurrence) + ')">↻</span>' : '';
@@ -3588,7 +3619,7 @@
                  '<span class="cal-event-title">' + esc(ev.title) + '</span>' + recMark +
                '</div>';
       }).join('');
-      const overflow = events.length > 3 ? '<div class="cal-overflow">+' + (events.length - 3) + ' more</div>' : '';
+      const overflow = displayEvents.length > 3 ? '<div class="cal-overflow">+' + (displayEvents.length - 3) + ' more</div>' : '';
       cellsHtml +=
         '<div class="cal-cell' + (otherMonth ? ' other-month' : '') + (isToday ? ' today' : '') + '" data-date="' + dateStr + '">' +
           '<div class="cal-day-num">' + cd + '</div>' +
