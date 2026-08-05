@@ -1572,7 +1572,8 @@
           ? `<option value="${esc(o)}">${esc(o)}</option>`
           : `<option value="${esc(o.value)}"${o.selected ? ' selected' : ''}>${esc(o.label)}</option>`
       ).join('');
-      return `<div><div class="k">${esc(label)}</div><select name="${esc(name)}" ${required} style="${INPUT_STYLE}">${options}</select></div>`;
+      const disabled = opts.disabled ? 'disabled' : '';
+      return `<div><div class="k">${esc(label)}</div><select name="${esc(name)}" ${required} ${disabled} style="${INPUT_STYLE}">${options}</select></div>`;
     }
     return `<div><div class="k">${esc(label)}</div><input name="${esc(name)}" type="${type}" ${required} ${placeholder} ${step} ${value} ${moneyAttrs} style="${INPUT_STYLE}"></div>`;
   }
@@ -1582,6 +1583,15 @@
       .concat((clients || [])
         .filter(c => c.role === 'client')
         .map(c => ({ value: c.id, label: (up(c.full_name) || c.email) + ' · ' + c.email })));
+  }
+
+  // Venture Name on Add Investment / Add Deposit is populated from open
+  // raises only (matches the existing plain-text-copy pattern already used
+  // by ensureInvestmentFromInterest() — no raise_id FK, just the name).
+  function openRaiseOptions(raises) {
+    return (raises || [])
+      .filter(r => r.status === 'open')
+      .map(r => ({ value: r.venture_name, label: r.venture_name }));
   }
 
   function submitBar(submitLabel) {
@@ -1797,25 +1807,32 @@
   // ---------- Add Investment modal ----------
   function openAddInvestmentModal() {
     const clients = (window.__onixAdminData && window.__onixAdminData.clients) || [];
+    const openRaises = openRaiseOptions((window.__onixAdminData && window.__onixAdminData.raises) || []);
+    const hasOpenRaises = openRaises.length > 0;
     openModal(`
       <h2>Add Investment</h2>
       <div class="sub">Record a client position in a venture</div>
+      ${hasOpenRaises ? '' : `<div style="margin-bottom:14px;padding:10px 12px;background:#FDF5E6;color:#A07818;font-size:.82rem;border-left:3px solid #A07818">No open raises available — open a raise first before recording a new investment.</div>`}
       <form id="oac-add-inv-form">
         <div class="oac-modal-row" style="grid-template-columns:1fr">
           ${field('Client', 'user_id', { required: true, select: clientOptions(clients) })}
         </div>
         <div class="oac-modal-row">
-          ${field('Venture Name',      'venture_name',      { required: true, placeholder: 'Bari Caffè Houston' })}
+          ${field('Venture Name',      'venture_name',      { required: true, disabled: !hasOpenRaises,
+              select: hasOpenRaises ? [{ value: '', label: '— Select raise —' }].concat(openRaises) : [{ value: '', label: 'No open raises' }] })}
           ${field('Type',              'venture_type',      { required: true, select: [{value:'equity',label:'Equity'},{value:'deposit',label:'Deposit'}] })}
           ${field('Amount Invested ($)','amount_invested',  { type: 'number', step: '0.01', required: true, placeholder: '50000' })}
           ${field('Ownership (%)',     'ownership_pct',     { type: 'number', step: '0.01', placeholder: 'Optional' })}
-          ${field('Expected Return (%)','expected_return',  { type: 'number', step: '0.01', placeholder: '9.5' })}
           ${field('Start Date',        'start_date',        { type: 'date' })}
           ${field('Status',            'status',            { required: true, select: [{value:'active',label:'Active',selected:true},'pending','exited'] })}
         </div>
         ${submitBar('Create Investment')}
       </form>`);
     const form = document.getElementById('oac-add-inv-form');
+    if (!hasOpenRaises) {
+      const submitBtn = form.querySelector('[data-form-submit]');
+      if (submitBtn) submitBtn.disabled = true;
+    }
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const fd = new FormData(form);
@@ -1825,7 +1842,6 @@
         venture_type:    strOrNull(fd.get('venture_type')),
         amount_invested: numOrNull(fd.get('amount_invested')),
         ownership_pct:   numOrNull(fd.get('ownership_pct')),
-        expected_return: numOrNull(fd.get('expected_return')),
         start_date:      strOrNull(fd.get('start_date')),
         status:          String(fd.get('status'))
       }), 'investments');
