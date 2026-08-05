@@ -3176,8 +3176,11 @@
     deposit_closing:  { label: 'Deposit Closing',      color: '#C0392B' },
     loan_closing:     { label: 'Loan Closing',         color: '#7A2A20' },
     loan_renewal:     { label: 'Client Loan Renewal',  color: '#C9952B' },
-    quarterly_report: { label: 'Quarterly Report',     color: '#4A6FA5' },
-    meeting:          { label: 'Meeting',              color: '#B07330' },
+    // 'other' is kept as the fallback for CAL_TYPES[ev.type] || CAL_TYPES.other
+    // below, but deliberately excluded from the legend and the Add Event
+    // type dropdown (see the .filter() calls at both usage sites) — it's
+    // not offered as a selectable category, same as the removed
+    // Quarterly Report / Meeting types.
     other:            { label: 'Other',                color: '#6B6560' }
   };
   let calMonth   = new Date().getMonth();
@@ -3582,7 +3585,7 @@
 
     const legend = document.getElementById('cal-legend');
     if (legend) {
-      legend.innerHTML = Object.keys(CAL_TYPES).map(k => {
+      legend.innerHTML = Object.keys(CAL_TYPES).filter(k => k !== 'other').map(k => {
         const t = CAL_TYPES[k];
         return '<div class="cal-legend-item"><span class="dot" style="background:' + t.color + '"></span>' + t.label + '</div>';
       }).join('');
@@ -3705,7 +3708,7 @@
     const panel = bg.querySelector('.cal-panel');
     const defaultDate = presetDate || new Date().toISOString().slice(0, 10);
 
-    const typeOpts = Object.keys(CAL_TYPES).map(k =>
+    const typeOpts = Object.keys(CAL_TYPES).filter(k => k !== 'other').map(k =>
       '<option value="' + k + '">' + CAL_TYPES[k].label + '</option>'
     ).join('');
     const clientOpts = '<option value="">— No client —</option>' +
