@@ -19,6 +19,10 @@
   };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
     ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;' }[c]));
+  // Client names render in ALL CAPS throughout the admin portal (display
+  // only — never touches what's actually stored in profiles.full_name, so
+  // exports, search matching, and edit forms all keep the real value).
+  const up = s => (s ? String(s).toUpperCase() : s);
 
   // ---------- styles for the live console overlay ----------
   function injectStyles() {
@@ -188,7 +192,7 @@
     const isDeposit = loan.data_source === 'ous_pasiva';
     openModal(`
       <h2>${isDeposit ? 'Deposit' : 'Loan'} ${esc(loan.loan_id_display || loan.id.slice(0,8))}</h2>
-      <div class="sub">${esc(c.full_name || c.email || 'Unknown client')}</div>
+      <div class="sub">${esc(up(c.full_name) || c.email || 'Unknown client')}</div>
       <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
         <a href="#" data-add-payment style="display:inline-block;background:#fff;color:#1A1A1A;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none">+ Add Payment</a>
       </div>
@@ -224,7 +228,7 @@
 
   function viewInvestment(inv) {
     const c = inv.profiles || {};
-    const clientName = c.full_name || c.email || 'Unknown client';
+    const clientName = up(c.full_name) || c.email || 'Unknown client';
     openModal(`
       <h2>${esc(inv.venture_name)}</h2>
       <div class="sub">${esc(clientName)}</div>
@@ -308,7 +312,7 @@
 
     container.innerHTML = `
       <div class="oac-modal-row">
-        ${detailRow('Name', p.full_name || '—')}
+        ${detailRow('Name', up(p.full_name) || '—')}
         ${detailRow('Email', p.email || '—')}
         ${detailRow('Status', statusLabel)}
         ${detailRow('Investor Since', since)}
@@ -392,7 +396,7 @@
       <a href="#" data-app-status="${esc(status)}" style="display:inline-block;background:${color === 'red' ? '#C0392B' : '#fff'};color:${color === 'red' ? '#fff' : '#1A1A1A'};padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid ${color === 'red' ? '#C0392B' : '#E8E8E8'};border-radius:2px;text-decoration:none">${esc(label)}</a>`;
     openModal(`
       <h2>Loan Application</h2>
-      <div class="sub">${esc(c.full_name || c.email || 'Unknown client')} · ${fmt.date(app.submitted_at)}</div>
+      <div class="sub">${esc(up(c.full_name) || c.email || 'Unknown client')} · ${fmt.date(app.submitted_at)}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
         ${statusBtn('Approve', 'approved', 'red')}
         ${statusBtn('Mark Reviewed', 'reviewed')}
@@ -689,7 +693,7 @@
         const contactBits = [i.contact_method, i.best_time].filter(Boolean).join(' · ');
         return `
         <tr data-int-id="${esc(i.id)}">
-          <td><div style="font-weight:600">${esc(p.full_name || '—')}</div><div style="font-size:.74rem;color:#888">${esc(p.email || '—')}</div></td>
+          <td><div style="font-weight:600">${esc(up(p.full_name) || '—')}</div><div style="font-size:.74rem;color:#888">${esc(p.email || '—')}</div></td>
           <td>${esc(r.venture_name || '—')}${r.venture_type ? `<div style="font-size:.74rem;color:#888">${esc(r.venture_type)}</div>` : ''}</td>
           <td>${i.amount != null ? fmt.money(i.amount) : '—'}${r.minimum_investment != null ? `<div style="font-size:.74rem;color:#888">min ${fmt.money(r.minimum_investment)}</div>` : ''}</td>
           <td style="font-size:.82rem">${contactBits ? esc(contactBits) : '<span style="color:#9B9590">—</span>'}</td>
@@ -851,7 +855,7 @@
       </tr></thead><tbody>${pending.map(p => `
         <tr data-id="${esc(p.id)}">
           <td><input type="checkbox" class="oac-pending-check" data-id="${esc(p.id)}" style="width:16px;height:16px;cursor:pointer"></td>
-          <td>${esc(p.full_name || '—')}</td>
+          <td>${esc(up(p.full_name) || '—')}</td>
           <td>${esc(p.email)}</td>
           <td>${fmt.date(p.created_at)}</td>
           <td style="text-align:right">
@@ -941,7 +945,7 @@
         <th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Joined</th>
       </tr></thead><tbody>${clients.map(c => `
         <tr>
-          <td>${esc(c.full_name || '—')}</td>
+          <td>${esc(up(c.full_name) || '—')}</td>
           <td>${esc(c.email)}</td>
           <td>${esc(c.role)}</td>
           <td><span class="oac-badge ${esc(c.status || '')}">${esc(c.status || '—')}</span></td>
@@ -958,7 +962,7 @@
       </tr></thead><tbody>${apps.map(a => `
         <tr>
           <td>${fmt.date(a.submitted_at)}</td>
-          <td>${esc((a.profiles && (a.profiles.full_name || a.profiles.email)) || a.user_id)}</td>
+          <td>${esc((a.profiles && (up(a.profiles.full_name) || a.profiles.email)) || a.user_id)}</td>
           <td>${fmt.money(a.amount_requested)}</td>
           <td>${esc(a.applicant_type || '—')}</td>
           <td>${esc(a.purpose || '—')}</td>
@@ -975,7 +979,7 @@
       </tr></thead><tbody>${loans.map((l, i) => `
         <tr>
           <td>${esc(l.loan_id_display || l.id.slice(0,8))}</td>
-          <td>${esc((l.profiles && (l.profiles.full_name || l.profiles.email)) || l.user_id)}</td>
+          <td>${esc((l.profiles && (up(l.profiles.full_name) || l.profiles.email)) || l.user_id)}</td>
           <td>${fmt.money(l.balance)}</td>
           <td>${fmt.pct(l.interest_rate)}</td>
           <td>${fmt.money(l.monthly_payment)}</td>
@@ -999,7 +1003,7 @@
         <th>Client</th><th>Venture</th><th>Type</th><th>Invested</th><th>Ownership</th><th>Return</th><th>Status</th><th style="text-align:right">Actions</th>
       </tr></thead><tbody>${invs.map((i, idx) => `
         <tr>
-          <td>${esc((i.profiles && (i.profiles.full_name || i.profiles.email)) || i.user_id)}</td>
+          <td>${esc((i.profiles && (up(i.profiles.full_name) || i.profiles.email)) || i.user_id)}</td>
           <td>${esc(i.venture_name)}</td>
           <td>${esc(i.venture_type || '—')}</td>
           <td>${fmt.money(i.amount_invested)}</td>
@@ -1230,26 +1234,26 @@
       const events = [];
       applications.slice(0, 6).forEach(a => events.push({
         ts: new Date(a.submitted_at),
-        title: 'New application from ' + ((a.profiles && (a.profiles.full_name || a.profiles.email)) || 'a client'),
+        title: 'New application from ' + ((a.profiles && (up(a.profiles.full_name) || a.profiles.email)) || 'a client'),
         meta:  fmt.money(a.amount_requested) + ' · ' + fmt.date(a.submitted_at),
         dot:   ''
       }));
       payments.filter(p => p.paid_at).slice(0, 6).forEach(p => events.push({
         ts: new Date(p.paid_at),
         title: 'Payment received — ' + ((p.loans && p.loans.loan_id_display) || 'loan'),
-        meta:  fmt.money(p.amount_due) + ' · ' + ((p.loans && p.loans.profiles && p.loans.profiles.full_name) || 'client') + ' · ' + fmt.date(p.paid_at),
+        meta:  fmt.money(p.amount_due) + ' · ' + ((p.loans && p.loans.profiles && up(p.loans.profiles.full_name)) || 'client') + ' · ' + fmt.date(p.paid_at),
         dot:   ''
       }));
       distributions.slice(0, 6).forEach(d => events.push({
         ts: new Date(d.paid_at),
         title: 'Distribution paid — ' + ((d.investments && d.investments.venture_name) || 'venture'),
-        meta:  fmt.money(d.amount) + ' · ' + ((d.investments && d.investments.profiles && d.investments.profiles.full_name) || 'client') + ' · ' + fmt.date(d.paid_at),
+        meta:  fmt.money(d.amount) + ' · ' + ((d.investments && d.investments.profiles && up(d.investments.profiles.full_name)) || 'client') + ' · ' + fmt.date(d.paid_at),
         dot:   'gray'
       }));
       clients.slice(0, 6).forEach(c => events.push({
         ts: new Date(c.created_at),
-        title: c.status === 'pending' ? 'Signup pending approval — ' + (c.full_name || c.email)
-                                      : 'Client added — ' + (c.full_name || c.email),
+        title: c.status === 'pending' ? 'Signup pending approval — ' + (up(c.full_name) || c.email)
+                                      : 'Client added — ' + (up(c.full_name) || c.email),
         meta:  c.email + ' · ' + fmt.date(c.created_at),
         dot:   c.status === 'pending' ? '' : 'gray'
       }));
@@ -1318,7 +1322,7 @@
     };
     const rows = clients.length ? clients.map(c => `
       <tr data-profile-id="${esc(c.id)}" data-onix-docs="${esc(Array.from(docsByProfile[c.id] || []).join(','))}">
-        <td>${esc(c.full_name || '—')}</td>
+        <td>${esc(up(c.full_name) || '—')}</td>
         <td>${esc(c.email)}</td>
         <td>${esc(roleText(c))}</td>
         <td>${loanBalances[c.id] ? fmt.money(loanBalances[c.id]) : '—'}</td>
@@ -1347,7 +1351,7 @@
       return `
         <tr data-pending-id="${esc(p.id)}">
           <td style="width:32px"><input type="checkbox" class="oac-pending-check" data-id="${esc(p.id)}" data-stage="${isReady ? 'met' : 'pending'}" style="width:16px;height:16px;cursor:pointer"></td>
-          <td>${esc(p.full_name || '—')}</td>
+          <td>${esc(up(p.full_name) || '—')}</td>
           <td>${esc(p.email)}</td>
           <td>${fmt.date(p.created_at)}</td>
           <td style="text-align:right;white-space:nowrap">
@@ -1577,7 +1581,7 @@
     return [{ value: '', label: '— Select client —' }]
       .concat((clients || [])
         .filter(c => c.role === 'client')
-        .map(c => ({ value: c.id, label: (c.full_name || c.email) + ' · ' + c.email })));
+        .map(c => ({ value: c.id, label: (up(c.full_name) || c.email) + ' · ' + c.email })));
   }
 
   function submitBar(submitLabel) {
@@ -2181,7 +2185,7 @@
     const rows = loans.length ? loans.map((l, i) => `
       <tr>
         <td>${esc(l.loan_id_display || l.id.slice(0,8))}</td>
-        <td>${esc((l.profiles && (l.profiles.full_name || l.profiles.email)) || l.user_id)}</td>
+        <td>${esc((l.profiles && (up(l.profiles.full_name) || l.profiles.email)) || l.user_id)}</td>
         <td>${fmt.money(l.balance)}</td>
         <td>${fmt.pct(l.interest_rate)}</td>
         <td>${fmt.money(l.monthly_payment)}</td>
@@ -2240,7 +2244,7 @@
       _kind: 'loan',
       _src: l,
       deposit_id: l.loan_id_display || l.id.slice(0,8),
-      client: (l.profiles && (l.profiles.full_name || l.profiles.email)) || l.user_id,
+      client: (l.profiles && (up(l.profiles.full_name) || l.profiles.email)) || l.user_id,
       client_email: (l.profiles && l.profiles.email) || '',
       balance: l.balance,
       rate: l.interest_rate,
@@ -2254,7 +2258,7 @@
         _kind: 'inv',
         _src: d,
         deposit_id: d.venture_name || d.id.slice(0,8),
-        client: (d.profiles && (d.profiles.full_name || d.profiles.email)) || d.user_id,
+        client: (d.profiles && (up(d.profiles.full_name) || d.profiles.email)) || d.user_id,
         client_email: (d.profiles && d.profiles.email) || '',
         balance: d.amount_invested,
         rate: d.expected_return,
@@ -2360,7 +2364,7 @@
     if (alreadyPainted(v)) return true;
     const rows = invs.length ? invs.map((it, i) => `
       <tr>
-        <td>${esc((it.profiles && (it.profiles.full_name || it.profiles.email)) || it.user_id)}</td>
+        <td>${esc((it.profiles && (up(it.profiles.full_name) || it.profiles.email)) || it.user_id)}</td>
         <td>${esc(it.venture_name)}</td>
         <td>${esc(it.venture_type || '—')}</td>
         <td>${fmt.money(it.amount_invested)}</td>
@@ -2452,7 +2456,7 @@
     const rows = applications.length ? applications.map((a, i) => `
       <tr>
         <td>${fmt.date(a.submitted_at)}</td>
-        <td>${esc((a.profiles && (a.profiles.full_name || a.profiles.email)) || a.user_id)}</td>
+        <td>${esc((a.profiles && (up(a.profiles.full_name) || a.profiles.email)) || a.user_id)}</td>
         <td>${fmt.money(a.amount_requested)}</td>
         <td>${esc(a.applicant_type || '—')}</td>
         <td>${esc(a.purpose || '—')}</td>
@@ -2526,24 +2530,24 @@
       const hit = (s) => String(s || '').toLowerCase().includes(q);
       const results = [];
       (d.clients || []).forEach(c => {
-        if (hit(c.full_name) || hit(c.email)) results.push({ type: 'Client', label: c.full_name || c.email, sub: c.email + ' · ' + (c.status || ''), act: null });
+        if (hit(c.full_name) || hit(c.email)) results.push({ type: 'Client', label: up(c.full_name) || c.email, sub: c.email + ' · ' + (c.status || ''), act: null });
       });
       (d.loans || []).forEach((l, i) => {
-        const cn = (l.profiles && (l.profiles.full_name || l.profiles.email)) || '';
+        const cn = (l.profiles && (up(l.profiles.full_name) || l.profiles.email)) || '';
         // OUS Pasiva rows are deposits, not loans — see Active Deposits tab
         // and CAL_TYPES.deposit_closing for the same distinction elsewhere.
         const isDeposit = l.data_source === 'ous_pasiva';
         if (hit(l.loan_id_display) || hit(cn)) results.push({ type: isDeposit ? 'Deposit' : 'Loan', label: l.loan_id_display || l.id.slice(0,8), sub: cn + ' · ' + fmt.money(l.balance), act: () => viewLoan(l) });
       });
       (d.investments || []).forEach(inv => {
-        const cn = (inv.profiles && (inv.profiles.full_name || inv.profiles.email)) || '';
+        const cn = (inv.profiles && (up(inv.profiles.full_name) || inv.profiles.email)) || '';
         if (hit(inv.venture_name) || hit(cn)) results.push({ type: 'Investment', label: inv.venture_name, sub: cn + ' · ' + fmt.money(inv.amount_invested), act: () => viewInvestment(inv) });
       });
       (d.raises || []).forEach(r => {
         if (hit(r.venture_name)) results.push({ type: 'Raise', label: r.venture_name, sub: (r.status || '') + ' · ' + fmt.money(r.total_raise_target), act: () => viewRaise(r) });
       });
       (d.applications || []).forEach(a => {
-        const cn = (a.profiles && (a.profiles.full_name || a.profiles.email)) || '';
+        const cn = (a.profiles && (up(a.profiles.full_name) || a.profiles.email)) || '';
         if (hit(cn) || hit(a.purpose)) results.push({ type: 'Application', label: cn || 'Application', sub: fmt.money(a.amount_requested) + ' · ' + (a.status || 'pending'), act: () => viewApplication(a) });
       });
 
@@ -2872,7 +2876,7 @@
     tr.setAttribute('data-onix-live-app', app.id);
     tr.style.background = '#FDF0EE';
     const submitted = fmt.date(app.submitted_at);
-    const client    = (app.profiles && (app.profiles.full_name || app.profiles.email)) || app.user_id;
+    const client    = (app.profiles && (up(app.profiles.full_name) || app.profiles.email)) || app.user_id;
     const email     = app.profiles && app.profiles.email;
     const amount    = fmt.money(app.amount_requested);
     const purpose   = app.purpose || '—';
@@ -3024,23 +3028,23 @@
     const items = [];
     (data.applications || []).forEach(a => items.push({
       ts: new Date(a.submitted_at).getTime(),
-      msg: 'New loan application from <b>' + esc((a.profiles && (a.profiles.full_name || a.profiles.email)) || 'a client') + '</b> · ' + fmt.money(a.amount_requested)
+      msg: 'New loan application from <b>' + esc((a.profiles && (up(a.profiles.full_name) || a.profiles.email)) || 'a client') + '</b> · ' + fmt.money(a.amount_requested)
     }));
     (data.payments || []).filter(p => p.paid_at).forEach(p => items.push({
       ts: new Date(p.paid_at).getTime(),
-      msg: 'Payment received from <b>' + esc((p.loans && p.loans.profiles && p.loans.profiles.full_name) || 'a client') + '</b> · ' + fmt.money(p.amount_due)
+      msg: 'Payment received from <b>' + esc((p.loans && p.loans.profiles && up(p.loans.profiles.full_name)) || 'a client') + '</b> · ' + fmt.money(p.amount_due)
     }));
     (data.distributions || []).forEach(d => items.push({
       ts: new Date(d.paid_at).getTime(),
-      msg: 'Distribution paid to <b>' + esc((d.investments && d.investments.profiles && d.investments.profiles.full_name) || 'a client') + '</b> · ' + fmt.money(d.amount) + ((d.investments && d.investments.venture_name) ? ' · ' + esc(d.investments.venture_name) : '')
+      msg: 'Distribution paid to <b>' + esc((d.investments && d.investments.profiles && up(d.investments.profiles.full_name)) || 'a client') + '</b> · ' + fmt.money(d.amount) + ((d.investments && d.investments.venture_name) ? ' · ' + esc(d.investments.venture_name) : '')
     }));
     (data.pending || []).forEach(c => items.push({
       ts: new Date(c.created_at).getTime(),
-      msg: (c.status === 'met' ? 'Client ready to activate: <b>' : 'New client signed up: <b>') + esc(c.full_name || c.email) + '</b>'
+      msg: (c.status === 'met' ? 'Client ready to activate: <b>' : 'New client signed up: <b>') + esc(up(c.full_name) || c.email) + '</b>'
     }));
     (data.interests || []).forEach(i => items.push({
       ts: new Date(i.created_at || i.submitted_at || Date.now()).getTime(),
-      msg: 'Investment interest from <b>' + esc((i.profiles && (i.profiles.full_name || i.profiles.email)) || 'a client') + '</b>' + ((i.raises && i.raises.venture_name) ? ' · ' + esc(i.raises.venture_name) : '')
+      msg: 'Investment interest from <b>' + esc((i.profiles && (up(i.profiles.full_name) || i.profiles.email)) || 'a client') + '</b>' + ((i.raises && i.raises.venture_name) ? ' · ' + esc(i.raises.venture_name) : '')
     }));
 
     items.sort((a, b) => b.ts - a.ts);
@@ -3351,7 +3355,7 @@
       const parts = p.date_of_birth.split('-'); // YYYY-MM-DD
       calEvents.push({
         id: 'bday-' + p.id,
-        title: (p.full_name || 'Client') + "'s Birthday",
+        title: (up(p.full_name) || 'Client') + "'s Birthday",
         type: 'birthday',
         monthDay: parts[1] + '-' + parts[2],
         date: null, // recomputed per-viewed-year in renderCalendar
@@ -3371,7 +3375,7 @@
       calEvents.push({
         id: 'closing-' + l.id,
         title: (isDeposit ? 'Deposit closing · ' : 'Loan closing · ') + payout + (l.loan_id_display || ''),
-        subtitle: (l.profiles && l.profiles.full_name) || '',
+        subtitle: (l.profiles && up(l.profiles.full_name)) || '',
         type: isDeposit ? 'deposit_closing' : 'loan_closing',
         date: l.maturity_date,
         source: 'loan', loanId: l.id, readOnly: true
@@ -3385,7 +3389,7 @@
       calEvents.push({
         id: 'payment-' + p.id,
         title: fmt.money(p.amount_due) + (isDeposit ? ' interest due' : ' payment due'),
-        subtitle: (p.loans && (p.loans.loan_id_display || (p.loans.profiles && p.loans.profiles.full_name))) || '',
+        subtitle: (p.loans && (p.loans.loan_id_display || (p.loans.profiles && up(p.loans.profiles.full_name)))) || '',
         amount: p.amount_due,
         type: isDeposit ? 'interest_due' : 'payment', date: p.due_date, source: 'payment', readOnly: true
       });
@@ -3404,7 +3408,7 @@
       calEvents.push({
         id: 'loan-next-due-' + l.id,
         title: amt + (isDeposit ? 'interest due · ' : 'payment due · ') + (l.loan_id_display || ''),
-        subtitle: (l.profiles && l.profiles.full_name) || '',
+        subtitle: (l.profiles && up(l.profiles.full_name)) || '',
         amount: l.monthly_payment,
         type: isDeposit ? 'interest_due' : 'payment',
         date: l.next_due_date,
@@ -3706,7 +3710,7 @@
     ).join('');
     const clientOpts = '<option value="">— No client —</option>' +
       calClients.map(c =>
-        '<option value="' + esc(c.id) + '">' + esc(c.full_name || c.email || c.id) + '</option>'
+        '<option value="' + esc(c.id) + '">' + esc(up(c.full_name) || c.email || c.id) + '</option>'
       ).join('');
     // Build the loan options for a specific client (or all loans if blank).
     function loanOptionsFor(clientId) {
@@ -3717,7 +3721,7 @@
       return empty + list.map(l =>
         '<option value="' + esc(l.id) + '">' +
           esc(l.loan_id_display || l.id.slice(0, 8)) +
-          (!clientId && l.profiles && l.profiles.full_name ? ' · ' + esc(l.profiles.full_name) : '') +
+          (!clientId && l.profiles && up(l.profiles.full_name) ? ' · ' + esc(up(l.profiles.full_name)) : '') +
         '</option>'
       ).join('');
     }
@@ -4740,7 +4744,7 @@
         <td>${esc(m.id_credito)}</td>
         <td><span class="lmr-conf" style="background:${LMR_CONFIDENCE_COLOR[m.confidence] || '#888'}">${esc(m.confidence)}</span></td>
         <td>${fmt.date(m.last_seen_at)}</td>
-        <td>${m.profiles ? esc(m.profiles.full_name || m.profiles.email) : '—'}</td>
+        <td>${m.profiles ? esc(up(m.profiles.full_name) || m.profiles.email) : '—'}</td>
         <td><span class="oac-badge ${m.verified ? 'active' : 'pending'}">${m.verified ? 'Verified' : 'Unverified'}</span></td>
         <td style="text-align:right;white-space:nowrap">
           <button type="button" class="oac-btn outline" data-lmr-verify="${esc(m.id_credito)}">${m.matched_profile_id ? 'Edit Match' : 'Verify Match'}</button>
@@ -4811,7 +4815,7 @@
       submitBtn.disabled = !picked;
       if (!picked) { pickedWrap.innerHTML = ''; return; }
       pickedWrap.innerHTML = `<div class="lmr-picked">
-        <span>${esc(picked.full_name || picked.email)} · ${esc(picked.email || '')}</span>
+        <span>${esc(up(picked.full_name) || picked.email)} · ${esc(picked.email || '')}</span>
         <button type="button" class="oac-btn outline" id="lmr-picked-clear" style="margin:0">Change</button>
       </div>`;
       resultsEl.style.display = 'none';
@@ -4827,7 +4831,7 @@
       const matches = clients.filter(c => hit(c.full_name) || hit(c.email)).slice(0, 20);
       resultsEl.innerHTML = matches.length
         ? matches.map((c, i) => `<div class="lmr-picker-row" data-pick="${i}">
-            <div>${esc(c.full_name || c.email)}</div>
+            <div>${esc(up(c.full_name) || c.email)}</div>
             <div class="sub">${esc(c.email || '')}</div>
           </div>`).join('')
         : '<div class="lmr-picker-empty">No clients match.</div>';

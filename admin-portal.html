@@ -1088,6 +1088,9 @@
     function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
       return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'})[c];
     }); }
+    // Client names render in ALL CAPS throughout the admin portal (display
+    // only — never touches profiles.full_name itself).
+    function up(s){ return s ? String(s).toUpperCase() : s; }
     function initials(name){
       var parts = String(name || '').trim().split(/\s+/).filter(Boolean);
       if (!parts.length) return '—';
@@ -1156,7 +1159,7 @@
       // Client | Role | Loans | Investments | Lang | RM | Since | actions
       tbody.innerHTML = '';
       clients.forEach(function(p){
-        var name = p.full_name || p.email || 'Client';
+        var name = up(p.full_name) || p.email || 'Client';
         var tr = document.createElement('tr');
         tr.dataset.profileId = p.id;
         tr.innerHTML =
@@ -1338,7 +1341,7 @@
       var loanBalance        = activeLoanRows.reduce(function(s, x){ return s + Number(x.balance || 0); }, 0);
       var principalDisbursed = activeLoanRows.reduce(function(s, x){ return s + Number(x.principal_amount || x.balance || 0); }, 0);
       var depositBalance     = activeDepositRows.reduce(function(s, x){ return s + Number(x.balance || 0); }, 0);
-      var name = p.full_name || p.email || 'Client';
+      var name = up(p.full_name) || p.email || 'Client';
       var statusLabel = (p.status || '—').replace(/^./, function(ch){ return ch.toUpperCase(); });
 
       document.getElementById('__onix_iv_name').textContent = name;
@@ -1598,7 +1601,7 @@
       if (dRes.error)  console.error('[onix-clients] docs fetch failed:', dRes.error);
       var p    = pRes.data || {};
       var docs = dRes.data || [];
-      var name = p.full_name || p.email || 'Client';
+      var name = up(p.full_name) || p.email || 'Client';
 
       document.getElementById('__onix_cd_name').textContent = name;
       document.getElementById('__onix_cd_sub').textContent  = docs.length + ' document' + (docs.length === 1 ? '' : 's') + ' on file';
