@@ -23,7 +23,7 @@
 <!-- Supabase + Onix data layer -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase.js?v=17"></script>
-<script defer src="client-portal-data.js?v=38"></script>
+<script defer src="client-portal-data.js?v=39"></script>
 <style>
 :root{--red:#C0392B;--dark:#1A1A1A;--bg:#F8F7F5;--border:#E8E8E8;--muted:#6B6560;--light:#9B9590;--mid:#888;--caption:#bbb;--red-light:#FDF0EE;--success:#3B8B3B;--success-bg:#EBF5EB;--success-text:#2D6A2D;--warn-text:#A07818;--warn-bg:#FDF5E6;--serif:'Cormorant Garamond',Georgia,serif;--sans:'DM Sans',system-ui,sans-serif}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -431,14 +431,19 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
 
       <!-- NEW APPLICATION — Loan Type dropdown removed -->
       <div class="view" id="view-apply">
-        <div class="page-hd reveal"><div class="eyebrow" data-en="Financing" data-es="Financiamiento">Financing</div><h1 data-en="Apply for a New Loan" data-es="Solicitar un Nuevo Préstamo">Apply for a New Loan</h1><div class="rule"></div></div>
-        <div class="apply-cta reveal">
+        <div class="page-hd reveal"><div class="eyebrow" data-en="Financing" data-es="Financiamiento">Financing</div><h1 id="apply-heading" data-en="Apply for a New Loan" data-es="Solicitar un Nuevo Préstamo">Apply for a New Loan</h1><div class="rule"></div></div>
+        <div class="reveal" style="display:flex;gap:8px;margin-bottom:24px">
+          <button type="button" class="btn btn-red" id="apply-type-loan" data-apply-type="loan" onclick="setApplyType('loan')"><span data-en="Loan" data-es="Préstamo">Loan</span></button>
+          <button type="button" class="btn btn-outline" id="apply-type-deposit" data-apply-type="deposit" onclick="setApplyType('deposit')"><span data-en="Deposit" data-es="Depósito">Deposit</span></button>
+        </div>
+
+        <div class="apply-cta reveal" id="apply-cta-loan">
           <div class="apply-cta-text">
             <p class="t" data-en="Indicative terms: 6–36 mo · 12–14% APR · 1% origination" data-es="Términos: 6–36 meses · 12–14% TAE · 1% originación">Indicative terms: 6–36 mo · 12–14% APR · 1% origination</p>
             <p class="s" data-en="A principal reviews every application within 48 hours." data-es="Un socio revisa cada solicitud en 48 horas.">A principal reviews every application within 48 hours.</p>
           </div>
         </div>
-        <form class="card reveal" onsubmit="submitLoanApp(event)">
+        <form class="card reveal" id="apply-form-loan" onsubmit="submitLoanApp(event)">
           <div id="loan-ok" class="success-banner" style="display:none" data-en="✓ Application submitted. A principal will contact you within 48 hours." data-es="✓ Solicitud enviada. Un socio lo contactará en 48 horas.">✓ Application submitted. A principal will contact you within 48 hours.</div>
           <div class="card-title" data-en="Loan Application" data-es="Solicitud de Préstamo">Loan Application</div>
           <div class="form-grid">
@@ -472,6 +477,52 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
             <div style="font-weight:600" data-en="Drop files or click to browse" data-es="Arrastre o haga clic">Drop files or click to browse</div>
             <div style="font-size:.7rem;color:var(--caption);margin-top:4px">PDF, JPG, PNG · Max 20MB per file</div>
             <input type="file" id="fileInput" multiple style="display:none">
+          </div>
+          <div class="btn-row">
+            <button type="submit" class="btn btn-red"><span data-en="Submit Application" data-es="Enviar Solicitud">Submit Application</span></button>
+            <button type="reset" class="btn btn-outline"><span data-en="Clear" data-es="Limpiar">Clear</span></button>
+          </div>
+        </form>
+
+        <div class="apply-cta reveal" id="apply-cta-deposit" style="display:none">
+          <div class="apply-cta-text">
+            <p class="t" data-en="Indicative terms: 6–36 mo · Choose payout at maturity or periodic interest" data-es="Términos: 6–36 meses · Pago al vencimiento o interés periódico">Indicative terms: 6–36 mo · Choose payout at maturity or periodic interest</p>
+            <p class="s" data-en="A principal will follow up with current rates and next steps within 48 hours." data-es="Un socio le dará seguimiento con las tasas actuales en 48 horas.">A principal will follow up with current rates and next steps within 48 hours.</p>
+          </div>
+        </div>
+        <form class="card reveal" id="apply-form-deposit" style="display:none" onsubmit="submitDepositApp(event)">
+          <div id="deposit-ok" class="success-banner" style="display:none" data-en="✓ Application submitted. A principal will contact you within 48 hours." data-es="✓ Solicitud enviada. Un socio lo contactará en 48 horas.">✓ Application submitted. A principal will contact you within 48 hours.</div>
+          <div class="card-title" data-en="Deposit Application" data-es="Solicitud de Depósito">Deposit Application</div>
+          <div class="form-grid">
+            <div class="form-field">
+              <label class="field-label" data-en="Deposit Amount (USD)" data-es="Monto a Depositar (USD)">Deposit Amount (USD)</label>
+              <input type="text" class="field-input" data-money="1" inputmode="decimal" data-ph-en="e.g. 100,000" data-ph-es="p.ej. 100,000" placeholder="e.g. 100,000" required>
+            </div>
+            <div class="form-field">
+              <label class="field-label" data-en="Applicant Type" data-es="Tipo de Solicitante">Applicant Type</label>
+              <select class="field-select"><option data-en="Individual" data-es="Individual">Individual</option><option data-en="Business / Entity" data-es="Negocio / Entidad">Business / Entity</option></select>
+            </div>
+            <div class="form-field">
+              <label class="field-label" data-en="Preferred Term" data-es="Plazo Preferido">Preferred Term</label>
+              <select class="field-select"><option>6 months</option><option>12 months</option><option selected>24 months</option><option>36 months</option></select>
+            </div>
+            <div class="form-field">
+              <label class="field-label" data-en="Payout Preference" data-es="Preferencia de Pago">Payout Preference</label>
+              <select class="field-select">
+                <option data-en="Single payment at end of term" data-es="Pago único al final del plazo">Single payment at end of term</option>
+                <option data-en="Periodic interest payments" data-es="Pagos de interés periódicos">Periodic interest payments</option>
+              </select>
+            </div>
+            <div class="form-field full">
+              <label class="field-label" data-en="Additional Notes" data-es="Notas">Additional Notes</label>
+              <textarea class="field-textarea" data-ph-en="Anything else we should know…" data-ph-es="Algo más que debamos saber…" placeholder="Anything else we should know…"></textarea>
+            </div>
+          </div>
+          <label class="field-label" data-en="Supporting Documents" data-es="Documentos de Apoyo">Supporting Documents</label>
+          <div class="upload-zone" onclick="document.getElementById('depositFileInput').click()">
+            <div style="font-weight:600" data-en="Drop files or click to browse" data-es="Arrastre o haga clic">Drop files or click to browse</div>
+            <div style="font-size:.7rem;color:var(--caption);margin-top:4px">PDF, JPG, PNG · Max 20MB per file</div>
+            <input type="file" id="depositFileInput" multiple style="display:none">
           </div>
           <div class="btn-row">
             <button type="submit" class="btn btn-red"><span data-en="Submit Application" data-es="Enviar Solicitud">Submit Application</span></button>
@@ -1345,6 +1396,33 @@ function submitLoanApp(e) {
   e.preventDefault();
   document.getElementById('loan-ok').style.display = 'block';
   setTimeout(() => document.getElementById('loan-ok').style.display = 'none', 6000);
+}
+
+// Placeholder, same pattern as submitLoanApp — wireDepositApplicationForm in
+// client-portal-data.js overrides this with the real Supabase insert before
+// any user could actually submit the form.
+function submitDepositApp(e) {
+  e.preventDefault();
+  document.getElementById('deposit-ok').style.display = 'block';
+  setTimeout(() => document.getElementById('deposit-ok').style.display = 'none', 6000);
+}
+
+// Toggles the New Application tab between Loan and Deposit — swaps which
+// CTA/form is visible and updates the heading, respecting whichever
+// language (i18n.js) is currently active.
+function setApplyType(type) {
+  const isDeposit = type === 'deposit';
+  document.getElementById('apply-type-loan').className    = 'btn ' + (isDeposit ? 'btn-outline' : 'btn-red');
+  document.getElementById('apply-type-deposit').className = 'btn ' + (isDeposit ? 'btn-red' : 'btn-outline');
+  document.getElementById('apply-cta-loan').style.display    = isDeposit ? 'none' : '';
+  document.getElementById('apply-form-loan').style.display   = isDeposit ? 'none' : '';
+  document.getElementById('apply-cta-deposit').style.display  = isDeposit ? '' : 'none';
+  document.getElementById('apply-form-deposit').style.display = isDeposit ? '' : 'none';
+  const heading = document.getElementById('apply-heading');
+  heading.setAttribute('data-en', isDeposit ? 'Apply for a New Deposit' : 'Apply for a New Loan');
+  heading.setAttribute('data-es', isDeposit ? 'Solicitar un Nuevo Depósito' : 'Solicitar un Nuevo Préstamo');
+  const lang = localStorage.getItem('onix-lang') || 'en';
+  heading.textContent = heading.getAttribute('data-' + lang);
 }
 
 function populateUpcoming() {

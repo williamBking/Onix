@@ -1242,10 +1242,61 @@
     document.getElementById('cp-raise-modal').classList.add('show');
   }
 
-  // ---------- Loan Application Form ----------
-  // Captured supporting documents the user has selected, kept in a closure
-  // so they survive any browser/form clearing of the underlying <input type=file>.
-  let pickedSupportingFiles = [];
+  // ---------- Loan / Deposit Application Forms ----------
+  // Wires drag/drop + click-to-browse file capture for one application
+  // form's upload zone. Returns an object the caller uses to read/clear the
+  // captured list on submit. Each form (loan, deposit) gets its own
+  // instance/closure so switching tabs never mixes up which files belong to
+  // which application — the two forms don't share a single global array.
+  function makeFileCapture(zone, fileInput, form) {
+    let picked = [];
+
+    function renderPickedFiles() {
+      if (!zone) return;
+      let summary = zone.querySelector('[data-files-summary]');
+      if (!summary) {
+        summary = document.createElement('div');
+        summary.setAttribute('data-files-summary', '');
+        summary.style.cssText = 'margin-top:8px;font-size:.74rem;color:var(--red);font-weight:600;line-height:1.4';
+        zone.appendChild(summary);
+      }
+      if (!picked.length) { summary.textContent = ''; return; }
+      summary.textContent = picked.length === 1
+        ? '📎 ' + picked[0].name
+        : '📎 ' + picked.length + ' files: ' + picked.map(f => f.name).join(', ');
+    }
+
+    function addFiles(fileList) {
+      if (!fileList || !fileList.length) return;
+      for (const f of fileList) picked.push(f);
+      renderPickedFiles();
+    }
+
+    if (zone && fileInput && !zone.dataset.captureWired) {
+      zone.dataset.captureWired = '1';
+      ['dragenter', 'dragover'].forEach(ev => zone.addEventListener(ev, e => {
+        e.preventDefault(); e.stopPropagation();
+        zone.style.borderColor = 'var(--red)';
+      }));
+      ['dragleave', 'drop'].forEach(ev => zone.addEventListener(ev, e => {
+        e.preventDefault(); e.stopPropagation();
+        zone.style.borderColor = '';
+      }));
+      zone.addEventListener('drop', e => {
+        if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files);
+      });
+      // Capture on every pick — survives fileInput.files getting cleared by
+      // form.reset() or browser quirks.
+      fileInput.addEventListener('change', () => addFiles(fileInput.files));
+      if (form) form.addEventListener('reset', () => { picked = []; renderPickedFiles(); });
+    }
+
+    return {
+      get: () => picked.slice(),
+      clear: () => { picked = []; },
+      clearSummary: () => { const s = zone && zone.querySelector('[data-files-summary]'); if (s) s.textContent = ''; }
+    };
+  }
 
   // ---------- live thousands-separator on money inputs ----------
   // Mirrors the helper used in admin-portal-data.js. Any input marked
@@ -1289,179 +1340,169 @@
     (scope || document).querySelectorAll('input[data-money]').forEach(wireMoneyInput);
   }
 
+  // Shared submit logic for both the Loan and Deposit application forms —
+  // they insert into the same loan_applications table (application_type
+  // discriminates them), upload supporting docs the same way, and notify
+  // the same review inbox. Only field-reading and the application_type/
+  // banner-id/file-capture differ, so those are passed in per form.
+  async function submitApplication(opts) {
+    const { e, userId, profile, applicationType, fileCapture, bannerId } = opts;
+    e.preventDefault();
+    const form = e.target;
+    const inputs = form.querySelectorAll('.field-input, .field-select, .field-textarea');
+    const amountRaw = (inputs[0] && inputs[0].value || '').replace(/[^0-9.]/g, '');
+    const amount    = amountRaw ? Number(amountRaw) : null;
+    const applicantTypeText = (inputs[1] && inputs[1].value || '').toLowerCase();
+    const applicantType = applicantTypeText.includes('business') ? 'business' : 'individual';
+
+    let purpose = '';
+    let notes = '';
+    if (applicationType === 'deposit') {
+      // Deposit Amount, Applicant Type, Preferred Term, Payout Preference, Notes
+      const term    = (inputs[2] && inputs[2].value) || '';
+      const payout  = (inputs[3] && inputs[3].value) || '';
+      const notesField = (inputs[4] && inputs[4].value) || '';
+      notes = [
+        term ? 'Preferred term: ' + term : null,
+        payout ? 'Payout preference: ' + payout : null,
+        notesField || null
+      ].filter(Boolean).join('\n\n');
+    } else {
+      // Loan Amount, Applicant Type, Requested Term, Purpose, Collateral, Notes
+      const term       = (inputs[2] && inputs[2].value) || '';
+      purpose          = (inputs[3] && inputs[3].value) || '';
+      const collateral = (inputs[4] && inputs[4].value) || '';
+      const notesField = (inputs[5] && inputs[5].value) || '';
+      notes = [
+        term ? 'Requested term: ' + term : null,
+        collateral ? 'Collateral: ' + collateral : null,
+        notesField || null
+      ].filter(Boolean).join('\n\n');
+    }
+
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const orig = submitBtn ? submitBtn.innerHTML : '';
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.innerHTML = '<span>Submitting…</span>'; }
+
+    // Insert with .select() so we get the new row's id back for the email
+    const { data: inserted, error } = await OnixDB.client
+      .from('loan_applications')
+      .insert([{
+        user_id: userId,
+        amount_requested: amount,
+        purpose: purpose || null,
+        applicant_type: applicantType,
+        notes: notes || null,
+        application_type: applicationType
+      }])
+      .select('id, submitted_at')
+      .single();
+    const ok = !error && inserted;
+
+    let uploadedCount = 0;
+    let uploadErrors = [];
+    if (ok) {
+      const files = fileCapture.get();
+      console.log('[onix] submitting ' + applicationType + ' application ' + inserted.id + ' with ' + files.length + ' supporting file(s)');
+      for (const file of files) {
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, '_');
+        const key = userId + '/applications/' + inserted.id + '/' + Date.now() + '-' + safeName;
+        try {
+          const upRes = await OnixDB.client.storage
+            .from('client-documents')
+            .upload(key, file, { upsert: false, contentType: file.type || undefined });
+          if (upRes.error) {
+            uploadErrors.push(file.name + ': ' + upRes.error.message);
+            console.error('[onix] storage upload failed for', file.name, upRes.error);
+            continue;
+          }
+          const ins = await OnixDB.client.from('client_documents').insert({
+            profile_id: userId,
+            application_id: inserted.id,
+            category: 'loan_application',
+            name: file.name,
+            storage_path: key
+          });
+          if (ins.error) {
+            uploadErrors.push(file.name + ': ' + ins.error.message);
+            console.error('[onix] client_documents insert failed for', file.name, ins.error);
+            // Roll back the file so the bucket doesn't drift from the table
+            OnixDB.client.storage.from('client-documents').remove([key]).catch(() => {});
+          } else {
+            uploadedCount++;
+          }
+        } catch (ex) {
+          uploadErrors.push(file.name + ': ' + (ex && ex.message ? ex.message : String(ex)));
+          console.error('[onix] unexpected error uploading', file.name, ex);
+        }
+      }
+      fileCapture.clear();
+
+      // Trigger the Resend email via Edge Function (fire-and-forget; UI doesn't block on it)
+      OnixDB.client.functions.invoke('send-loan-app-email', {
+        body: {
+          application_id:   inserted.id,
+          application_type: applicationType,
+          applicant_name:   (profile && (profile.full_name || profile.email)) || 'Unknown',
+          applicant_email:  (profile && profile.email) || 'Unknown',
+          amount_requested: amount,
+          purpose,
+          applicant_type:   applicantType,
+          notes,
+          attachment_count: uploadedCount
+        }
+      }).catch(err => console.error('[onix] send-loan-app-email failed:', err));
+    } else if (error) {
+      console.error('[onix] loan_applications insert failed:', error);
+    }
+
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = orig; }
+    const banner = document.getElementById(bannerId);
+    if (ok) {
+      if (banner) {
+        banner.style.display = 'block';
+        if (uploadedCount > 0) {
+          const note = ' ' + uploadedCount + ' document' + (uploadedCount === 1 ? '' : 's') + ' attached.';
+          banner.textContent = (banner.textContent || '').replace(/\s+\d+ documents? attached\.?$/, '') + note;
+        }
+      }
+      form.reset();
+      fileCapture.clearSummary();
+      if (uploadErrors.length) {
+        alert('Application submitted, but some files failed to upload:\n\n' + uploadErrors.join('\n'));
+      }
+    } else {
+      alert('Could not submit application. Please try again.');
+    }
+  }
+
   function wireLoanApplicationForm(userId, profile) {
     // The apply form's Loan Amount input is marked data-money in the HTML.
     // Wire it (and any other future money inputs) for live comma formatting.
     wireMoneyInputs(document.querySelector('#view-apply') || document);
 
-    function renderPickedFiles() {
-      const zone = document.querySelector('.upload-zone');
-      if (!zone) return;
-      let summary = zone.querySelector('[data-files-summary]');
-      if (!summary) {
-        summary = document.createElement('div');
-        summary.setAttribute('data-files-summary', '');
-        summary.style.cssText = 'margin-top:8px;font-size:.74rem;color:var(--red);font-weight:600;line-height:1.4';
-        zone.appendChild(summary);
-      }
-      if (!pickedSupportingFiles.length) { summary.textContent = ''; return; }
-      summary.textContent = pickedSupportingFiles.length === 1
-        ? '📎 ' + pickedSupportingFiles[0].name
-        : '📎 ' + pickedSupportingFiles.length + ' files: ' + pickedSupportingFiles.map(f => f.name).join(', ');
-    }
-
-    function addFiles(fileList) {
-      if (!fileList || !fileList.length) return;
-      for (const f of fileList) pickedSupportingFiles.push(f);
-      renderPickedFiles();
-    }
-
-    const zone = document.querySelector('.upload-zone');
+    const zone = document.querySelector('#apply-form-loan .upload-zone');
     const fileInput = document.getElementById('fileInput');
-    if (zone && fileInput && !zone.dataset.captureWired) {
-      zone.dataset.captureWired = '1';
-      ['dragenter','dragover'].forEach(ev => zone.addEventListener(ev, e => {
-        e.preventDefault(); e.stopPropagation();
-        zone.style.borderColor = 'var(--red)';
-      }));
-      ['dragleave','drop'].forEach(ev => zone.addEventListener(ev, e => {
-        e.preventDefault(); e.stopPropagation();
-        zone.style.borderColor = '';
-      }));
-      zone.addEventListener('drop', e => {
-        if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files);
-      });
-      // Capture on every pick. Files captured into pickedSupportingFiles
-      // survive even if fileInput.files later gets cleared.
-      fileInput.addEventListener('change', () => addFiles(fileInput.files));
-
-      // Reset clears our captured list too.
-      const form = document.querySelector('#view-apply form');
-      if (form) form.addEventListener('reset', () => {
-        pickedSupportingFiles = [];
-        renderPickedFiles();
-      });
-    }
+    const form = document.getElementById('apply-form-loan');
+    const fileCapture = makeFileCapture(zone, fileInput, form);
 
     // The portal already calls submitLoanApp(event) inline. Override that global
     // so it inserts into Supabase, uploads supporting docs, and triggers email.
-    window.submitLoanApp = async function (e) {
-      e.preventDefault();
-      const form = e.target;
-      const inputs = form.querySelectorAll('.field-input, .field-select, .field-textarea');
-      const amountRaw = (inputs[0] && inputs[0].value || '').replace(/[^0-9.]/g, '');
-      const amount    = amountRaw ? Number(amountRaw) : null;
-      const applicantTypeText = (inputs[1] && inputs[1].value || '').toLowerCase();
-      const applicantType = applicantTypeText.includes('business') ? 'business' : 'individual';
-      const term       = (inputs[2] && inputs[2].value)  || '';
-      const purpose    = (inputs[3] && inputs[3].value)  || '';
-      const collateral = (inputs[4] && inputs[4].value)  || '';
-      const notesField = (inputs[5] && inputs[5].value)  || '';
-      const notes = [
-        term ? 'Requested term: ' + term : null,
-        collateral ? 'Collateral: ' + collateral : null,
-        notesField || null
-      ].filter(Boolean).join('\n\n');
+    window.submitLoanApp = function (e) {
+      return submitApplication({ e, userId, profile, applicationType: 'loan', fileCapture, bannerId: 'loan-ok' });
+    };
+  }
 
-      const submitBtn = form.querySelector('button[type="submit"]');
-      const orig = submitBtn ? submitBtn.innerHTML : '';
-      if (submitBtn) { submitBtn.disabled = true; submitBtn.innerHTML = '<span>Submitting…</span>'; }
+  function wireDepositApplicationForm(userId, profile) {
+    const zone = document.querySelector('#apply-form-deposit .upload-zone');
+    const fileInput = document.getElementById('depositFileInput');
+    const form = document.getElementById('apply-form-deposit');
+    const fileCapture = makeFileCapture(zone, fileInput, form);
 
-      // Insert with .select() so we get the new row's id back for the email
-      const { data: inserted, error } = await OnixDB.client
-        .from('loan_applications')
-        .insert([{
-          user_id: userId,
-          amount_requested: amount,
-          purpose: purpose || null,
-          applicant_type: applicantType,
-          notes: notes || null
-        }])
-        .select('id, submitted_at')
-        .single();
-      const ok = !error && inserted;
-
-      let uploadedCount = 0;
-      let uploadErrors = [];
-      if (ok) {
-        // Read from the closure-captured list (fileInput.files can be cleared
-        // by form behavior or browser quirks; pickedSupportingFiles survives).
-        // Fall back to fileInput.files if for some reason capture didn't run.
-        const captured = pickedSupportingFiles.slice();
-        const fallback = Array.from((document.getElementById('fileInput') || {}).files || []);
-        const files = captured.length ? captured : fallback;
-        console.log('[onix] submitting application ' + inserted.id + ' with ' + files.length + ' supporting file(s)');
-        for (const file of files) {
-          const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, '_');
-          const key = userId + '/applications/' + inserted.id + '/' + Date.now() + '-' + safeName;
-          try {
-            const upRes = await OnixDB.client.storage
-              .from('client-documents')
-              .upload(key, file, { upsert: false, contentType: file.type || undefined });
-            if (upRes.error) {
-              uploadErrors.push(file.name + ': ' + upRes.error.message);
-              console.error('[onix] storage upload failed for', file.name, upRes.error);
-              continue;
-            }
-            const ins = await OnixDB.client.from('client_documents').insert({
-              profile_id: userId,
-              application_id: inserted.id,
-              category: 'loan_application',
-              name: file.name,
-              storage_path: key
-            });
-            if (ins.error) {
-              uploadErrors.push(file.name + ': ' + ins.error.message);
-              console.error('[onix] client_documents insert failed for', file.name, ins.error);
-              // Roll back the file so the bucket doesn't drift from the table
-              OnixDB.client.storage.from('client-documents').remove([key]).catch(() => {});
-            } else {
-              uploadedCount++;
-            }
-          } catch (ex) {
-            uploadErrors.push(file.name + ': ' + (ex && ex.message ? ex.message : String(ex)));
-            console.error('[onix] unexpected error uploading', file.name, ex);
-          }
-        }
-        // Clear captured list after this submission
-        pickedSupportingFiles = [];
-
-        // Trigger the Resend email via Edge Function (fire-and-forget; UI doesn't block on it)
-        OnixDB.client.functions.invoke('send-loan-app-email', {
-          body: {
-            application_id:   inserted.id,
-            applicant_name:   (profile && (profile.full_name || profile.email)) || 'Unknown',
-            applicant_email:  (profile && profile.email) || 'Unknown',
-            amount_requested: amount,
-            purpose,
-            applicant_type:   applicantType,
-            notes,
-            attachment_count: uploadedCount
-          }
-        }).catch(err => console.error('[onix] send-loan-app-email failed:', err));
-      } else if (error) {
-        console.error('[onix] loan_applications insert failed:', error);
-      }
-
-      if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = orig; }
-      const banner = document.getElementById('loan-ok');
-      if (ok) {
-        if (banner) {
-          banner.style.display = 'block';
-          if (uploadedCount > 0) {
-            const note = ' ' + uploadedCount + ' document' + (uploadedCount === 1 ? '' : 's') + ' attached.';
-            banner.textContent = (banner.textContent || '').replace(/\s+\d+ documents? attached\.?$/, '') + note;
-          }
-        }
-        form.reset();
-        const summary = document.querySelector('[data-files-summary]');
-        if (summary) summary.textContent = '';
-        if (uploadErrors.length) {
-          alert('Application submitted, but some files failed to upload:\n\n' + uploadErrors.join('\n'));
-        }
-      } else {
-        alert('Could not submit application. Please try again.');
-      }
+    // The portal already calls submitDepositApp(event) inline. Override
+    // that global the same way wireLoanApplicationForm does for loans.
+    window.submitDepositApp = function (e) {
+      return submitApplication({ e, userId, profile, applicationType: 'deposit', fileCapture, bannerId: 'deposit-ok' });
     };
   }
 
@@ -2396,6 +2437,7 @@
     searchData.clientDocs    = clientDocs || [];
 
     wireLoanApplicationForm(userId, profile);
+    wireDepositApplicationForm(userId, profile);
     wireDocumentsTab(userId, clientDocs || []);
   }
 
