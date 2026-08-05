@@ -3410,13 +3410,17 @@
       const isDeposit = l.data_source === 'ous_pasiva';
       // Deposit closings are when the client gets paid out (principal +
       // accrued interest), so show that amount on the calendar. Real loan
-      // closings are the reverse (client owes us), so no amount there.
+      // closings are the reverse (client owes us) — the pill text stays
+      // amount-free to match the existing display convention, but the
+      // balance is still the real dollar figure changing hands, so it's
+      // kept on the event (used by the monthly cashflow summary, which
+      // needs the true amount regardless of what the pill shows).
       const payout = isDeposit && l.balance != null ? fmt.money(l.balance) + ' · ' : '';
       calEvents.push({
         id: 'closing-' + l.id,
         title: (isDeposit ? 'Deposit closing · ' : 'Loan closing · ') + payout + (l.loan_id_display || ''),
         subtitle: (l.profiles && up(l.profiles.full_name)) || '',
-        amount: isDeposit ? l.balance : null,
+        amount: l.balance,
         type: isDeposit ? 'deposit_closing' : 'loan_closing',
         date: l.maturity_date,
         source: 'loan', loanId: l.id, readOnly: true
@@ -3631,13 +3635,13 @@
 
     grid.querySelectorAll('.cal-cell').forEach(c => c.addEventListener('click', () => openDayPanel(c.dataset.date)));
 
-    // Monthly cashflow summary — In = loan payments due (real loans owe us);
-    // Out = interest due + deposit closings (OUS-synced deposits we owe
-    // money to). Loan closings/renewals/birthdays never carried a dollar
-    // amount and aren't confirmed same-month cash events, so they're
-    // deliberately left out rather than guessed at. Only counts events
-    // whose actual date falls in the viewed month — the grid's leading/
-    // trailing padding days from adjacent months are excluded.
+    // Monthly cashflow summary — In = loan payments due + loan closings
+    // (both are real loans paying us); Out = interest due + deposit
+    // closings (money owed to OUS-synced depositors). Loan renewals and
+    // birthdays never carry a dollar amount, so they're left out rather
+    // than guessed at. Only counts events whose actual date falls in the
+    // viewed month — the grid's leading/trailing padding days from
+    // adjacent months are excluded.
     const summaryEl = document.getElementById('cal-summary');
     if (summaryEl) {
       const monthPrefix = calYear + '-' + String(calMonth + 1).padStart(2, '0');
@@ -3646,7 +3650,7 @@
         if (!dateStr.startsWith(monthPrefix)) return;
         byDate[dateStr].forEach(ev => {
           const amt = Number(ev.amount) || 0;
-          if (ev.type === 'payment') { cashIn += amt; inCount++; }
+          if (ev.type === 'payment' || ev.type === 'loan_closing') { cashIn += amt; inCount++; }
           else if (ev.type === 'interest_due' || ev.type === 'deposit_closing') { cashOut += amt; outCount++; }
         });
       });
@@ -3656,7 +3660,7 @@
         '<div class="cal-summary-cell">' +
           '<div class="cal-summary-label"><span class="dot" style="background:#3B8B3B"></span>Cashflow In</div>' +
           '<div class="cal-summary-val in">' + fmt.money(cashIn) + '</div>' +
-          '<div class="cal-summary-sub">' + inCount + ' payment' + (inCount === 1 ? '' : 's') + ' due this month</div>' +
+          '<div class="cal-summary-sub">' + inCount + ' payment' + (inCount === 1 ? '' : 's') + ' due or closing this month</div>' +
         '</div>' +
         '<div class="cal-summary-cell">' +
           '<div class="cal-summary-label"><span class="dot" style="background:#C0392B"></span>Cashflow Out</div>' +
