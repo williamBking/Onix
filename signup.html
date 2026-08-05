@@ -7,7 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=DM+Sans:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="i18n.js?v=2"></script>
-<style>.lang-toggle button.active{background:#C0392B;color:#fff !important;border-color:#C0392B !important}</style>
+<style>.lang-toggle{display:flex;gap:4px;justify-content:flex-end;margin-bottom:14px}.lang-toggle button{padding:4px 10px;border-radius:2px;font-size:.68rem;font-weight:700;letter-spacing:.08em;color:var(--light);border:1px solid var(--border);background:none;cursor:pointer}.lang-toggle button.active{background:#C0392B;color:#fff;border-color:#C0392B}</style>
 <style>
 :root{
   --red:#C0392B;--dark:#1A1A1A;--bg:#F8F7F5;
@@ -50,14 +50,7 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
   <div class="signup-left">
     <div class="signup-left-glow"></div>
     <div style="position:relative;z-index:1">
-      <div style="display:flex;align-items:center;gap:14px;margin-bottom:32px">
-        <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Onix Finance">
-          <rect x="3" y="3" width="42" height="42" rx="2" stroke="#fff" stroke-width="1.5"/>
-          <path d="M24 11 L37 24 L24 37 L11 24 Z" fill="#C0392B"/>
-          <path d="M24 17 L31 24 L24 31 L17 24 Z" fill="#1A1A1A"/>
-        </svg>
-        <span style="font-size:1.5rem;font-weight:900;letter-spacing:6px;color:#fff;text-transform:uppercase">ONIX<span style="color:#C0392B">.</span></span>
-      </div>
+      <img src="assets/onix-logo.png" alt="Onix Finance" style="display:block;width:280px;max-width:80%;height:auto;margin-bottom:32px" />
       <div class="signup-brand-rule"></div>
       <p class="signup-brand-tagline" data-en="Private lending and investment solutions for discerning clients." data-es="Soluciones de préstamos privados e inversión para clientes exigentes.">Private lending and investment solutions for discerning clients.</p>
       <p class="signup-brand-sub">Houston, TX &nbsp;·&nbsp; Est. 2018</p>
@@ -69,11 +62,9 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
 
   <div class="signup-right">
     <div class="signup-form">
-      <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
-        <div class="lang-toggle" style="display:flex;gap:4px">
-          <button type="button" data-lang-set="en" class="active" style="padding:4px 10px;border-radius:2px;font-size:.68rem;font-weight:700;letter-spacing:.08em;color:var(--light);border:1px solid var(--border);background:none;cursor:pointer">EN</button>
-          <button type="button" data-lang-set="es" style="padding:4px 10px;border-radius:2px;font-size:.68rem;font-weight:700;letter-spacing:.08em;color:var(--light);border:1px solid var(--border);background:none;cursor:pointer">ES</button>
-        </div>
+      <div class="lang-toggle">
+        <button type="button" data-lang-set="en" class="active">EN</button>
+        <button type="button" data-lang-set="es">ES</button>
       </div>
       <p class="signup-eyebrow" data-en="Request Access" data-es="Solicitar Acceso">Request Access</p>
       <h1 class="signup-title" data-en="Create your account" data-es="Cree su cuenta">Create your account</h1>
