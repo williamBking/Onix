@@ -392,10 +392,11 @@
 
   function viewApplication(app) {
     const c = app.profiles || {};
+    const isDeposit = app.application_type === 'deposit';
     const statusBtn = (label, status, color) => `
       <a href="#" data-app-status="${esc(status)}" style="display:inline-block;background:${color === 'red' ? '#C0392B' : '#fff'};color:${color === 'red' ? '#fff' : '#1A1A1A'};padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid ${color === 'red' ? '#C0392B' : '#E8E8E8'};border-radius:2px;text-decoration:none">${esc(label)}</a>`;
     openModal(`
-      <h2>Loan Application</h2>
+      <h2>${isDeposit ? 'Deposit' : 'Loan'} Application</h2>
       <div class="sub">${esc(up(c.full_name) || c.email || 'Unknown client')} · ${fmt.date(app.submitted_at)}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
         ${statusBtn('Approve', 'approved', 'red')}
@@ -403,15 +404,16 @@
         ${statusBtn('Reject', 'rejected')}
         ${statusBtn('Reset to Pending', 'pending')}
       </div>
+      ${isDeposit ? `<div style="padding:10px 12px;background:#F8F7F5;border-left:3px solid #C0392B;font-size:.78rem;color:#6B6560;margin-bottom:14px">Deposit application — approving does not auto-create a loan record. Set up the deposit through your normal process, same as any other deposit.</div>` : ''}
       <div class="oac-modal-row">
-        ${detailRow('Amount Requested', fmt.money(app.amount_requested))}
+        ${detailRow(isDeposit ? 'Deposit Amount' : 'Amount Requested', fmt.money(app.amount_requested))}
         ${detailRow('Applicant Type', app.applicant_type)}
         ${detailRow('Status', app.status)}
         ${detailRow('Submitted', fmt.date(app.submitted_at))}
       </div>
-      <div class="oac-modal-row" style="grid-template-columns:1fr">
+      ${isDeposit ? '' : `<div class="oac-modal-row" style="grid-template-columns:1fr">
         ${detailRow('Purpose', app.purpose)}
-      </div>
+      </div>`}
       <div class="oac-modal-row" style="grid-template-columns:1fr">
         ${detailRow('Notes', app.notes)}
       </div>
@@ -432,16 +434,20 @@
         const prevStatus = app.status;
         btn.style.opacity = '.5';
 
-        // Approving an application should also create an active loan record,
-        // unless one was already created previously for this application.
-        if (newStatus === 'approved' && prevStatus !== 'approved') {
+        // Approving an application should also create an active loan record —
+        // but only for loan applications. A deposit application has no such
+        // record to create (deposits normally arrive via the OUS Activa/
+        // Pasiva sync, not a manual "Add Loan" flow); approving one just
+        // updates its status below so the team knows to follow up manually.
+        const isDeposit = app.application_type === 'deposit';
+        if (!isDeposit && newStatus === 'approved' && prevStatus !== 'approved') {
           const created = await ensureLoanFromApplication(app);
           if (created === false) { btn.style.opacity = '1'; return; }
         }
 
         // Un-approving (pending/reviewed/rejected) should remove the loan that
         // was created by the previous approve, so Active Loans stays accurate.
-        if (prevStatus === 'approved' && newStatus !== 'approved') {
+        if (!isDeposit && prevStatus === 'approved' && newStatus !== 'approved') {
           const removed = await removeLoanFromApplication(app);
           if (removed === false) { btn.style.opacity = '1'; return; }
         }
@@ -2469,35 +2475,40 @@
   function paintApplicationsView(applications) {
     const v = findView(STATIC_VIEWS.applications); if (!v) return false;
     if (alreadyPainted(v)) return true;
-    const rows = applications.length ? applications.map((a, i) => `
+    const rows = applications.length ? applications.map((a, i) => {
+      const isDeposit = a.application_type === 'deposit';
+      return `
       <tr>
         <td>${fmt.date(a.submitted_at)}</td>
         <td>${esc((a.profiles && (up(a.profiles.full_name) || a.profiles.email)) || a.user_id)}</td>
+        <td><span class="oac-badge ${isDeposit ? 'active' : 'pending'}">${isDeposit ? 'Deposit' : 'Loan'}</span></td>
         <td>${fmt.money(a.amount_requested)}</td>
         <td>${esc(a.applicant_type || '—')}</td>
-        <td>${esc(a.purpose || '—')}</td>
+        <td>${esc(isDeposit ? '—' : (a.purpose || '—'))}</td>
         <td><span class="oac-badge ${esc(a.status || '')}">${esc(a.status || '—')}</span></td>
         <td style="text-align:right;white-space:nowrap">
           <a href="#" data-view-static-app="${i}" style="display:inline-block;background:#C0392B;color:#fff;padding:6px 12px;font:600 .68rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;margin-right:4px;text-decoration:none">View</a>
-          ${contactAnchor(a.profiles && a.profiles.email, 'Loan Application')}
+          ${contactAnchor(a.profiles && a.profiles.email, (isDeposit ? 'Deposit' : 'Loan') + ' Application')}
         </td>
-      </tr>`).join('') : '<tr><td colspan="7" class="oac-empty">No applications submitted yet.</td></tr>';
+      </tr>`;
+    }).join('') : '<tr><td colspan="8" class="oac-empty">No applications submitted yet.</td></tr>';
     const exportBar = `<div style="display:flex;justify-content:flex-end;margin-bottom:14px"><a href="#" id="oac-export-apps" style="display:inline-block;background:#fff;color:#1A1A1A;padding:10px 18px;font:600 .72rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.1em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none">Export CSV</a></div>`;
-    v.innerHTML = viewShell('Loan Applications', 'Submitted via the client portal',
+    v.innerHTML = viewShell('Applications', 'Loan and deposit applications submitted via the client portal',
       exportBar +
       `<table class="oac-table" style="width:100%"><thead><tr>
-        <th>Submitted</th><th>Client</th><th>Amount</th><th>Type</th><th>Purpose</th><th>Status</th><th style="text-align:right">Actions</th>
+        <th>Submitted</th><th>Client</th><th>Product</th><th>Amount</th><th>Type</th><th>Purpose</th><th>Status</th><th style="text-align:right">Actions</th>
       </tr></thead><tbody>${rows}</tbody></table>`);
     v.querySelectorAll('[data-view-static-app]').forEach(b => {
       b.addEventListener('click', (e) => { e.preventDefault(); viewApplication(applications[Number(b.dataset.viewStaticApp)]); });
     });
     wireExport(v, 'oac-export-apps', () => {
       downloadCsv('onix-applications-' + isoDate(new Date().toISOString()) + '.csv',
-        ['submitted_at', 'client_name', 'client_email', 'amount_requested', 'applicant_type', 'purpose', 'status', 'notes'],
+        ['submitted_at', 'client_name', 'client_email', 'application_type', 'amount_requested', 'applicant_type', 'purpose', 'status', 'notes'],
         applications.map(a => ({
           submitted_at: isoDate(a.submitted_at),
           client_name: (a.profiles && a.profiles.full_name) || '',
           client_email: (a.profiles && a.profiles.email) || '',
+          application_type: a.application_type || 'loan',
           amount_requested: a.amount_requested,
           applicant_type: a.applicant_type,
           purpose: a.purpose,
