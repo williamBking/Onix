@@ -1116,10 +1116,21 @@
     const activeInvestments = investments.filter(i => i.status === 'active');
     const openRaises        = raises.filter(r => r.status === 'open');
     const pendingApps       = applications.filter(a => !a.status || a.status === 'pending');
-    // Loan Portfolio = sum of real-loan balances (manual or OUS Activa).
-    // Total Deposits = sum of OUS Pasiva credit balances (Onix's deposit
-    // book) plus any true deposit-type investments.
-    const loanPortfolio = activeLoans.reduce((s, l) => s + Number(l.balance || 0), 0);
+    // Loan Portfolio = sum of real-loan balances (manual or OUS Activa)
+    // PLUS the balance sitting in every not-yet-verified OUS Activa credit
+    // in the Loan Match Review queue (activaMatches, loaded by
+    // wireLoanMatchReviewTab — see LMR_SELECT_COLS). Those credits are
+    // real money OUS reports as outstanding; they just aren't tied to a
+    // specific client account yet (most never will be — no email on that
+    // feed to match against), so they can't become a `loans` row (see
+    // runOUSActivaSync's verified-gate), but the dashboard total would
+    // otherwise silently miss them entirely. Total Deposits = sum of OUS
+    // Pasiva credit balances (Onix's deposit book) plus any true
+    // deposit-type investments.
+    const pendingActivaMatches = (activaMatches || []).filter(m => !m.verified);
+    const pendingLoanValue = pendingActivaMatches.reduce((s, m) => s + Number(m.balance || 0), 0);
+    const verifiedLoanValue = activeLoans.reduce((s, l) => s + Number(l.balance || 0), 0);
+    const loanPortfolio = verifiedLoanValue + pendingLoanValue;
     const depositInvestments = activeInvestments
       .filter(i => i.venture_type === 'deposit')
       .reduce((s, i) => s + Number(i.amount_invested || 0), 0);
@@ -1172,6 +1183,40 @@
     Object.entries(updates).forEach(([label, value]) => {
       updated[label] = setKpiSurgically(label, value);
     });
+
+    // Small caption under the Loan Portfolio number breaking out how much
+    // of it is still unverified/unattributed (see loanPortfolio above) —
+    // without this, a huge total with no context about how much of it
+    // isn't tied to a real client account would be misleading on a
+    // financial dashboard. Injected once, then just its text is updated
+    // on every repaint (idempotent, matches the rest of this function's
+    // surgical-update style — no bundle edit).
+    (function injectPortfolioCaption(text) {
+      const label_el = v.querySelector('[data-en="Loan Portfolio"]');
+      if (!label_el) return;
+      const parent = label_el.parentElement;
+      if (!parent) return;
+      let valueEl = null;
+      for (const sib of Array.from(parent.children)) {
+        if (sib === label_el || sib.hasAttribute('data-en')) continue;
+        if (sib.tagName !== 'DIV' && sib.tagName !== 'SPAN') continue;
+        valueEl = sib; break;
+      }
+      if (!valueEl) valueEl = label_el.nextElementSibling;
+      if (!valueEl) return;
+      let caption = parent.querySelector('#onix-portfolio-caption');
+      if (!caption) {
+        caption = document.createElement('div');
+        caption.id = 'onix-portfolio-caption';
+        caption.style.cssText = 'font-size:.68rem;color:#9B9590;margin-top:2px;line-height:1.3';
+        valueEl.after(caption);
+      }
+      caption.textContent = text;
+      caption.style.display = text ? '' : 'none';
+    })(pendingLoanValue > 0
+      ? `Includes ${fmt.money(pendingLoanValue)} across ${pendingActivaMatches.length} loan${pendingActivaMatches.length === 1 ? '' : 's'} pending client match`
+      : '');
+
     // Log every run (no once-only flag) so cache busting is obvious in DevTools —
     // but only when explicitly opted in, since this repaints every ~600ms and
     // would otherwise spam the console for the entire session by default.
@@ -4575,7 +4620,7 @@
   let activaMatchesLoaded = false;
   let lmrFilters = { verified: 'unverified', confidence: '' };
   const LMR_CONFIDENCE_COLOR = { high: '#2D6A2D', medium: '#A07818', low: '#C0392B', none: '#888' };
-  const LMR_SELECT_COLS = 'id_credito, nombre_cliente_raw, matched_profile_id, confidence, verified, verified_by, verified_at, first_seen_at, last_seen_at, profiles!matched_profile_id(full_name, email)';
+  const LMR_SELECT_COLS = 'id_credito, nombre_cliente_raw, balance, matched_profile_id, confidence, verified, verified_by, verified_at, first_seen_at, last_seen_at, profiles!matched_profile_id(full_name, email)';
 
   function injectLoanMatchReviewStyles() {
     if (document.getElementById('lmr-styles')) return;
