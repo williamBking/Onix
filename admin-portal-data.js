@@ -3264,6 +3264,15 @@
       .cal-event-rec{font-size:.65rem;opacity:.85;flex-shrink:0;font-weight:700}
       .cal-rec-badge{display:inline-block;padding:1px 6px;background:#F4E8E5;color:#C0392B;border-radius:2px;font-size:.66rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;margin-left:2px}
       .cal-overflow{font-size:.62rem;color:#888;font-weight:700;padding:1px 4px}
+      .cal-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:#E8E8E8;border:1px solid #E8E8E8;border-top:3px solid #C0392B;margin-bottom:18px}
+      .cal-summary-cell{background:#fff;padding:16px 22px}
+      .cal-summary-label{font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:#6B6560;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+      .cal-summary-label .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+      .cal-summary-val{font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:1.7rem;line-height:1}
+      .cal-summary-val.in{color:#3B8B3B}
+      .cal-summary-val.out{color:#C0392B}
+      .cal-summary-sub{font-size:.7rem;color:#9B9590;margin-top:6px}
+      @media(max-width:680px){ .cal-summary{grid-template-columns:1fr} }
       .cal-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:18px;padding:14px 18px;background:#fff;border:1px solid #E8E8E8}
       .cal-legend-item{display:flex;align-items:center;gap:6px;font-size:.74rem;color:#1A1A1A}
       .cal-legend-item .dot{width:10px;height:10px;border-radius:50%}
@@ -3338,6 +3347,7 @@
             '<button class="cal-add" id="cal-add-btn" type="button">+ Add Event</button>' +
           '</div>' +
         '</div>' +
+        '<div class="cal-summary" id="cal-summary"></div>' +
         '<div class="cal-month-grid-wrap"><div class="cal-month-grid" id="cal-month-grid"></div></div>' +
         '<div class="cal-legend" id="cal-legend"></div>';
       main.appendChild(v);
@@ -3620,6 +3630,45 @@
     grid.innerHTML = dowHtml + cellsHtml;
 
     grid.querySelectorAll('.cal-cell').forEach(c => c.addEventListener('click', () => openDayPanel(c.dataset.date)));
+
+    // Monthly cashflow summary — In = loan payments due (real loans owe us);
+    // Out = interest due + deposit closings (OUS-synced deposits we owe
+    // money to). Loan closings/renewals/birthdays never carried a dollar
+    // amount and aren't confirmed same-month cash events, so they're
+    // deliberately left out rather than guessed at. Only counts events
+    // whose actual date falls in the viewed month — the grid's leading/
+    // trailing padding days from adjacent months are excluded.
+    const summaryEl = document.getElementById('cal-summary');
+    if (summaryEl) {
+      const monthPrefix = calYear + '-' + String(calMonth + 1).padStart(2, '0');
+      let cashIn = 0, cashOut = 0, inCount = 0, outCount = 0;
+      Object.keys(byDate).forEach(dateStr => {
+        if (!dateStr.startsWith(monthPrefix)) return;
+        byDate[dateStr].forEach(ev => {
+          const amt = Number(ev.amount) || 0;
+          if (ev.type === 'payment') { cashIn += amt; inCount++; }
+          else if (ev.type === 'interest_due' || ev.type === 'deposit_closing') { cashOut += amt; outCount++; }
+        });
+      });
+      const net = cashIn - cashOut;
+      const netDisplay = (net < 0 ? '−' : '+') + fmt.money(Math.abs(net));
+      summaryEl.innerHTML =
+        '<div class="cal-summary-cell">' +
+          '<div class="cal-summary-label"><span class="dot" style="background:#3B8B3B"></span>Cashflow In</div>' +
+          '<div class="cal-summary-val in">' + fmt.money(cashIn) + '</div>' +
+          '<div class="cal-summary-sub">' + inCount + ' payment' + (inCount === 1 ? '' : 's') + ' due this month</div>' +
+        '</div>' +
+        '<div class="cal-summary-cell">' +
+          '<div class="cal-summary-label"><span class="dot" style="background:#C0392B"></span>Cashflow Out</div>' +
+          '<div class="cal-summary-val out">' + fmt.money(cashOut) + '</div>' +
+          '<div class="cal-summary-sub">' + outCount + ' interest / deposit payout' + (outCount === 1 ? '' : 's') + '</div>' +
+        '</div>' +
+        '<div class="cal-summary-cell">' +
+          '<div class="cal-summary-label">Net</div>' +
+          '<div class="cal-summary-val ' + (net >= 0 ? 'in' : 'out') + '">' + netDisplay + '</div>' +
+          '<div class="cal-summary-sub">In minus out, this month</div>' +
+        '</div>';
+    }
 
     const legend = document.getElementById('cal-legend');
     if (legend) {
