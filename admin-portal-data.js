@@ -3395,6 +3395,7 @@
         id: 'closing-' + l.id,
         title: (isDeposit ? 'Deposit closing · ' : 'Loan closing · ') + payout + (l.loan_id_display || ''),
         subtitle: (l.profiles && up(l.profiles.full_name)) || '',
+        amount: isDeposit ? l.balance : null,
         type: isDeposit ? 'deposit_closing' : 'loan_closing',
         date: l.maturity_date,
         source: 'loan', loanId: l.id, readOnly: true
@@ -3551,31 +3552,41 @@
       const isToday = dateStr === todayStr;
       const events  = byDate[dateStr] || [];
 
-      // Group same-type cashflow events (payment / interest due) into one
-      // summary row per type when a day has more than one — a loan-heavy
-      // day was otherwise showing a full pill per individual loan. Clicking
-      // the cell still opens the day panel, which lists every payment in
-      // full individual detail, so nothing is lost, just condensed here.
-      const CASHFLOW_GROUP_LABEL = {
-        payment:      n => n + ' payments due',
-        interest_due: n => n + ' interest payments due'
+      // Group same-type events into one summary row per type when a day has
+      // more than one — a busy day was otherwise showing a full pill per
+      // individual loan/client. Clicking the cell still opens the day
+      // panel, which lists every event in full individual detail, so
+      // nothing is lost, just condensed here. Applies to every event type,
+      // not just payments — a day with 3 deposit closings or 8 birthdays
+      // gets the same treatment.
+      const GROUP_LABEL = {
+        payment:          n => n + ' payments due',
+        interest_due:     n => n + ' interest payments due',
+        deposit_closing:  n => n + ' deposit closings',
+        loan_closing:     n => n + ' loan closings',
+        loan_renewal:     n => n + ' loan renewals',
+        birthday:         n => n + ' birthdays'
       };
-      const cashflowByType = {};
+      // Only these types have a per-event dollar amount worth summing into
+      // the group's headline — loan closings, renewals and birthdays don't
+      // carry one (and didn't show one individually before this either).
+      const GROUP_HAS_AMOUNT = { payment: true, interest_due: true, deposit_closing: true };
+      const byType = {};
       events.forEach(ev => {
-        if (!CASHFLOW_GROUP_LABEL[ev.type]) return;
-        (cashflowByType[ev.type] = cashflowByType[ev.type] || []).push(ev);
+        if (!GROUP_LABEL[ev.type]) return;
+        (byType[ev.type] = byType[ev.type] || []).push(ev);
       });
       const groupedTypeEmitted = {};
       const displayEvents = events.reduce((out, ev) => {
-        const group = CASHFLOW_GROUP_LABEL[ev.type] && cashflowByType[ev.type];
+        const group = GROUP_LABEL[ev.type] && byType[ev.type];
         if (!group || group.length === 1) { out.push(ev); return out; }
         if (groupedTypeEmitted[ev.type]) return out; // summary row already added for this type
         groupedTypeEmitted[ev.type] = true;
-        const total = group.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
-        out.push({
-          title: fmt.money(total) + ' · ' + CASHFLOW_GROUP_LABEL[ev.type](group.length),
-          type: ev.type, grouped: true, groupedEvents: group
-        });
+        const label = GROUP_LABEL[ev.type](group.length);
+        const title = GROUP_HAS_AMOUNT[ev.type]
+          ? fmt.money(group.reduce((sum, e) => sum + (Number(e.amount) || 0), 0)) + ' · ' + label
+          : label;
+        out.push({ title, type: ev.type, grouped: true, groupedEvents: group });
         return out;
       }, []);
 
