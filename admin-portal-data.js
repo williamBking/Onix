@@ -190,7 +190,6 @@
       <h2>${isDeposit ? 'Deposit' : 'Loan'} ${esc(loan.loan_id_display || loan.id.slice(0,8))}</h2>
       <div class="sub">${esc(c.full_name || c.email || 'Unknown client')}</div>
       <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
-        <a href="#" data-edit-loan style="display:inline-block;background:#C0392B;color:#fff;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #C0392B;border-radius:2px;text-decoration:none">Edit ${isDeposit ? 'Deposit' : 'Loan'}</a>
         <a href="#" data-add-payment style="display:inline-block;background:#fff;color:#1A1A1A;padding:8px 14px;font:600 .7rem/1 'DM Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;border:1px solid #E8E8E8;border-radius:2px;text-decoration:none">+ Add Payment</a>
       </div>
       <div class="oac-modal-row">
@@ -216,7 +215,6 @@
         </div>` : ''}
     `);
     const m = document.getElementById('oac-modal');
-    m.querySelector('[data-edit-loan]').addEventListener('click', (e) => { e.preventDefault(); openEditLoanModal(loan); });
     m.querySelector('[data-add-payment]').addEventListener('click', (e) => { e.preventDefault(); openAddPaymentModal(loan); });
     wireDocsManager(m, 'loan_documents', 'loan_id', loan.id);
     if (loan.application_id) {
@@ -1870,58 +1868,6 @@
         structure:            strOrNull(fd.get('structure')),
         status:               String(fd.get('status'))
       }), 'raises');
-    });
-  }
-
-  // ---------- Edit Loan modal ----------
-  function openEditLoanModal(loan) {
-    const clients = (window.__onixAdminData && window.__onixAdminData.clients) || [];
-    const clientOpts = clientOptions(clients).map(o => ({ ...o, selected: o.value === loan.user_id }));
-    openModal(`
-      <h2>Edit Loan</h2>
-      <div class="sub">${esc(loan.loan_id_display || loan.id.slice(0,8))}</div>
-      <form id="oac-edit-loan-form">
-        <div class="oac-modal-row" style="grid-template-columns:1fr">
-          ${field('Client', 'user_id', { required: true, select: clientOpts })}
-        </div>
-        <div class="oac-modal-row">
-          ${field('Loan ID',           'loan_id_display',  { value: loan.loan_id_display })}
-          ${field('Status',            'status',           { required: true, select: [
-              { value: 'active', label: 'Active', selected: loan.status === 'active' },
-              { value: 'paid',   label: 'Paid',   selected: loan.status === 'paid' },
-              { value: 'review', label: 'Review', selected: loan.status === 'review' }] })}
-          ${field('Outstanding Balance ($)', 'balance',    { type: 'number', step: '0.01', value: loan.balance })}
-          ${field('Interest Rate (%)', 'interest_rate',    { type: 'number', step: '0.01', value: loan.interest_rate })}
-          ${field('Monthly Payment ($)','monthly_payment', { type: 'number', step: '0.01', value: loan.monthly_payment })}
-          ${field('Term (months)',     'term_months',      { type: 'number', value: loan.term_months })}
-          ${field('Origination Date',  'origination_date', { type: 'date', value: dateInput(loan.origination_date) })}
-          ${field('Maturity Date',     'maturity_date',    { type: 'date', value: dateInput(loan.maturity_date) })}
-          ${field('Next Due',          'next_due_date',    { type: 'date', value: dateInput(loan.next_due_date) })}
-          ${field('Origination Fee (%)','origination_fee', { type: 'number', step: '0.01', value: loan.origination_fee })}
-        </div>
-        <div class="oac-modal-row" style="grid-template-columns:1fr">
-          ${field('Collateral Address', 'collateral_address', { value: loan.collateral_address })}
-        </div>
-        ${submitBar('Save Changes')}
-      </form>`);
-    const form = document.getElementById('oac-edit-loan-form');
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const fd = new FormData(form);
-      handleUpdateSubmit(form, 'loans', loan.id, () => ({
-        user_id:            String(fd.get('user_id')),
-        loan_id_display:    strOrNull(fd.get('loan_id_display')),
-        balance:            numOrNull(fd.get('balance')),
-        interest_rate:      numOrNull(fd.get('interest_rate')),
-        monthly_payment:    numOrNull(fd.get('monthly_payment')),
-        term_months:        numOrNull(fd.get('term_months')),
-        origination_date:   strOrNull(fd.get('origination_date')),
-        maturity_date:      strOrNull(fd.get('maturity_date')),
-        next_due_date:      strOrNull(fd.get('next_due_date')),
-        origination_fee:    numOrNull(fd.get('origination_fee')),
-        collateral_address: strOrNull(fd.get('collateral_address')),
-        status:             String(fd.get('status'))
-      }));
     });
   }
 
