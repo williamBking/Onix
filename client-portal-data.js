@@ -1805,35 +1805,6 @@
     window.initBreakdownChart = function(){};
   }
 
-  // ---------- Distribution History (Investments tab) ----------
-  function renderDistributions(distributions) {
-    const card = findCardByTitle(document.querySelector('#view-investments'), txt => /Distribution History/i.test(txt));
-    if (!card) return;
-    const tbody = card.querySelector('tbody');
-    if (!tbody) return;
-    const rows = (distributions || []).slice(0, 20);
-    if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="5" style="color:var(--light);font-style:italic;text-align:center;padding:18px">No distributions yet</td></tr>';
-      return;
-    }
-    tbody.innerHTML = rows.map(d => {
-      const venture = (d.investments && d.investments.venture_name) || 'Investment';
-      const kindLabel = d.kind === 'distribution' ? 'Distribution'
-                     : d.kind === 'interest' ? 'Interest'
-                     : d.kind === 'dividend' ? 'Dividend'
-                     : d.kind === 'return_of_capital' ? 'Return of Capital'
-                     : (d.kind || 'Payment');
-      return `
-        <tr>
-          <td>${fmt.date(d.paid_at)}</td>
-          <td>${escapeHtml(venture)}</td>
-          <td>${escapeHtml(kindLabel)}</td>
-          <td style="font-weight:600;color:var(--red)">+${fmt.money(d.amount)}</td>
-          <td><span class="pay-status paid"></span><span>Received</span></td>
-        </tr>`;
-    }).join('');
-  }
-
   // ---------- Upcoming events sidebar (Dashboard) ----------
   // Replace the hardcoded NOTIFS demo array on client-portal.html with real events
   function renderNotifications(payments, distributions, applications) {
@@ -2563,7 +2534,6 @@
     renderInvestments(allInvestments, distributions);
     renderRaises(raises, userId);
     paintClientSidebarBadges({ raises });
-    renderDistributions(distributions);
     renderUpcomingEvents(allPayments, distributions);
     renderPerformanceChart(allInvestments, distributions);
 
