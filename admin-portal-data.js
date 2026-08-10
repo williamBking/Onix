@@ -1192,6 +1192,23 @@
       updated[label] = setKpiSurgically(label, value);
     });
 
+    // Relabel "Portfolio LTV" -> "Loan / Deposit Ratio". The formula
+    // is loans / (loans + deposits) — that's actually a Loan/Deposit
+    // Ratio (a bank health indicator), not a Loan-to-Value ratio (a
+    // per-loan collateral metric). The bundled HTML uses "Portfolio LTV"
+    // as the anchor so we keep that for lookup, then swap the visible
+    // text + data-en / data-es so the language toggle keeps working.
+    (function relabelLtv() {
+      const el = v.querySelector('[data-en="Portfolio LTV"]');
+      if (!el) return;
+      const newEn = 'Loan / Deposit Ratio';
+      const newEs = 'Ratio Préstamos / Depósitos';
+      el.setAttribute('data-en', newEn);
+      el.setAttribute('data-es', newEs);
+      const lang = (window.OnixLang && OnixLang.getLang && OnixLang.getLang()) || 'en';
+      el.textContent = lang === 'es' ? newEs : newEn;
+    })();
+
     // Small caption under the Loan Portfolio number breaking out how much
     // of it is still unverified/unattributed (see loanPortfolio above) —
     // without this, a huge total with no context about how much of it
