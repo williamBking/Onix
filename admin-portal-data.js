@@ -1523,19 +1523,23 @@
     // special value "__any_identity__" hides rows that have EITHER id
     // or passport (a client only needs one of the two identity docs).
     //
-    // Row lookup is a plain [data-profile-id] scoped to the whole view
-    // — the pending-approvals banner uses [data-pending-id] on its rows
-    // instead, so this can never accidentally target the banner.
-    //
     // Selection persists across re-renders via
     // window.__onixClientsMissingDocFilter so the admin's pick survives
     // the periodic refreshAll paint (used to reset to "all clients"
     // every few minutes).
+    //
+    // The visible client rows are actually CLONES of the original ones —
+    // splitClientsBySection() (in admin-portal.html) copies each row into
+    // one or both of a Borrowers / LPs section table and hides the
+    // original table. Because the clone happens after our filter runs
+    // (via a MutationObserver), we must re-apply the filter whenever the
+    // section tables' contents change; otherwise our display:none is
+    // thrown away by the fresh clone. To avoid an infinite loop, we
+    // dedupe by comparing the sorted list of currently-hidden ids
+    // against the desired set and only touch rows that need changing.
     const filterSel   = v.querySelector('#oac-clients-missing-doc');
     const countLabel  = v.querySelector('#oac-clients-missing-count');
     if (filterSel && countLabel) {
-      // Restore prior selection (if any) — this survives the paintClientsView
-      // re-runs that refreshAll triggers.
       const prior = window.__onixClientsMissingDocFilter;
       if (prior && Array.from(filterSel.options).some(o => o.value === prior)) {
         filterSel.value = prior;
@@ -1543,24 +1547,45 @@
       const applyFilter = () => {
         const cat = filterSel.value;
         window.__onixClientsMissingDocFilter = cat;
+        // Both the original (hidden mainTable) rows AND the cloned rows
+        // in the Borrowers / LPs section tables carry data-profile-id
+        // and data-onix-docs. Hiding on both is fine — the hidden set is
+        // invisible either way, and the visible clones are what the
+        // admin actually sees.
         const trs = Array.from(v.querySelectorAll('tr[data-profile-id]'));
-        let shown = 0;
+        // Deduplicate visible-row COUNT by profile id so the "N of M
+        // missing" total matches the eye (a borrower + LP client appears
+        // in both section tables as two <tr> elements).
+        const visibleByProfile = new Set();
+        const totalProfiles    = new Set();
         trs.forEach(tr => {
+          const pid = tr.getAttribute('data-profile-id') || '';
+          totalProfiles.add(pid);
           const docs = (tr.getAttribute('data-onix-docs') || '').split(',').filter(Boolean);
           let hasIt;
-          if (cat === '')                    hasIt = false; // show all
+          if (cat === '')                     hasIt = false; // show all
           else if (cat === '__any_identity__') hasIt = docs.indexOf('id') >= 0 || docs.indexOf('passport') >= 0;
-          else                               hasIt = docs.indexOf(cat) >= 0;
+          else                                 hasIt = docs.indexOf(cat) >= 0;
           const hide = cat !== '' && hasIt;
-          tr.style.display = hide ? 'none' : '';
-          if (!hide) shown++;
+          const desired = hide ? 'none' : '';
+          if (tr.style.display !== desired) tr.style.display = desired;
+          if (!hide) visibleByProfile.add(pid);
         });
         countLabel.textContent = cat === ''
           ? ''
-          : shown + ' of ' + trs.length + ' missing';
+          : visibleByProfile.size + ' of ' + totalProfiles.size + ' missing';
       };
       filterSel.addEventListener('change', applyFilter);
       applyFilter();
+
+      // Re-apply whenever splitClientsBySection re-clones rows into the
+      // section tables (fires on every paintClientsView tick and on
+      // various admin-portal.html observer callbacks). The if-check
+      // inside applyFilter makes this cheap — it only touches rows
+      // whose current display doesn't match desired.
+      if (v.__onixClientsFilterMO) v.__onixClientsFilterMO.disconnect();
+      v.__onixClientsFilterMO = new MutationObserver(() => applyFilter());
+      v.__onixClientsFilterMO.observe(v, { subtree: true, childList: true });
     }
     return true;
   }
