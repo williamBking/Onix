@@ -1522,14 +1522,28 @@
     // picked, hide rows whose data-onix-docs already contains it. The
     // special value "__any_identity__" hides rows that have EITHER id
     // or passport (a client only needs one of the two identity docs).
+    //
+    // Row lookup is a plain [data-profile-id] scoped to the whole view
+    // — the pending-approvals banner uses [data-pending-id] on its rows
+    // instead, so this can never accidentally target the banner.
+    //
+    // Selection persists across re-renders via
+    // window.__onixClientsMissingDocFilter so the admin's pick survives
+    // the periodic refreshAll paint (used to reset to "all clients"
+    // every few minutes).
     const filterSel   = v.querySelector('#oac-clients-missing-doc');
     const countLabel  = v.querySelector('#oac-clients-missing-count');
     if (filterSel && countLabel) {
+      // Restore prior selection (if any) — this survives the paintClientsView
+      // re-runs that refreshAll triggers.
+      const prior = window.__onixClientsMissingDocFilter;
+      if (prior && Array.from(filterSel.options).some(o => o.value === prior)) {
+        filterSel.value = prior;
+      }
       const applyFilter = () => {
         const cat = filterSel.value;
-        const clientTable = v.querySelector('table.oac-table:not([data-pending-id])') ||
-                            Array.from(v.querySelectorAll('table.oac-table')).pop();
-        const trs = clientTable ? Array.from(clientTable.querySelectorAll('tbody > tr[data-profile-id]')) : [];
+        window.__onixClientsMissingDocFilter = cat;
+        const trs = Array.from(v.querySelectorAll('tr[data-profile-id]'));
         let shown = 0;
         trs.forEach(tr => {
           const docs = (tr.getAttribute('data-onix-docs') || '').split(',').filter(Boolean);
