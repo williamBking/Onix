@@ -1446,23 +1446,30 @@ async function flagUnverifiedActivaLoan(id_credito) {
 // verified=true branch below.
 async function upsertActivaLoan(row) {
   const body = {
-    loan_id_display:   row.id_credito,
-    user_id:           row.user_id,
-    data_source:       'ous_activa',
-    balance:           toNum(row.balance),
-    principal_amount:  toNum(row.principal_amount),
-    interest_rate:     toNum(row.interest_rate),
-    maturity_date:     row.maturity_date || null,
-    origination_date:  row.origination_date || null,
-    term_months:       row.term_months,
-    days_delinquent:   row.days_delinquent || 0,
-    loan_type:         row.loan_type || null,
-    monthly_payment:   row.monthly_payment,
-    status:            row.status,
-    product:           row.product || null,
-    payment_frequency: row.payment_frequency || null,
-    renewal_requested: !!row.renewal_requested,
-    ous_synced_at:     new Date().toISOString()
+    loan_id_display:      row.id_credito,
+    user_id:              row.user_id,
+    data_source:          'ous_activa',
+    balance:              toNum(row.balance),
+    principal_amount:     toNum(row.principal_amount),
+    interest_rate:        toNum(row.interest_rate),
+    maturity_date:        row.maturity_date || null,
+    origination_date:     row.origination_date || null,
+    term_months:          row.term_months,
+    days_delinquent:      row.days_delinquent || 0,
+    loan_type:            row.loan_type || null,
+    monthly_payment:      row.monthly_payment,
+    // Payment aggregates from OUS cierre-saldos — used by the client
+    // portal's Repayment Progress card so it can render real "X of Y
+    // months paid" without needing per-payment loan_payments rows
+    // (OUS Activa does not expose per-installment history).
+    num_payments_made:    row.num_payments_made,
+    num_payments_total:   row.num_payments_total,
+    num_payments_overdue: row.num_payments_overdue,
+    status:               row.status,
+    product:              row.product || null,
+    payment_frequency:    row.payment_frequency || null,
+    renewal_requested:    !!row.renewal_requested,
+    ous_synced_at:        new Date().toISOString()
   };
   const r = await sbFetch('/rest/v1/loans?on_conflict=loan_id_display', {
     method: 'POST',
@@ -1609,24 +1616,31 @@ async function runOUSActivaSync() {
     try {
       await upsertActivaLoan({
         id_credito,
-        user_id:           matchRow.matched_profile_id,
-        balance:            cr.saldo_total_vigente,
-        principal_amount:   cr.capital,
-        interest_rate:      cr.tasa,
-        maturity_date:       cr.fecha_termino || null,
-        origination_date:    cr.fecha_inicio || null,
-        term_months:         parseTermMonths(cr.plazo),
-        days_delinquent:     toNum(cr.dias_mora) || 0,
-        loan_type:           mapActivaLoanType(cr.segmento),
+        user_id:              matchRow.matched_profile_id,
+        balance:               cr.saldo_total_vigente,
+        principal_amount:      cr.capital,
+        interest_rate:         cr.tasa,
+        maturity_date:          cr.fecha_termino || null,
+        origination_date:       cr.fecha_inicio || null,
+        term_months:            parseTermMonths(cr.plazo),
+        days_delinquent:        toNum(cr.dias_mora) || 0,
+        loan_type:              mapActivaLoanType(cr.segmento),
         // Only a real "monthly payment" for multi-installment loans —
         // for single-installment/bullet credits (num_cuotas_contratadas
         // == 1, common in this data) monto_cuota_por_devengar is the
         // full payoff amount, not a recurring monthly figure.
-        monthly_payment:     (numCuotas != null && numCuotas > 1) ? toNum(cr.monto_cuota_por_devengar) : null,
-        status:              mapActivaStatus(cr.fecha_castigo),
-        product:             (pvHit && pvHit.producto) || null,
-        payment_frequency:   mapPaymentFrequency(pvHit && pvHit.tipo_pago),
-        renewal_requested:   !!(pvHit && String(pvHit.tiene_solicitud_de_renovacion || '').toUpperCase() === 'SI')
+        monthly_payment:        (numCuotas != null && numCuotas > 1) ? toNum(cr.monto_cuota_por_devengar) : null,
+        // Real payment counts direct from OUS — the client portal reads
+        // these into the "Paid — X of Y months" line instead of counting
+        // loan_payments rows (which don't get populated for OUS-sourced
+        // loans).
+        num_payments_made:      toNum(cr.num_cuotas_pagadas),
+        num_payments_total:     toNum(cr.num_cuotas_contratadas),
+        num_payments_overdue:   toNum(cr.num_cuotas_vencidas),
+        status:                mapActivaStatus(cr.fecha_castigo),
+        product:               (pvHit && pvHit.producto) || null,
+        payment_frequency:     mapPaymentFrequency(pvHit && pvHit.tipo_pago),
+        renewal_requested:     !!(pvHit && String(pvHit.tiene_solicitud_de_renovacion || '').toUpperCase() === 'SI')
       });
       loansUpserted++;
 

@@ -754,7 +754,21 @@
     const principal = Number(loan.principal_amount != null ? loan.principal_amount : loan.balance) || 0;
     const balance   = Number(loan.balance) || 0;
     const paidPrincipal = Math.max(0, principal - balance);
-    const pct       = principal > 0 ? Math.max(0, Math.min(100, (paidPrincipal / principal) * 100)) : 0;
+    // Prefer the OUS aggregate counts (num_payments_made/_total, populated
+    // by runOUSActivaSync from cierre-saldos num_cuotas_*) over counting
+    // loan_payments rows — OUS Activa doesn't expose per-installment
+    // history, so loan_payments is empty for these loans and would
+    // otherwise show "0 of N months paid" against a real non-zero balance.
+    const madeFromOus = Number.isFinite(loan.num_payments_made)   ? Number(loan.num_payments_made)   : null;
+    const totalFromOus= Number.isFinite(loan.num_payments_total)  ? Number(loan.num_payments_total)  : null;
+    const paidMonths  = madeFromOus != null ? madeFromOus : paidRows.length;
+    const totalMonths = totalFromOus != null ? totalFromOus
+                       : (loan.term_months != null ? loan.term_months : null);
+    // Progress % — use the OUS installment ratio when we have it,
+    // otherwise fall back to the principal-shrinkage ratio.
+    const pct = (madeFromOus != null && totalFromOus && totalFromOus > 0)
+      ? Math.max(0, Math.min(100, (madeFromOus / totalFromOus) * 100))
+      : (principal > 0 ? Math.max(0, Math.min(100, (paidPrincipal / principal) * 100)) : 0);
 
     bar.style.width = pct.toFixed(2) + '%';
     bar.setAttribute('aria-valuenow', pct.toFixed(1));
@@ -772,14 +786,15 @@
 
     // 2. "Paid — X of Y months" muted span (left) + percent badge (right) above the bar.
     //    The HTML has this as the first non-title flex row inside the card.
+    //    paidMonths / totalMonths / pct are all computed above; here we
+    //    just render them.
     const progressWrap = wrap.querySelector('.progress-wrap');
     const headerRow = progressWrap ? progressWrap.previousElementSibling : null;
     if (headerRow) {
       const spans = headerRow.querySelectorAll('span');
       if (spans.length >= 2) {
-        const paidMonths = paidRows.length;
-        const totalMonths = loan.term_months != null ? loan.term_months : '—';
-        spans[0].textContent = 'Paid — ' + paidMonths + ' of ' + totalMonths +
+        const totalTxt = totalMonths != null ? totalMonths : '—';
+        spans[0].textContent = 'Paid — ' + paidMonths + ' of ' + totalTxt +
           (totalMonths === 1 ? ' month' : ' months');
         if (spans[0].hasAttribute('data-en')) spans[0].setAttribute('data-en', spans[0].textContent);
         spans[1].textContent = pct.toFixed(1) + '%';
@@ -802,8 +817,30 @@
 
     // 4. The three summary boxes: Paid to Date / Remaining / Total Interest.
     //    Find them by their label text (more resilient than positional indexing).
-    const totalPaid     = paidRows.reduce((s, p) => s + Number(p.amount_due || 0), 0);
-    const totalInterest = paidRows.reduce((s, p) => s + Number(p.interest   || 0), 0);
+    //
+    //    OUS Activa loans have no loan_payments rows, so if we counted
+    //    those we'd render $0 next to a real 8% progress bar. Derive
+    //    from the aggregates instead:
+    //      Paid to Date  = monthly_payment × num_payments_made
+    //      Total Interest = Paid to Date - (principal - current balance)
+    //                       (what's been paid overall minus what went
+    //                        to principal reduction = interest paid)
+    //    Fall back to summing loan_payments rows only when the aggregate
+    //    fields aren't populated (manually-created loans still work).
+    const monthlyPay = Number(loan.monthly_payment) || 0;
+    let totalPaid, totalInterest;
+    if (madeFromOus != null && monthlyPay > 0) {
+      totalPaid     = monthlyPay * madeFromOus;
+      totalInterest = Math.max(0, totalPaid - paidPrincipal);
+    } else if (madeFromOus != null && monthlyPay <= 0) {
+      // Bullet / single-installment loan — no monthly payment defined.
+      // Paid-to-date on principal only; interest unknown until paid off.
+      totalPaid     = paidPrincipal;
+      totalInterest = 0;
+    } else {
+      totalPaid     = paidRows.reduce((s, p) => s + Number(p.amount_due || 0), 0);
+      totalInterest = paidRows.reduce((s, p) => s + Number(p.interest   || 0), 0);
+    }
     const summaryValues = {
       'paid to date':   fmt.money(totalPaid),
       'remaining':      fmt.money(balance),
