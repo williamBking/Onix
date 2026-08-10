@@ -1579,12 +1579,27 @@
       applyFilter();
 
       // Re-apply whenever splitClientsBySection re-clones rows into the
-      // section tables (fires on every paintClientsView tick and on
-      // various admin-portal.html observer callbacks). The if-check
-      // inside applyFilter makes this cheap — it only touches rows
-      // whose current display doesn't match desired.
+      // section tables. Only react to added/removed <tr data-profile-id>
+      // nodes — NOT to any other subtree mutation. In particular, the
+      // count label's textContent update inside applyFilter itself is a
+      // childList mutation (replaces the text node), so a naive
+      // subtree/childList observer would fire on its own writes and
+      // infinite-loop. Debounced via requestAnimationFrame so a burst
+      // of clone insertions collapses to a single re-filter.
       if (v.__onixClientsFilterMO) v.__onixClientsFilterMO.disconnect();
-      v.__onixClientsFilterMO = new MutationObserver(() => applyFilter());
+      let rafId = 0;
+      v.__onixClientsFilterMO = new MutationObserver(muts => {
+        for (const m of muts) {
+          const touched = [...m.addedNodes, ...m.removedNodes].some(n =>
+            n && n.nodeType === 1 &&
+            (n.matches?.('tr[data-profile-id]') || n.querySelector?.('tr[data-profile-id]'))
+          );
+          if (!touched) continue;
+          if (rafId) return; // already scheduled
+          rafId = requestAnimationFrame(() => { rafId = 0; applyFilter(); });
+          return;
+        }
+      });
       v.__onixClientsFilterMO.observe(v, { subtree: true, childList: true });
     }
     return true;
