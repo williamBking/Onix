@@ -1079,22 +1079,15 @@
       grid.appendChild(card);
     });
 
-    // Wire interest buttons
+    // Wire interest buttons — open the Express Interest modal instead of
+    // submitting silently. The modal captures amount, preferred contact
+    // method, best time to reach, and optional notes before recording
+    // the interest so the relationship manager has real context.
     document.querySelectorAll('[data-raise-interest]').forEach(btn => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', () => {
         const raiseId = btn.getAttribute('data-raise-interest');
-        btn.disabled = true;
-        btn.innerHTML = 'Submitting…';
-        const ok = await OnixDB.submitRaiseInterest(userId, raiseId);
-        if (ok) {
-          btn.innerHTML = '✓ Interest recorded';
-          btn.style.background = '#3B8B3B';
-          btn.style.borderColor = '#3B8B3B';
-        } else {
-          btn.disabled = false;
-          btn.innerHTML = 'Express Interest';
-          alert('Could not record interest. Please try again.');
-        }
+        const raise   = raises.find(x => x.id === raiseId);
+        if (raise) openExpressInterestModal(raise, userId);
       });
     });
 
@@ -1220,26 +1213,151 @@
       '<span>' + fmt.money(raised) + ' raised</span>' +
       '<span>' + fmt.money(target - raised) + ' remaining</span>';
 
-    // Express Interest — submit to Supabase
+    // Express Interest — open the Express Interest modal (amount +
+    // contact preference + notes) instead of submitting silently.
     const interestBtn = document.getElementById('cp-rd-interest-btn');
     interestBtn.disabled = false;
+    interestBtn.style.background = '';
+    interestBtn.style.borderColor = '';
     interestBtn.textContent = 'Express Interest →';
-    interestBtn.onclick = async () => {
-      interestBtn.disabled = true;
-      interestBtn.textContent = 'Submitting…';
-      const ok = await OnixDB.submitRaiseInterest(userId, raise.id);
-      if (ok) {
-        interestBtn.textContent = '✓ Interest recorded';
-        interestBtn.style.background = '#3B8B3B';
-        interestBtn.style.borderColor = '#3B8B3B';
-      } else {
-        interestBtn.disabled = false;
-        interestBtn.textContent = 'Express Interest →';
-        alert('Could not record interest. Please try again.');
-      }
+    interestBtn.onclick = () => {
+      document.getElementById('cp-raise-modal').classList.remove('show');
+      openExpressInterestModal(raise, userId);
     };
 
     document.getElementById('cp-raise-modal').classList.add('show');
+  }
+
+  // ---------- Express Interest modal ----------
+  // Full form: investment amount, preferred contact method, best time,
+  // optional notes. On submit calls OnixDB.submitRaiseInterest with the
+  // extras so the relationship manager has real context to reach out.
+  function ensureExpressInterestModal() {
+    if (document.getElementById('cp-ei-modal')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'cp-ei-modal';
+    overlay.className = 'cp-overlay';
+    overlay.innerHTML =
+      '<div class="cp-sheet">' +
+        '<div class="cp-hd">' +
+          '<div>' +
+            '<div class="cp-eyebrow" data-en="Investing" data-es="Inversiones">Investing</div>' +
+            '<h2 data-en="Express Interest" data-es="Expresar Interés">Express Interest</h2>' +
+            '<div class="cp-sub" id="cp-ei-sub"></div>' +
+          '</div>' +
+          '<button class="cp-close" data-ei-close type="button">×</button>' +
+        '</div>' +
+        '<div class="cp-body">' +
+          '<div style="background:#FDF0EE;border-left:3px solid #C0392B;padding:14px 16px;font-size:.86rem;line-height:1.55;color:#1A1A1A;margin-bottom:20px" data-en="Your relationship manager will review your interest and reach out within 24 hours to discuss next steps and subscription documents." data-es="Su gerente de relaciones revisará su interés y se comunicará en las próximas 24 horas para discutir los siguientes pasos y los documentos de suscripción.">' +
+            'Your relationship manager will review your interest and reach out within 24 hours to discuss next steps and subscription documents.' +
+          '</div>' +
+          '<div style="margin-bottom:16px">' +
+            '<label style="display:block;font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:#6B6560;font-weight:700;margin-bottom:6px" data-en="Investment Amount (USD)" data-es="Monto de Inversión (USD)">Investment Amount (USD)</label>' +
+            '<div style="display:flex;align-items:center;gap:8px">' +
+              '<span style="font-size:1.1rem;color:#1A1A1A;font-weight:600">$</span>' +
+              '<input id="cp-ei-amount" type="number" min="0" step="1000" placeholder="0" style="flex:1;padding:10px 12px;border:1px solid #E8E8E8;font-size:.95rem;font-family:inherit;outline:none;background:#fff;border-radius:2px">' +
+            '</div>' +
+          '</div>' +
+          '<div style="margin-bottom:16px">' +
+            '<label style="display:block;font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:#6B6560;font-weight:700;margin-bottom:6px" data-en="Preferred Contact Method" data-es="Método de Contacto Preferido">Preferred Contact Method</label>' +
+            '<select id="cp-ei-contact" style="width:100%;padding:10px 12px;border:1px solid #E8E8E8;font-size:.9rem;font-family:inherit;outline:none;background:#fff;border-radius:2px">' +
+              '<option value="Email" data-en="Email" data-es="Correo electrónico">Email</option>' +
+              '<option value="Phone" data-en="Phone" data-es="Teléfono">Phone</option>' +
+              '<option value="SMS">SMS</option>' +
+              '<option value="WhatsApp">WhatsApp</option>' +
+            '</select>' +
+          '</div>' +
+          '<div style="margin-bottom:16px">' +
+            '<label style="display:block;font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:#6B6560;font-weight:700;margin-bottom:6px" data-en="Best Time to Reach You (Optional)" data-es="Mejor Hora para Contactarlo (Opcional)">Best Time to Reach You (Optional)</label>' +
+            '<input id="cp-ei-time" type="text" placeholder="e.g. Weekdays after 4pm" data-en-placeholder="e.g. Weekdays after 4pm" data-es-placeholder="ej. Días de semana después de las 4pm" style="width:100%;padding:10px 12px;border:1px solid #E8E8E8;font-size:.9rem;font-family:inherit;outline:none;background:#fff;border-radius:2px">' +
+          '</div>' +
+          '<div style="margin-bottom:6px">' +
+            '<label style="display:block;font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:#6B6560;font-weight:700;margin-bottom:6px" data-en="Notes (Optional)" data-es="Notas (Opcional)">Notes (Optional)</label>' +
+            '<textarea id="cp-ei-notes" rows="4" placeholder="Any questions or context for the Onix team…" data-en-placeholder="Any questions or context for the Onix team…" data-es-placeholder="Cualquier pregunta o contexto para el equipo Onix…" style="width:100%;padding:10px 12px;border:1px solid #E8E8E8;font-size:.9rem;font-family:inherit;outline:none;background:#fff;border-radius:2px;resize:vertical;min-height:80px"></textarea>' +
+          '</div>' +
+          '<div id="cp-ei-err" style="color:#C0392B;font-size:.82rem;margin-top:10px;display:none"></div>' +
+        '</div>' +
+        '<div class="cp-footer">' +
+          '<button class="cp-btn cp-btn-ghost" data-ei-close type="button" data-en="Cancel" data-es="Cancelar">Cancel</button>' +
+          '<button class="cp-btn cp-btn-red" id="cp-ei-submit" type="button" data-en="Submit Interest →" data-es="Enviar Interés →">Submit Interest →</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.classList.remove('show');
+    });
+    overlay.querySelectorAll('[data-ei-close]').forEach(b =>
+      b.addEventListener('click', () => overlay.classList.remove('show'))
+    );
+  }
+
+  function openExpressInterestModal(raise, userId) {
+    ensureExpressInterestModal();
+    const overlay  = document.getElementById('cp-ei-modal');
+    const sub      = document.getElementById('cp-ei-sub');
+    const amountEl = document.getElementById('cp-ei-amount');
+    const contactEl= document.getElementById('cp-ei-contact');
+    const timeEl   = document.getElementById('cp-ei-time');
+    const notesEl  = document.getElementById('cp-ei-notes');
+    const errEl    = document.getElementById('cp-ei-err');
+    const submitBtn= document.getElementById('cp-ei-submit');
+
+    // Subtitle: "<Venture Name> — Minimum: $X" (or just minimum if no name)
+    const min      = raise.minimum_investment;
+    const minTxt   = min ? fmt.money(min) : '—';
+    sub.textContent = (raise.venture_name ? raise.venture_name + ' · ' : '') + 'Minimum: ' + minTxt;
+
+    // Reset fields for a fresh open
+    amountEl.value = '';
+    if (min) amountEl.placeholder = String(min);
+    contactEl.value = 'Email';
+    timeEl.value = '';
+    notesEl.value = '';
+    errEl.style.display = 'none';
+    errEl.textContent = '';
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Submit Interest →';
+    submitBtn.style.background = '';
+    submitBtn.style.borderColor = '';
+
+    submitBtn.onclick = async () => {
+      errEl.style.display = 'none';
+      errEl.textContent = '';
+      const amount = Number(amountEl.value);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        errEl.textContent = 'Enter a valid investment amount.';
+        errEl.style.display = 'block';
+        amountEl.focus();
+        return;
+      }
+      if (min && amount < Number(min)) {
+        errEl.textContent = 'Amount is below the minimum of ' + fmt.money(min) + '.';
+        errEl.style.display = 'block';
+        amountEl.focus();
+        return;
+      }
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Submitting…';
+      const ok = await OnixDB.submitRaiseInterest(userId, raise.id, {
+        amount:         amount,
+        contact_method: contactEl.value,
+        best_time:      timeEl.value.trim() || null,
+        notes:          notesEl.value.trim() || null
+      });
+      if (ok) {
+        submitBtn.textContent = '✓ Interest recorded';
+        submitBtn.style.background = '#3B8B3B';
+        submitBtn.style.borderColor = '#3B8B3B';
+        setTimeout(() => { overlay.classList.remove('show'); }, 1200);
+      } else {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit Interest →';
+        errEl.textContent = 'Could not record interest. Please try again.';
+        errEl.style.display = 'block';
+      }
+    };
+
+    overlay.classList.add('show');
   }
 
   // ---------- Loan / Deposit Application Forms ----------
