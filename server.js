@@ -274,6 +274,11 @@ const stateActiva = {
   lastError: null
 };
 
+// Set the first time runOUSActivaSync() observes /catalogos failing, so the
+// "this endpoint doesn't actually exist" warning below logs once prominently
+// instead of blending into the per-run fallback warning on every sync.
+let catalogosMissingWarned = false;
+
 /**
  * Log in to OUS Activa and store the token on stateActiva.
  *
@@ -1300,6 +1305,25 @@ function mapActivaStatus(fecha_castigo) {
   return fecha_castigo ? 'review' : 'active';
 }
 
+// Maps loans.loan_type for an Activa credit. OUS's own segmento field —
+// meant to carry a real loan category — has been observed returning
+// payment-description text instead ("Pagos fijos a lo largo del periodo",
+// "Un sólo pago al final de periodo") for a small number of records; those
+// leaked straight into the Dashboard's loan-type breakdown chart before
+// this normalization existed. /catalogos would normally be the live source
+// of truth for valid segmento values, but it's confirmed not to exist for
+// this API (see the 404 note above), so there's no list to validate
+// against — this hardcodes the only two values actually observed in real
+// data instead of passing segmento through raw. Match is case-insensitive
+// (OUS's real data is consistently uppercase today, but that's not
+// guaranteed forever); anything that doesn't match, including null/empty,
+// normalizes to 'Other' rather than leaking dirty text into the chart.
+const ACTIVA_LOAN_TYPES = new Set(['SIMPLE', 'PERSONAL']);
+function mapActivaLoanType(segmento) {
+  const trimmed = String(segmento || '').trim();
+  return ACTIVA_LOAN_TYPES.has(trimmed.toUpperCase()) ? trimmed : 'Other';
+}
+
 // Loose structural check for a real Mexican RFC, not a full checksum
 // validator: 3-4 letters, then exactly 6 digits (the YYMMDD birthdate
 // segment CLAUDE.md's notes call out), then 3 alphanumeric homoclave
@@ -1479,10 +1503,15 @@ async function runOUSActivaSync() {
 
   // 2. Resolve fecha_cierre (+ a lookahead window for por-vencer) from
   //    Activa's own /catalogos. data.fechaCierre and data.rangoVencimiento
-  //    Proximo (e.g. [30, 60, 90]) are confirmed real fields for Activa
-  //    (official API manual §3.6 + live Postman test) — the fallback
-  //    below is defensive against a network hiccup or API downtime, not
-  //    a hedge against an unconfirmed response shape.
+  //    Proximo (e.g. [30, 60, 90]) are documented real fields for Activa
+  //    per the official API manual (§3.6) — but /catalogos itself has been
+  //    CONFIRMED (live test, 2026-08-10) to return a genuine 404 "Endpoint
+  //    no encontrado" for this API, contradicting the manual. This is not
+  //    a defensive hedge against a rare network hiccup: the catch fallback
+  //    below fires on every single sync run today, not an edge case. Also
+  //    means /catalogos cannot be used as a live source of valid `segmento`
+  //    categories for loan_type — see mapActivaLoanType() below, which
+  //    hardcodes the known-good values instead.
   let fecha_cierre;
   let fechaCierreSource;
   let dias = 30;
@@ -1504,6 +1533,14 @@ async function runOUSActivaSync() {
   } catch (err) {
     fecha_cierre = new Date().toISOString().slice(0, 10);
     fechaCierreSource = 'fallback-catalogos-error';
+    if (!catalogosMissingWarned) {
+      catalogosMissingWarned = true;
+      console.warn('[ous-activa-sync] /catalogos is confirmed NOT to exist for OUS Activa ' +
+        '(returns 404 despite being documented in the official manual) — every sync run falls ' +
+        'back to today\'s date for fecha_cierre, and loan_type cannot be validated against a ' +
+        'live catalog (see mapActivaLoanType). This is expected until OUS fixes or redocuments ' +
+        'the endpoint; logged once per process so it stays visible without spamming every 15 min.');
+    }
     console.warn('[ous-activa-sync] /catalogos fetch failed (' + ((err && err.message) || err) +
       ') — falling back to today\'s date: ' + fecha_cierre);
   }
@@ -1580,7 +1617,7 @@ async function runOUSActivaSync() {
         origination_date:    cr.fecha_inicio || null,
         term_months:         parseTermMonths(cr.plazo),
         days_delinquent:     toNum(cr.dias_mora) || 0,
-        loan_type:           cr.segmento || null,
+        loan_type:           mapActivaLoanType(cr.segmento),
         // Only a real "monthly payment" for multi-installment loans —
         // for single-installment/bullet credits (num_cuotas_contratadas
         // == 1, common in this data) monto_cuota_por_devengar is the
