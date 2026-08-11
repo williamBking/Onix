@@ -23,6 +23,11 @@
   // only — never touches what's actually stored in profiles.full_name, so
   // exports, search matching, and edit forms all keep the real value).
   const up = s => (s ? String(s).toUpperCase() : s);
+  // Loan-type breakdown charts (Dashboard + Reports) only ever show
+  // Personal, Simple, or Other — never a raw loan_type value. See the
+  // comment at loanTypeChart's grouping code for why a raw value can't be
+  // trusted even though server.js normalizes it at sync time.
+  const LOAN_TYPE_DISPLAY = { PERSONAL: 'Personal', SIMPLE: 'Simple' };
 
   // ---------- styles for the live console overlay ----------
   function injectStyles() {
@@ -2788,10 +2793,22 @@
     // loanTypeChart — active LOAN portfolio by type (real $ amounts).
     // Excludes OUS Pasiva rows, which are deposits, not loans — same
     // exclusion the "Active Loans" KPI above already applies.
+    //
+    // Only Personal, Simple, and Other are ever shown — server.js's
+    // mapActivaLoanType() normalizes OUS Activa's loan_type at sync time,
+    // but a loan can still carry a stale/dirty value here if it hasn't been
+    // touched by a sync since that normalization was added (confirmed live:
+    // 4 loans briefly showed raw Spanish payment-description text — e.g.
+    // "Pagos fijos a lo largo del periodo" — leaked from OUS's own segmento
+    // field before self-correcting on their next sync). This client-side
+    // allowlist is the actual safety net so the chart can never show
+    // anything else, regardless of what ends up in the database — a
+    // relied-on backend fix landing eventually isn't the same guarantee.
     const activeLoans = loans.filter(l => l.status === 'active' && l.data_source !== 'ous_pasiva');
     const typeTotals = {};
     activeLoans.forEach(l => {
-      const t = l.loan_type || 'Uncategorized';
+      const key = String(l.loan_type || '').trim().toUpperCase();
+      const t = LOAN_TYPE_DISPLAY[key] || 'Other';
       typeTotals[t] = (typeTotals[t] || 0) + Number(l.balance || 0);
     });
     const total = Object.values(typeTotals).reduce((s, v) => s + v, 0);
@@ -2878,11 +2895,14 @@
     // belongs to investments and never matched here, so this previously
     // always rendered a single dead "Other" bucket). Excludes OUS Pasiva
     // rows, which are deposits, not loans — same exclusion as loanTypeChart
-    // on the Dashboard.
+    // on the Dashboard. Same Personal/Simple/Other allowlist as that chart
+    // too — see its comment for why a raw loan_type value can't be trusted
+    // here either.
     const activeLoans = loans.filter(l => l.status === 'active' && l.data_source !== 'ous_pasiva');
     const typeTotals = {};
     activeLoans.forEach(l => {
-      const t = l.loan_type || 'Uncategorized';
+      const key = String(l.loan_type || '').trim().toUpperCase();
+      const t = LOAN_TYPE_DISPLAY[key] || 'Other';
       typeTotals[t] = (typeTotals[t] || 0) + Number(l.balance || 0);
     });
     const types = Object.keys(typeTotals).sort((a, b) => typeTotals[b] - typeTotals[a]);
