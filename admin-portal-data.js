@@ -3272,6 +3272,7 @@
     payment:          { label: 'Payment Due',          color: '#3B8B3B' },
     interest_due:     { label: 'Interest Due',          color: '#2F9E8F' },
     deposit_closing:  { label: 'Deposit Closing',      color: '#C0392B' },
+    deposit_opened:   { label: 'New Deposit',          color: '#4A6FA5' },
     loan_closing:     { label: 'Loan Closing',         color: '#7A2A20' },
     loan_renewal:     { label: 'Client Loan Renewal',  color: '#C9952B' },
     // 'other' is kept as the fallback for CAL_TYPES[ev.type] || CAL_TYPES.other
@@ -3438,7 +3439,7 @@
 
   async function loadCalendarData() {
     const c = OnixDB.client;
-    const [eventsRes, bdayRes, loansRes, paymentsRes, nextDueRes, clientsRes, allLoansRes] = await Promise.all([
+    const [eventsRes, bdayRes, loansRes, paymentsRes, nextDueRes, clientsRes, allLoansRes, originationsRes] = await Promise.all([
       c.from('calendar_events').select('*'),
       c.from('profiles').select('id, full_name, date_of_birth').not('date_of_birth', 'is', null),
       c.from('loans').select('id, loan_id_display, maturity_date, balance, data_source, profiles!user_id(full_name)').eq('status', 'active').not('maturity_date', 'is', null),
@@ -3447,13 +3448,19 @@
       // due" for OUS Pasiva deposits) event automatically.
       c.from('loans').select('id, loan_id_display, next_due_date, monthly_payment, data_source, profiles!user_id(full_name)').eq('status', 'active').not('next_due_date', 'is', null),
       c.from('profiles').select('id, full_name, email').eq('role', 'client').order('full_name', { ascending: true }),
-      c.from('loans').select('id, loan_id_display, user_id, profiles!user_id(full_name)').order('created_at', { ascending: false })
+      c.from('loans').select('id, loan_id_display, user_id, profiles!user_id(full_name)').order('created_at', { ascending: false }),
+      // New OUS Pasiva deposits opened — real client money coming in, which
+      // the monthly cashflow summary needs on the "In" side (see below).
+      // Separate query rather than reusing loansRes, since a row can have
+      // origination_date set without maturity_date or vice versa.
+      c.from('loans').select('id, loan_id_display, origination_date, balance, data_source, profiles!user_id(full_name)').eq('status', 'active').eq('data_source', 'ous_pasiva').not('origination_date', 'is', null)
     ]);
-    if (eventsRes.error)   console.error('[onix-cal] events fetch failed:',   eventsRes.error);
-    if (bdayRes.error)     console.error('[onix-cal] birthdays fetch failed:',bdayRes.error);
-    if (loansRes.error)    console.error('[onix-cal] loans fetch failed:',    loansRes.error);
-    if (paymentsRes.error) console.error('[onix-cal] payments fetch failed:', paymentsRes.error);
-    if (nextDueRes.error)  console.error('[onix-cal] next-due fetch failed:', nextDueRes.error);
+    if (eventsRes.error)       console.error('[onix-cal] events fetch failed:',       eventsRes.error);
+    if (bdayRes.error)         console.error('[onix-cal] birthdays fetch failed:',    bdayRes.error);
+    if (loansRes.error)        console.error('[onix-cal] loans fetch failed:',        loansRes.error);
+    if (paymentsRes.error)     console.error('[onix-cal] payments fetch failed:',     paymentsRes.error);
+    if (nextDueRes.error)      console.error('[onix-cal] next-due fetch failed:',     nextDueRes.error);
+    if (originationsRes.error) console.error('[onix-cal] originations fetch failed:', originationsRes.error);
 
     calEvents = [];
     (eventsRes.data || []).forEach(e => calEvents.push({
@@ -3531,6 +3538,20 @@
         source: 'loan-next-due',
         loanId: l.id,
         readOnly: true
+      });
+    });
+    // New deposits opened — real client money coming into Onix. Only ever
+    // OUS Pasiva rows (the query above already scopes to that), so no
+    // isDeposit branch needed here the way the other blocks have.
+    (originationsRes.data || []).forEach(l => {
+      calEvents.push({
+        id: 'opened-' + l.id,
+        title: 'New deposit · ' + fmt.money(l.balance) + ' · ' + (l.loan_id_display || ''),
+        subtitle: (l.profiles && up(l.profiles.full_name)) || '',
+        amount: l.balance,
+        type: 'deposit_opened',
+        date: l.origination_date,
+        source: 'loan', loanId: l.id, readOnly: true
       });
     });
     calClients = clientsRes.data || [];
@@ -3659,6 +3680,7 @@
         payment:          n => n + ' payments due',
         interest_due:     n => n + ' interest payments due',
         deposit_closing:  n => n + ' deposit closings',
+        deposit_opened:   n => n + ' new deposits',
         loan_closing:     n => n + ' loan closings',
         loan_renewal:     n => n + ' loan renewals',
         birthday:         n => n + ' birthdays'
@@ -3666,7 +3688,7 @@
       // Only these types have a per-event dollar amount worth summing into
       // the group's headline — loan closings, renewals and birthdays don't
       // carry one (and didn't show one individually before this either).
-      const GROUP_HAS_AMOUNT = { payment: true, interest_due: true, deposit_closing: true };
+      const GROUP_HAS_AMOUNT = { payment: true, interest_due: true, deposit_closing: true, deposit_opened: true };
       const byType = {};
       events.forEach(ev => {
         if (!GROUP_LABEL[ev.type]) return;
@@ -3706,13 +3728,21 @@
 
     grid.querySelectorAll('.cal-cell').forEach(c => c.addEventListener('click', () => openDayPanel(c.dataset.date)));
 
-    // Monthly cashflow summary — In = loan payments due + loan closings
-    // (both are real loans paying us); Out = interest due + deposit
-    // closings (money owed to OUS-synced depositors). Loan renewals and
-    // birthdays never carry a dollar amount, so they're left out rather
+    // Monthly cashflow summary — full company view, not just the loan book.
+    // In = loan payments due + loan closings (real loans paying us) + new
+    // deposits opened (real client money coming in). Out = interest due +
+    // deposit closings (money owed to OUS-synced depositors). Loan renewals
+    // and birthdays never carry a dollar amount, so they're left out rather
     // than guessed at. Only counts events whose actual date falls in the
     // viewed month — the grid's leading/trailing padding days from
     // adjacent months are excluded.
+    //
+    // Earlier version only counted loan repayments/closings as "In" — with
+    // Onix's loan book (OUS Activa) still brand new, that showed a tiny,
+    // misleading total (e.g. $27k for a month) while ignoring hundreds of
+    // thousands of dollars in new deposits, which are the actual bulk of
+    // incoming cash today. New deposits opened now count toward "In" so
+    // this reflects real total cash movement, not just one narrow slice.
     const summaryEl = document.getElementById('cal-summary');
     if (summaryEl) {
       const monthPrefix = calYear + '-' + String(calMonth + 1).padStart(2, '0');
@@ -3721,7 +3751,7 @@
         if (!dateStr.startsWith(monthPrefix)) return;
         byDate[dateStr].forEach(ev => {
           const amt = Number(ev.amount) || 0;
-          if (ev.type === 'payment' || ev.type === 'loan_closing') { cashIn += amt; inCount++; }
+          if (ev.type === 'payment' || ev.type === 'loan_closing' || ev.type === 'deposit_opened') { cashIn += amt; inCount++; }
           else if (ev.type === 'interest_due' || ev.type === 'deposit_closing') { cashOut += amt; outCount++; }
         });
       });
@@ -3731,7 +3761,7 @@
         '<div class="cal-summary-cell">' +
           '<div class="cal-summary-label"><span class="dot" style="background:#3B8B3B"></span>Cashflow In</div>' +
           '<div class="cal-summary-val in">' + fmt.money(cashIn) + '</div>' +
-          '<div class="cal-summary-sub">' + inCount + ' payment' + (inCount === 1 ? '' : 's') + ' due or closing this month</div>' +
+          '<div class="cal-summary-sub">' + inCount + ' payment, closing, or new deposit' + (inCount === 1 ? '' : 's') + ' this month</div>' +
         '</div>' +
         '<div class="cal-summary-cell">' +
           '<div class="cal-summary-label"><span class="dot" style="background:#C0392B"></span>Cashflow Out</div>' +
