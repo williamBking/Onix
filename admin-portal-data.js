@@ -3287,6 +3287,10 @@
   let calEvents  = [];
   let calClients = [];
   let calLoans   = [];
+  // Active loans + deposits (with balance, interest_rate, origination /
+  // maturity dates) — the source the monthly Cashflow summary uses to
+  // compute expected interest income vs. interest expense per month.
+  let calActiveLoans = [];
 
   function injectCalendarStyles() {
     if (document.getElementById('cal-styles')) return;
@@ -3442,7 +3446,12 @@
     const [eventsRes, bdayRes, loansRes, paymentsRes, nextDueRes, clientsRes, allLoansRes, originationsRes] = await Promise.all([
       c.from('calendar_events').select('*'),
       c.from('profiles').select('id, full_name, date_of_birth').not('date_of_birth', 'is', null),
-      c.from('loans').select('id, loan_id_display, maturity_date, balance, data_source, profiles!user_id(full_name)').eq('status', 'active').not('maturity_date', 'is', null),
+      // Extra fields (interest_rate, origination_date) used by the
+      // per-month cashflow summary below — balance × rate / 12 for each
+      // active loan / deposit gives the real monthly interest cashflow
+      // for the month, so we don't have to lean on the sparse
+      // loan_payments / next_due_date events (which OUS never fills in).
+      c.from('loans').select('id, loan_id_display, maturity_date, origination_date, balance, interest_rate, data_source, profiles!user_id(full_name)').eq('status', 'active').not('maturity_date', 'is', null),
       c.from('loan_payments').select('id, due_date, amount_due, loans(loan_id_display, data_source, profiles!user_id(full_name))').eq('status', 'pending').not('due_date', 'is', null),
       // Loans whose next_due_date is set get a "Payment due" (or "Interest
       // due" for OUS Pasiva deposits) event automatically.
@@ -3542,7 +3551,10 @@
     });
     // New deposits opened — real client money coming into Onix. Only ever
     // OUS Pasiva rows (the query above already scopes to that), so no
-    // isDeposit branch needed here the way the other blocks have.
+    // isDeposit branch needed here the way the other blocks have. Kept
+    // as a calendar chip; the monthly Cashflow summary uses the
+    // interest-margin math below rather than summing these principal
+    // originations, so it doesn't matter for the total either way.
     (originationsRes.data || []).forEach(l => {
       calEvents.push({
         id: 'opened-' + l.id,
@@ -3554,8 +3566,9 @@
         source: 'loan', loanId: l.id, readOnly: true
       });
     });
-    calClients = clientsRes.data || [];
-    calLoans   = allLoansRes.data || [];
+    calClients     = clientsRes.data || [];
+    calLoans       = allLoansRes.data || [];
+    calActiveLoans = loansRes.data || [];
   }
 
   function renderCalendar() {
@@ -3728,32 +3741,58 @@
 
     grid.querySelectorAll('.cal-cell').forEach(c => c.addEventListener('click', () => openDayPanel(c.dataset.date)));
 
-    // Monthly cashflow summary — full company view, not just the loan book.
-    // In = loan payments due + loan closings (real loans paying us) + new
-    // deposits opened (real client money coming in). Out = interest due +
-    // deposit closings (money owed to OUS-synced depositors). Loan renewals
-    // and birthdays never carry a dollar amount, so they're left out rather
-    // than guessed at. Only counts events whose actual date falls in the
-    // viewed month — the grid's leading/trailing padding days from
-    // adjacent months are excluded.
+    // Monthly cashflow summary — real monthly INTEREST cashflow, not
+    // maturity-principal returns.
     //
-    // Earlier version only counted loan repayments/closings as "In" — with
-    // Onix's loan book (OUS Activa) still brand new, that showed a tiny,
-    // misleading total (e.g. $27k for a month) while ignoring hundreds of
-    // thousands of dollars in new deposits, which are the actual bulk of
-    // incoming cash today. New deposits opened now count toward "In" so
-    // this reflects real total cash movement, not just one narrow slice.
+    // Previous logic summed deposit-closing balances into cashflow-out,
+    // producing spikes of several million on months when multiple
+    // deposits happened to mature (which mostly roll over in practice —
+    // that principal doesn't actually leave the institution). William
+    // (PR #196) then symmetrized by adding deposit-openings to Cashflow
+    // In, but the maturity spike still dominated in months with heavy
+    // deposit turnover, so net could still swing wildly (e.g. Sept 2026
+    // showed -$5.0M).
+    //
+    // The new math is the real recurring economics — Net Interest
+    // Margin, straight from OUS-synced balances:
+    //
+    //   In  = Σ (loan.balance × loan.interest_rate / 12 / 100)    for every
+    //         active OUS Activa loan whose origination_date <= month-end
+    //         and maturity_date >= month-start
+    //   Out = Σ (deposit.balance × deposit.interest_rate / 12 / 100)
+    //         for every active OUS Pasiva deposit under the same window
+    //   Net = In - Out                                             (Net Interest Margin)
+    //
+    // Maturity events (loan_closing / deposit_closing) AND the new
+    // deposit_opened events still visually appear on the calendar as
+    // chips so admins can see what's scheduled — they just don't
+    // dominate the monthly cashflow total, which now reflects the
+    // stable recurring interest economics.
     const summaryEl = document.getElementById('cal-summary');
     if (summaryEl) {
-      const monthPrefix = calYear + '-' + String(calMonth + 1).padStart(2, '0');
-      let cashIn = 0, cashOut = 0, inCount = 0, outCount = 0;
-      Object.keys(byDate).forEach(dateStr => {
-        if (!dateStr.startsWith(monthPrefix)) return;
-        byDate[dateStr].forEach(ev => {
-          const amt = Number(ev.amount) || 0;
-          if (ev.type === 'payment' || ev.type === 'loan_closing' || ev.type === 'deposit_opened') { cashIn += amt; inCount++; }
-          else if (ev.type === 'interest_due' || ev.type === 'deposit_closing') { cashOut += amt; outCount++; }
-        });
+      const monthStart = new Date(calYear, calMonth, 1);
+      const monthEnd   = new Date(calYear, calMonth + 1, 0);
+      const parseDay   = (s) => {
+        if (!s) return null;
+        const [y, m, d] = s.split('-').map(Number);
+        return new Date(y, (m || 1) - 1, d || 1);
+      };
+      const isActiveThisMonth = (l) => {
+        const orig = parseDay(l.origination_date);
+        const mat  = parseDay(l.maturity_date);
+        if (orig && orig > monthEnd)    return false; // starts after this month
+        if (mat  && mat  < monthStart)  return false; // matured before this month
+        return true;
+      };
+      let cashIn = 0, cashOut = 0, loanCount = 0, depositCount = 0;
+      (calActiveLoans || []).forEach(l => {
+        if (!isActiveThisMonth(l)) return;
+        const bal = Number(l.balance) || 0;
+        const rate = Number(l.interest_rate) || 0;
+        if (bal <= 0 || rate <= 0) return;
+        const monthlyInterest = bal * (rate / 12 / 100);
+        if (l.data_source === 'ous_activa') { cashIn  += monthlyInterest; loanCount++; }
+        else if (l.data_source === 'ous_pasiva') { cashOut += monthlyInterest; depositCount++; }
       });
       const net = cashIn - cashOut;
       const netDisplay = (net < 0 ? '−' : '+') + fmt.money(Math.abs(net));
@@ -3761,15 +3800,15 @@
         '<div class="cal-summary-cell">' +
           '<div class="cal-summary-label"><span class="dot" style="background:#3B8B3B"></span>Cashflow In</div>' +
           '<div class="cal-summary-val in">' + fmt.money(cashIn) + '</div>' +
-          '<div class="cal-summary-sub">' + inCount + ' payment, closing, or new deposit' + (inCount === 1 ? '' : 's') + ' this month</div>' +
+          '<div class="cal-summary-sub">Interest from ' + loanCount + ' active loan' + (loanCount === 1 ? '' : 's') + '</div>' +
         '</div>' +
         '<div class="cal-summary-cell">' +
           '<div class="cal-summary-label"><span class="dot" style="background:#C0392B"></span>Cashflow Out</div>' +
           '<div class="cal-summary-val out">' + fmt.money(cashOut) + '</div>' +
-          '<div class="cal-summary-sub">' + outCount + ' interest / deposit payout' + (outCount === 1 ? '' : 's') + '</div>' +
+          '<div class="cal-summary-sub">Interest to ' + depositCount + ' active deposit' + (depositCount === 1 ? '' : 's') + '</div>' +
         '</div>' +
         '<div class="cal-summary-cell">' +
-          '<div class="cal-summary-label">Net</div>' +
+          '<div class="cal-summary-label">Net Interest Margin</div>' +
           '<div class="cal-summary-val ' + (net >= 0 ? 'in' : 'out') + '">' + netDisplay + '</div>' +
           '<div class="cal-summary-sub">In minus out, this month</div>' +
         '</div>';
