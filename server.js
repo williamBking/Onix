@@ -1114,6 +1114,7 @@ async function upsertLoan(row) {
     interest_rate:    row.interest_rate,
     monthly_payment:  row.monthly_payment,
     balance:          row.balance,
+    next_due_date:    row.next_due_date || null,
     status:           row.status || 'active',
     days_delinquent:  row.days_delinquent || 0,
     payment_frequency:row.payment_frequency || null,
@@ -1157,14 +1158,35 @@ async function runOUSSync() {
     { method: 'GET', body: { fecha_cierre: today } });
   const pv = await callOUS('/creditos/por-vencer' + buildQuery({ dias: 90 }),
     { method: 'GET', body: { dias: 90 } });
+  // Same dias window as por-vencer above, for consistency. Unguarded like
+  // the two calls above — a failure here aborts the sync same as they do,
+  // rather than silently upserting loans with no next_due_date info.
+  const pp = await callOUS('/creditos/proximo-pagos' + buildQuery({ dias: 90 }),
+    { method: 'GET', body: { dias: 90 } });
 
   const csRows = (cs.body && cs.body.data) || [];
   const pvRows = (pv.body && pv.body.data) || [];
+  const ppRows = (pp.body && pp.body.data) || [];
   if (!Array.isArray(csRows)) throw new Error('cierre-saldos returned non-array: ' + JSON.stringify(cs.body).slice(0, 200));
 
   // 3. Index por-vencer rows by id_credito for merge
   const pvByCredito = {};
   for (const r of pvRows) if (r && r.id_credito) pvByCredito[String(r.id_credito)] = r;
+
+  // 3b. Group proximo-pagos rows by id_credito, keeping only the earliest
+  //     upcoming (today-or-later) due date — a credit can have several
+  //     scheduled payment rows. fecha_vencimiento is used first because the
+  //     name matches what next_due_date means ("vencimiento" = due);
+  //     fecha_movimiento is a fallback for rows missing it. Not verified
+  //     against a live payload which field OUS actually intends here.
+  const nextDueByCredito = {};
+  for (const r of ppRows) {
+    if (!r || !r.id_credito) continue;
+    const d = r.fecha_vencimiento || r.fecha_movimiento || null;
+    if (!d || d < today) continue;
+    const key = String(r.id_credito);
+    if (!nextDueByCredito[key] || d < nextDueByCredito[key]) nextDueByCredito[key] = d;
+  }
 
   // 4. Group credits by client. Ideal key is RFC, but OUS often ships
   //    credits with blank RFC — fall back to email, then to name.
@@ -1235,6 +1257,7 @@ async function runOUSSync() {
           interest_rate:    toNum(cr.tasa_anualizada),
           monthly_payment:  toNum(cr.cuota),
           balance:          toNum(cr.saldo_total_capital),
+          next_due_date:    nextDueByCredito[String(cr.id_credito || '')] || null,
           status:           mapAccountingStatus(cr.status_contable),
           days_delinquent:  toNum(cr.dias_mora) || 0,
           payment_frequency:mapPaymentFrequency(pvHit && pvHit.tipo_pago),
