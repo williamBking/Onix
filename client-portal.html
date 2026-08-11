@@ -747,10 +747,6 @@ a,button{cursor:pointer;text-decoration:none;background:none;border:none;font-fa
               <div><div class="profile-row-label" data-en="New Raise Alerts" data-es="Alertas Nuevas Captaciones">New Raise Alerts</div><div class="profile-row-sub" data-en="Notify me when new opportunities open" data-es="Notificar nuevas oportunidades">Notify me when new opportunities open</div></div>
               <label class="sw"><input type="checkbox" checked><span class="sw-track"></span></label>
             </div>
-            <div class="profile-row">
-              <div><div class="profile-row-label">2FA</div><div class="profile-row-sub">Set up two-factor authentication</div></div>
-              <button class="btn btn-outline" type="button" onclick="show2FA()">Set Up</button>
-            </div>
           </div>
         </div>
       </div>
@@ -1408,17 +1404,6 @@ function setApplyType(type) {
   heading.setAttribute('data-es', isDeposit ? 'Solicitar un Nuevo Depósito' : 'Solicitar un Nuevo Préstamo');
   const lang = localStorage.getItem('onix-lang') || 'en';
   heading.textContent = heading.getAttribute('data-' + lang);
-}
-
-// Not real 2FA — an inside joke for the team. Click "Set Up" next to 2FA
-// on Profile & Preferences and enjoy.
-function show2FA() {
-  var el = cpMakeOverlay('two-factor-overlay',
-    '<div style="background:#fff;border-radius:4px;padding:8px;max-width:380px;text-align:center">' +
-      '<img src="assets/2fa-totally-legit.png" alt="" style="display:block;width:100%;border-radius:2px">' +
-      '<button type="button" class="btn btn-outline" style="margin-top:12px" onclick="cpClose(\'two-factor-overlay\')">Close</button>' +
-    '</div>');
-  cpOpen('two-factor-overlay');
 }
 
 function populateUpcoming() {
