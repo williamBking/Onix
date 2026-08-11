@@ -1398,22 +1398,23 @@ function isPlausibleRfc(raw) {
 }
 
 // Upserts the review-queue row for one credit. CRITICAL: only ever
-// sends id_credito / nombre_cliente_raw / rfc / balance / last_seen_at —
-// matched_profile_id, confidence, verified, verified_by, verified_at are
-// deliberately never included in this payload, not even as null, so
-// PostgREST's merge-duplicates upsert never touches them on an
-// existing row. An admin's prior review work must survive every sync
+// sends id_credito / nombre_cliente_raw / rfc / balance / interest_rate /
+// last_seen_at — matched_profile_id, confidence, verified, verified_by,
+// verified_at are deliberately never included in this payload, not even
+// as null, so PostgREST's merge-duplicates upsert never touches them on
+// an existing row. An admin's prior review work must survive every sync
 // run untouched; only the sync-owned fields (name-as-last-seen, rfc,
-// balance, last_seen_at) ever move. balance is what OUS itself reports
-// as the current outstanding balance for this credit — captured here
-// (not just on the verified/written-loan path) so the review queue
-// carries a real dollar figure for every credit, matched or not, which
-// is what the Dashboard's pending-match total (see
-// paintDashboardView/'Loan Portfolio') reads from directly. Uses
+// balance, interest_rate, last_seen_at) ever move. balance/interest_rate
+// are what OUS itself reports for this credit — captured here (not just
+// on the verified/written-loan path) so the review queue carries real
+// figures for every credit, matched or not, which is what the
+// Dashboard's pending-match total (see paintDashboardView/'Loan
+// Portfolio') and the Calendar's pending-interest estimate read from
+// directly. Uses
 // return=representation to read back the row's current — possibly
 // admin-set — review state in the same request, rather than a separate
 // round-trip SELECT.
-async function upsertActivaClientMatch(id_credito, nombre_cliente_raw, rfc, balance) {
+async function upsertActivaClientMatch(id_credito, nombre_cliente_raw, rfc, balance, interest_rate) {
   const r = await sbFetch('/rest/v1/ous_activa_client_matches?on_conflict=id_credito', {
     method: 'POST',
     headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' },
@@ -1422,6 +1423,7 @@ async function upsertActivaClientMatch(id_credito, nombre_cliente_raw, rfc, bala
       nombre_cliente_raw,
       rfc: rfc || null,
       balance: balance != null ? toNum(balance) : null,
+      interest_rate: interest_rate != null ? toNum(interest_rate) : null,
       last_seen_at: new Date().toISOString()
     })
   });
@@ -1643,7 +1645,7 @@ async function runOUSActivaSync() {
 
     let matchRow;
     try {
-      matchRow = await upsertActivaClientMatch(id_credito, nombre_cliente_raw, cr.rfc, cr.saldo_total_vigente);
+      matchRow = await upsertActivaClientMatch(id_credito, nombre_cliente_raw, cr.rfc, cr.saldo_total_vigente, cr.tasa);
       matchesUpserted++;
     } catch (e) {
       errors.push('match-upsert ' + id_credito + ': ' + (e.message || String(e)));
