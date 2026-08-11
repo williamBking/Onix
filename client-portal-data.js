@@ -461,32 +461,97 @@
     }
   }
 
-  // Replace the Portfolio Allocation pie chart with real data.
+  // Clear a chart canvas and write a short centered message on it. Used for
+  // the honest empty states below — a client with nothing yet should see
+  // "no data" rather than a stale demo chart or a misleading flat line.
+  function drawEmptyCanvasMessage(canvas, message) {
+    try { const ex = Chart.getChart(canvas); if (ex) ex.destroy(); } catch (e) {}
+    const ctx = canvas.getContext('2d');
+    // After a Chart.js destroy the backing store keeps its device-pixel size,
+    // so measure in CSS pixels and scale, otherwise the text lands off-centre
+    // on high-DPI screens.
+    const w = canvas.clientWidth  || canvas.width;
+    const h = canvas.clientHeight || canvas.height;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = w * dpr;
+    canvas.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#9B9590';
+    ctx.font = "italic 15px 'Cormorant Garamond', Georgia, serif";
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(message, w / 2, h / 2);
+  }
+
+  // Portfolio Allocation donut — how the client's capital is actually split
+  // across their own holdings. Answers "where is my money" with real dollar
+  // amounts and each holding's share of the total.
   function renderPortfolioChart(investments) {
     const canvas = document.getElementById('allocChart');
     if (!canvas || typeof Chart === 'undefined') return;
     const active = (investments || []).filter(i => i.status !== 'exited');
-    const labels = active.map(i => i.venture_name || 'Investment');
-    const data   = active.map(i => Number(i.amount_invested || 0));
-    const palette = ['#C0392B','#a93226','#d56b5e','#e8a39a','#1A1A1A','#888','#bbb','#EDE8E0'];
-    const colors = labels.map((_, i) => palette[i % palette.length]);
 
-    // Destroy any existing Chart instance bound to this canvas before re-creating
-    try { const ex = Chart.getChart(canvas); if (ex) ex.destroy(); } catch (e) {}
-    if (!labels.length) {
-      const ctx = canvas.getContext('2d');
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#9B9590';
-      ctx.font = "italic 14px 'Cormorant Garamond', serif";
-      ctx.textAlign = 'center';
-      ctx.fillText('No investments yet', canvas.width / 2, canvas.height / 2);
-      return;
+    // OUS deposits carry their account number as venture_name (e.g. "550"),
+    // which reads as a meaningless bare number in a legend — prefix it so it
+    // shows as "Deposit 550".
+    const labelFor = (i) => {
+      const name = String(i.venture_name || 'Investment');
+      return (i.venture_type === 'deposit' && !/deposit/i.test(name)) ? 'Deposit ' + name : name;
+    };
+    // Largest holding first so the donut reads top-down in the legend.
+    let rows = active
+      .map(i => ({ label: labelFor(i), value: Number(i.amount_invested || 0) }))
+      .filter(r => r.value > 0)
+      .sort((a, b) => b.value - a.value);
+
+    if (!rows.length) { drawEmptyCanvasMessage(canvas, 'No holdings yet'); return; }
+
+    // A client with many deposits would otherwise produce an unreadable
+    // legend of near-identical slivers — keep the biggest 6 and roll the
+    // rest into a single "Other" slice (still counted in the total).
+    const MAX_SLICES = 6;
+    if (rows.length > MAX_SLICES + 1) {
+      const head = rows.slice(0, MAX_SLICES);
+      const tail = rows.slice(MAX_SLICES);
+      head.push({
+        label: 'Other (' + tail.length + ')',
+        value: tail.reduce((s, r) => s + r.value, 0)
+      });
+      rows = head;
     }
+
+    const total   = rows.reduce((s, r) => s + r.value, 0);
+    const palette = ['#C0392B','#a93226','#d56b5e','#e8a39a','#7A2A20','#c9857b','#9B9590'];
+
+    try { const ex = Chart.getChart(canvas); if (ex) ex.destroy(); } catch (e) {}
     new Chart(canvas.getContext('2d'), {
       type: 'doughnut',
-      data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 0 }] },
-      options: { responsive: true, maintainAspectRatio: false, cutout: '66%',
-        plugins: { legend: { position: 'right', labels: { boxWidth: 10, font: { size: 11 }, color: '#555' } } } }
+      data: {
+        labels: rows.map(r => r.label),
+        datasets: [{
+          data: rows.map(r => r.value),
+          backgroundColor: rows.map((_, i) => palette[i % palette.length]),
+          borderWidth: 0
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '66%',
+        plugins: {
+          legend: { position: 'right', labels: { boxWidth: 10, font: { size: 11 }, color: '#555' } },
+          tooltip: {
+            callbacks: {
+              // "Deposit 550: $120,000 (34%)" — the dollar figure and the
+              // share of portfolio are the two things a client actually wants.
+              label: (c) => {
+                const v = Number(c.parsed) || 0;
+                const pct = total > 0 ? Math.round((v / total) * 100) : 0;
+                return ' ' + c.label + ': ' + fmt.money(v) + ' (' + pct + '%)';
+              }
+            }
+          }
+        }
+      }
     });
   }
 
@@ -959,6 +1024,13 @@
     // Documents card on the My Documents view
     renderInvestmentDocs(investments);
 
+    // The allocation donut lives on the Dashboard, not in this tab's grid, so
+    // it must render before the grid early-returns below. It previously sat
+    // at the end of this function, which meant a client with no holdings hit
+    // the empty-state `return` and never got a real chart — leaving the
+    // hardcoded demo donut from client-portal.html on screen permanently.
+    renderPortfolioChart(investments);
+
     const grid = document.querySelector('#view-investments .inv-grid');
     if (!grid) return;
     // Clear demo cards
@@ -991,9 +1063,10 @@
           : '');
       grid.appendChild(card);
     });
-    // Wire detail modal + portfolio chart with the same dataset
+    // Wire detail modal with the same dataset (the allocation chart is
+    // rendered near the top of this function so it survives the early
+    // returns above).
     wireInvestmentDetailModal(investments, distributions || []);
-    renderPortfolioChart(investments);
   }
 
   function renderInvestmentKpis(investments) {
@@ -1950,9 +2023,31 @@
       const distSum = (distributions || [])
         .filter(d => d.paid_at && new Date(d.paid_at) <= cutoff)
         .reduce((s, d) => s + Number(d.amount || 0), 0);
-      return Math.round((activeInv + distSum) / 1000); // $K
+      // Real dollars. This used to round to the nearest $1,000 ("$K"), which
+      // flattened any portfolio under seven figures into a coarse staircase
+      // and rendered smaller balances as a misleading $0K.
+      return activeInv + distSum;
     });
+
     try { const ex = Chart.getChart(canvas); if (ex) ex.destroy(); } catch (e) {}
+
+    // Nothing to plot — a flat line pinned at $0 reads as a broken chart, so
+    // say plainly that there's no activity instead.
+    if (!values.some(v => v > 0)) {
+      drawEmptyCanvasMessage(canvas, 'No portfolio activity yet');
+      return;
+    }
+
+    // Scale the axis to the data rather than forcing a single unit, so both a
+    // $40K deposit and a $4M portfolio stay readable.
+    const axisMoney = (v) => {
+      const n = Number(v) || 0;
+      const abs = Math.abs(n);
+      if (abs >= 1000000) return '$' + (n / 1000000).toFixed(abs % 1000000 === 0 ? 0 : 1) + 'M';
+      if (abs >= 1000)    return '$' + Math.round(n / 1000) + 'K';
+      return '$' + Math.round(n);
+    };
+
     const ctx = canvas.getContext('2d');
     const g = ctx.createLinearGradient(0, 0, 0, 200);
     g.addColorStop(0, 'rgba(192,57,43,0.15)');
@@ -1967,10 +2062,11 @@
         responsive: true, maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
-          tooltip: { callbacks: { label: c => '$' + c.parsed.y + 'K' } }
+          // Exact figure on hover — the axis is abbreviated, the tooltip isn't.
+          tooltip: { callbacks: { label: c => ' ' + fmt.money(c.parsed.y) } }
         },
         scales: {
-          y: { grid: { color: '#f0f0f0' }, ticks: { color: '#888', font: { size: 10 }, callback: v => '$' + v + 'K' } },
+          y: { grid: { color: '#f0f0f0' }, ticks: { color: '#888', font: { size: 10 }, callback: axisMoney } },
           x: { grid: { display: false }, ticks: { color: '#888', font: { size: 10 } } }
         }
       }
@@ -2565,6 +2661,17 @@
     wireDepositApplicationForm(userId, profile);
     wireDocumentsTab(userId, clientDocs || []);
   }
+
+  // Neutralize the legacy demo chart initializer in client-portal.html.
+  // initDashCharts() destroys whatever is on #perfChart / #allocChart and
+  // redraws hardcoded demo data (a $372K→$435K curve and a Bari Caffè / La
+  // Grange / Montrose / Pasadena donut). It's called from showView('dashboard'),
+  // which fires on DOMContentLoaded — so on any load where it ran after the
+  // live render finished, every client saw fabricated portfolio figures.
+  // Same approach already used for initBreakdownChart on the Payments tab.
+  // Assigned at script-execution time (before DOMContentLoaded) so it is
+  // always in place before showView can call it.
+  window.initDashCharts = function () {};
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', bootstrap);
