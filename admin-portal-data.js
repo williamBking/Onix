@@ -3381,6 +3381,7 @@
       .cal-summary-val.in{color:#3B8B3B}
       .cal-summary-val.out{color:#C0392B}
       .cal-summary-sub{font-size:.7rem;color:#9B9590;margin-top:6px}
+      .cal-summary-pending{font-size:.7rem;color:#A07818;margin-top:6px;padding-top:6px;border-top:1px dashed #E8E0D0}
       @media(max-width:680px){ .cal-summary{grid-template-columns:1fr} }
       .cal-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:18px;padding:14px 18px;background:#fff;border:1px solid #E8E8E8}
       .cal-legend-item{display:flex;align-items:center;gap:6px;font-size:.74rem;color:#1A1A1A}
@@ -3816,6 +3817,18 @@
     // chips so admins can see what's scheduled — they just don't
     // dominate the monthly cashflow total, which now reflects the
     // stable recurring interest economics.
+    //
+    // Confirmed vs. pending: cashIn above only ever counts verified OUS
+    // Activa loans that made it into the real `loans` table — that's a
+    // structural guarantee (loans.user_id is NOT NULL, so an unverified
+    // credit is physically incapable of landing there; see CLAUDE.md
+    // "OUS Activa Integration"). Separately, a "pending" figure is
+    // computed below from activaMatches (the same array the Loan Match
+    // Review tab and Dashboard's Loan Portfolio caption already use) —
+    // the potential monthly interest sitting in still-unverified credits.
+    // It's rendered in its own dashed-off sub-line, never added into
+    // cashIn/net, so the confirmed numbers this section is named for
+    // never quietly include a number nobody has verified.
     const summaryEl = document.getElementById('cal-summary');
     if (summaryEl) {
       const monthStart = new Date(calYear, calMonth, 1);
@@ -3842,6 +3855,27 @@
         if (l.data_source === 'ous_activa') { cashIn  += monthlyInterest; loanCount++; }
         else if (l.data_source === 'ous_pasiva') { cashOut += monthlyInterest; depositCount++; }
       });
+
+      // Pending (unconfirmed) potential — OUS Activa credits sitting in
+      // the Loan Match Review queue that haven't been verified yet (see
+      // ous_activa_client_matches / LMR_SELECT_COLS). These can NEVER be
+      // folded into cashIn above: runOUSActivaSync() only ever writes a
+      // row to `loans` once an admin sets verified=true, so an unverified
+      // credit has no origination_date/maturity_date to even month-window
+      // against — this is a flat "if every one of these were confirmed
+      // today" estimate, not a month-scoped figure like cashIn/cashOut.
+      // Shown as a separate, clearly-labeled line so it's never mistaken
+      // for real, already-happening cashflow.
+      let pendingIn = 0, pendingLoanCount = 0;
+      (activaMatches || []).forEach(m => {
+        if (m.verified) return;
+        const bal = Number(m.balance) || 0;
+        const rate = Number(m.interest_rate) || 0;
+        if (bal <= 0 || rate <= 0) return;
+        pendingIn += bal * (rate / 12 / 100);
+        pendingLoanCount++;
+      });
+
       const net = cashIn - cashOut;
       const netDisplay = (net < 0 ? '−' : '+') + fmt.money(Math.abs(net));
       summaryEl.innerHTML =
@@ -3849,6 +3883,9 @@
           '<div class="cal-summary-label"><span class="dot" style="background:#3B8B3B"></span>Cashflow In</div>' +
           '<div class="cal-summary-val in">' + fmt.money(cashIn) + '</div>' +
           '<div class="cal-summary-sub">Interest from ' + loanCount + ' active loan' + (loanCount === 1 ? '' : 's') + '</div>' +
+          (pendingLoanCount > 0
+            ? '<div class="cal-summary-pending">+' + fmt.money(pendingIn) + '/mo potential &mdash; ' + pendingLoanCount + ' unverified loan' + (pendingLoanCount === 1 ? '' : 's') + ', not yet confirmed</div>'
+            : '') +
         '</div>' +
         '<div class="cal-summary-cell">' +
           '<div class="cal-summary-label"><span class="dot" style="background:#C0392B"></span>Cashflow Out</div>' +
@@ -4883,7 +4920,7 @@
   let activaMatchesLoaded = false;
   let lmrFilters = { verified: 'unverified', confidence: '' };
   const LMR_CONFIDENCE_COLOR = { high: '#2D6A2D', medium: '#A07818', low: '#C0392B', none: '#888' };
-  const LMR_SELECT_COLS = 'id_credito, nombre_cliente_raw, balance, matched_profile_id, confidence, verified, verified_by, verified_at, first_seen_at, last_seen_at, profiles!matched_profile_id(full_name, email)';
+  const LMR_SELECT_COLS = 'id_credito, nombre_cliente_raw, balance, interest_rate, matched_profile_id, confidence, verified, verified_by, verified_at, first_seen_at, last_seen_at, profiles!matched_profile_id(full_name, email)';
 
   function injectLoanMatchReviewStyles() {
     if (document.getElementById('lmr-styles')) return;
