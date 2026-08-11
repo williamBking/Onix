@@ -5265,34 +5265,53 @@
 
   // ── Role-based permission enforcement ────────────────────────────────────
   // Managers can view all data and add clients but cannot reject/remove
-  // clients or manage admin team members. We hide the relevant buttons and
-  // the Users tab via CSS injected once, then re-apply via MutationObserver
-  // to catch elements the bundler renders after initial load.
-  function enforceRolePermissions(role) {
-    if (role !== 'manager') return; // admins have no restrictions
+  // clients or manage admin team members. Account executives (role=admin,
+  // title=ae) can view data but cannot add clients — the real enforcement
+  // for that is server-side (admin_create_client()'s is_ae() check in
+  // Postgres, and requireNotAE on POST /api/activa-create-client in
+  // server.js); this is UI-only, so an AE never even sees a button that
+  // would just fail. We hide the relevant buttons/tabs via CSS injected
+  // once, then re-apply via MutationObserver to catch elements the bundler
+  // renders after initial load.
+  function enforceRolePermissions(role, title) {
+    if (role !== 'manager' && title !== 'ae') return; // no restrictions apply
 
-    const MANAGER_CSS = `
-      /* Hide reject/remove buttons for clients */
-      [data-act="reject"], [data-pending-act="reject"],
-      #oac-bulk-reject, .oac-btn.danger { display: none !important; }
-      /* Hide the Users/Team management tab in the sidebar */
-      [data-view="users"], [onclick*="showView('users')"],
-      a[href="#users"] { display: none !important; }
-      /* Hide the Users view itself */
-      #view-users { display: none !important; }
-    `;
+    const CSS_RULES = [];
+    if (role === 'manager') {
+      CSS_RULES.push(
+        // Hide reject/remove buttons for clients
+        '[data-act="reject"], [data-pending-act="reject"], #oac-bulk-reject, .oac-btn.danger { display: none !important; }',
+        // Hide the Users/Team management tab in the sidebar
+        '[data-view="users"], [onclick*="showView(\'users\')"], a[href="#users"] { display: none !important; }',
+        // Hide the Users view itself
+        '#view-users { display: none !important; }'
+      );
+    }
+    if (title === 'ae') {
+      CSS_RULES.push(
+        // Hide every "+ New Client" trigger (Clients tab button, the
+        // per-row "Create New Client" action in Loan Match Review).
+        '#oac-new-client-btn, [data-lmr-create] { display: none !important; }'
+      );
+    }
 
-    if (!document.getElementById('__onix_manager_css')) {
+    if (!document.getElementById('__onix_role_css')) {
       const s = document.createElement('style');
-      s.id = '__onix_manager_css';
-      s.textContent = MANAGER_CSS;
+      s.id = '__onix_role_css';
+      s.textContent = CSS_RULES.join('\n');
       document.head.appendChild(s);
     }
 
     // Re-apply to any elements the bundler injects after initial load
     const obs = new MutationObserver(() => {
-      document.querySelectorAll('[data-act="reject"], [data-pending-act="reject"], #oac-bulk-reject')
-        .forEach(el => { el.style.display = 'none'; });
+      if (role === 'manager') {
+        document.querySelectorAll('[data-act="reject"], [data-pending-act="reject"], #oac-bulk-reject')
+          .forEach(el => { el.style.display = 'none'; });
+      }
+      if (title === 'ae') {
+        document.querySelectorAll('#oac-new-client-btn, [data-lmr-create]')
+          .forEach(el => { el.style.display = 'none'; });
+      }
     });
     obs.observe(document.body, { childList: true, subtree: true });
   }
@@ -5304,7 +5323,7 @@
     injectStyles();
     buildPanel();
     renderSidebarUser(gate.profile);
-    enforceRolePermissions(gate.profile.role);
+    enforceRolePermissions(gate.profile.role, gate.profile.title);
     // oac-greeting belongs to the retired Live Admin Console drawer; only
     // set its text if the element actually exists. Without this guard the
     // bootstrap throws and downstream wiring (Calendar tab, etc.) never runs.
