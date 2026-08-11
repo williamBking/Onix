@@ -516,8 +516,9 @@
       });
     }
 
+    // Only one picker now — the Payments tab was folded into My Loan
+    // on 2026-08-11 so its picker is gone too.
     renderLoanSelector(loans, current.id, onPick, '#view-loans');
-    renderLoanSelector(loans, current.id, onPick, '#view-payments');
 
     renderLoan(current, payments);
     renderPayments(payments, current);
@@ -1679,24 +1680,6 @@
       : (payments || []);
     const paid = scoped.filter(p => p.status === 'paid' || p.paid_at);
 
-    // Update the Payments tab's eyebrow so it's clear which loan is shown.
-    const eyebrow = document.querySelector('#view-payments .page-hd .eyebrow');
-    if (eyebrow) {
-      if (selectedLoan && selectedLoan.loan_id_display) {
-        const baseEn = 'Payment Schedule · ' + selectedLoan.loan_id_display;
-        const baseEs = 'Calendario de Pagos · ' + selectedLoan.loan_id_display;
-        eyebrow.setAttribute('data-en', baseEn);
-        eyebrow.setAttribute('data-es', baseEs);
-        const lang = (window.OnixLang && OnixLang.getLang && OnixLang.getLang()) || 'en';
-        eyebrow.textContent = lang === 'es' ? baseEs : baseEn;
-      } else {
-        eyebrow.setAttribute('data-en', 'Payment Schedule');
-        eyebrow.setAttribute('data-es', 'Calendario de Pagos');
-        const lang = (window.OnixLang && OnixLang.getLang && OnixLang.getLang()) || 'en';
-        eyebrow.textContent = lang === 'es' ? 'Calendario de Pagos' : 'Payment Schedule';
-      }
-    }
-
     const historyRowsHtml = paid.length
       ? paid.slice(0, 24).map(p => `
           <tr>
@@ -1709,21 +1692,15 @@
           </tr>`).join('')
       : '<tr><td colspan="6" style="color:var(--light);font-style:italic;text-align:center;padding:18px">No payments recorded yet</td></tr>';
 
-    // Lending tab: Payment History card
+    // My Loan tab: Payment History card (only place it lives now —
+    // the standalone Payments tab was folded in on 2026-08-11).
     const lendHist = findCardByTitle(document.querySelector('#view-loans'), txt => /Payment History/i.test(txt));
     if (lendHist) {
       const tbody = lendHist.querySelector('tbody');
       if (tbody) tbody.innerHTML = historyRowsHtml;
     }
 
-    // Payments tab: Payment History card (was 5 hardcoded demo rows)
-    const payHist = findCardByTitle(document.querySelector('#view-payments'), txt => /Payment History/i.test(txt));
-    if (payHist) {
-      const tbody = payHist.querySelector('tbody');
-      if (tbody) tbody.innerHTML = historyRowsHtml;
-    }
-
-    // Payments view: Upcoming Payments table (#upcoming-rows)
+    // Upcoming Payments table (#upcoming-rows) — same view now.
     // Use the same loan-scoped list so it agrees with My Loan + Payment History.
     const upTbody = document.getElementById('upcoming-rows');
     if (upTbody) {
@@ -1755,7 +1732,9 @@
     const totalInterest  = paidPayments.reduce((s, p) => s + Number(p.interest  || 0), 0);
 
     // Update the two summary boxes (Principal / Interest amounts)
-    const card = findCardByTitle(document.querySelector('#view-payments'), txt => /Payment Breakdown/i.test(txt));
+    // Payment Breakdown card lives under My Loan now (folded in from
+    // the retired Payments tab, 2026-08-11).
+    const card = findCardByTitle(document.querySelector('#view-loans'), txt => /Payment Breakdown/i.test(txt));
     if (card) {
       card.querySelectorAll('div[style*="background"]').forEach(box => {
         const eyebrow = box.querySelector('[data-en]');
@@ -2071,7 +2050,8 @@
         subtitle: [fmt.money(p.amount_due), paid ? 'paid ' + fmt.date(p.paid_at) : 'due ' + fmt.date(p.due_date)].filter(Boolean).join(' · '),
         amount: p.amount_due != null ? fmt.money(p.amount_due) : '',
         haystack: ['payment', loanId, p.amount_due, paid ? 'paid' : 'due', fmt.date(p.paid_at || p.due_date)].filter(x => x != null).join(' ').toLowerCase(),
-        onClick: () => showView('payments')
+        // Payments live on My Loan now (folded in 2026-08-11).
+        onClick: () => showView('loans')
       });
     });
 
@@ -2513,7 +2493,69 @@
         status: 'pending',
         loans: { id: d.id, loan_id_display: d.loan_id_display, user_id: d.user_id, data_source: d.data_source }
       }));
-    const allPayments = (payments || []).concat(depositNextDue);
+    // Synthesize a full amortization schedule for each OUS Activa loan
+    // that has no per-installment loan_payments rows in the DB. OUS
+    // Activa's API only exposes aggregates (num_cuotas_pagadas /
+    // _contratadas + saldo_total_capital), never a payment-by-payment
+    // history — so the Upcoming Payments / Payment Breakdown / Payment
+    // History cards would otherwise be empty on every loan.
+    //
+    // For a straight amortized loan with a known principal, rate, term,
+    // origination date, and monthly payment, the whole schedule is
+    // deterministic:
+    //   interest_n  = balance_{n-1} × (annual_rate / 12 / 100)
+    //   principal_n = monthly_payment - interest_n
+    //   balance_n   = balance_{n-1} - principal_n
+    // The first num_payments_made rows are marked 'paid' with paid_at
+    // set to the due date; the rest are 'pending'. Skipped when the
+    // loan is missing any required field (no fake data invented).
+    // Skipped for loans that already have real loan_payments rows.
+    function synthActivaSchedule(loan) {
+      const principal = Number(loan.principal_amount);
+      const ratePct   = Number(loan.interest_rate);
+      const term      = Number(loan.term_months);
+      const mp        = Number(loan.monthly_payment);
+      const paidCount = Number(loan.num_payments_made);
+      const startStr  = loan.origination_date;
+      if (!(principal > 0 && ratePct > 0 && term > 0 && mp > 0 && startStr)) return [];
+      if (!Number.isFinite(paidCount) || paidCount < 0) return [];
+      const start = new Date(startStr);
+      if (isNaN(start.getTime())) return [];
+      const monthlyRate = ratePct / 12 / 100;
+      const rows = [];
+      let balance = principal;
+      for (let n = 1; n <= term; n++) {
+        const interest  = +(balance * monthlyRate).toFixed(2);
+        // Last payment: whatever is left after this month's interest,
+        // to avoid a stale residual balance from rounding drift.
+        const principalPay = n === term
+          ? +balance.toFixed(2)
+          : +(Math.min(mp - interest, balance)).toFixed(2);
+        balance = +(balance - principalPay).toFixed(2);
+        const due = new Date(start.getFullYear(), start.getMonth() + n, start.getDate());
+        const dueStr = due.toISOString().slice(0, 10);
+        const isPaid = n <= paidCount;
+        rows.push({
+          id: 'synth-' + loan.id + '-' + n,
+          loan_id: loan.id,
+          due_date: dueStr,
+          amount_due: +(interest + principalPay).toFixed(2),
+          principal: principalPay,
+          interest,
+          balance_after: balance,
+          paid_at: isPaid ? dueStr : null,
+          status: isPaid ? 'paid' : 'pending',
+          loans: { id: loan.id, loan_id_display: loan.loan_id_display, user_id: loan.user_id, data_source: loan.data_source }
+        });
+      }
+      return rows;
+    }
+    const loansWithRealPayments = new Set((payments || []).map(p => p.loan_id).filter(Boolean));
+    const synthActivaPayments = (loans || [])
+      .filter(l => l.data_source === 'ous_activa' && !loansWithRealPayments.has(l.id))
+      .flatMap(synthActivaSchedule);
+
+    const allPayments = (payments || []).concat(depositNextDue).concat(synthActivaPayments);
 
     // Active loans only — paid-off / closed loans can be added back later
     // via a separate filter on the loan picker if the team wants that.
