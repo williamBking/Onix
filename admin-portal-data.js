@@ -2781,11 +2781,24 @@
       wired.loanType === loanTypeChart && wired.deposit === depositChart;
     if (unchanged) return wired;
 
-    // origChart — loan originations by month (balance at origination, $M).
+    // origChart — loan originations by month (original loan amount, $M).
     // Excludes OUS Pasiva rows, which are deposits, not loans — same
     // exclusion as the "Active Loans" KPI above.
+    //
+    // Grouped by origination_date (when the loan was actually made), not
+    // created_at (when this row was synced into Onix's own database) —
+    // confirmed live that these are very different things for OUS Activa
+    // loans: created_at is crammed into a ~6-week window (when the
+    // integration was built and matches got verified), while real
+    // origination_date spans back to January 2022. Grouping by created_at
+    // made the chart look like an $8M origination spike in a single
+    // month that was actually years of real lending history landing in
+    // this database all at once. Summed by principal_amount (the real
+    // amount lent at origination), not balance (today's partially-paid-
+    // down amount) — balance would understate an older loan's real
+    // origination size.
     const origLoans = loans.filter(l => l.data_source !== 'ous_pasiva');
-    const origVals = sumByMonth(origLoans, 'created_at', 'balance', 12)
+    const origVals = sumByMonth(origLoans, 'origination_date', 'principal_amount', 12)
       .map(v => parseFloat((v / 1e6).toFixed(2)));
     setChartData(origChart, labels12, origVals);
     enableClickToShowValue(origChart);
