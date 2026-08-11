@@ -125,7 +125,7 @@
     var MATRIX = {
       admin:   {manageUsers:true,  addClients:true,  removeClients:true,  viewProjects:true, editContent:true,  billing:true},
       manager: {manageUsers:false, addClients:true,  removeClients:false, viewProjects:true, editContent:true,  billing:true},
-      ae:      {manageUsers:false, addClients:true,  removeClients:false, viewProjects:true, editContent:false, billing:false}
+      ae:      {manageUsers:false, addClients:false, removeClients:false, viewProjects:true, editContent:false, billing:false}
     };
     function currentTitle(){
       try {
@@ -2331,7 +2331,7 @@
     var MATRIX = (window.OnixPerms && window.OnixPerms.MATRIX) || {
       admin:   {manageUsers:true,  addClients:true,  removeClients:true,  viewProjects:true, editContent:true, billing:true},
       manager: {manageUsers:false, addClients:true,  removeClients:false, viewProjects:true, editContent:true, billing:true},
-      ae:      {manageUsers:false, addClients:true,  removeClients:false, viewProjects:true, editContent:false, billing:false}
+      ae:      {manageUsers:false, addClients:false, removeClients:false, viewProjects:true, editContent:false, billing:false}
     };
 
     function loadRoles(){ try { return JSON.parse(localStorage.getItem(ROLE_KEY)||'null') || Object.assign({}, DEFAULTS); } catch(_){ return Object.assign({}, DEFAULTS); } }
