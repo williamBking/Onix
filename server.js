@@ -792,6 +792,40 @@ async function requireOnixAdmin(req, res, next) {
   }
 }
 
+// Blocks account executives (profiles.title = 'ae') from a specific route
+// without restricting them from the shared admin surface — requireOnixAdmin
+// above already confirmed role/status; this adds the one further title
+// check a route needs. Deliberately not folded into requireOnixAdmin
+// itself, since AEs still need normal admin access to everything else
+// (OUS data, syncs, etc.) — composed only onto the routes that actually
+// need it (activa-create-client today). Mirrors the same is_ae() rule
+// admin_create_client() enforces at the database level for the other
+// client-creation path.
+async function requireNotAE(req, res, next) {
+  try {
+    const url = SUPABASE_URL + '/rest/v1/profiles?id=eq.' + encodeURIComponent(req.user.id) + '&select=title';
+    const r = await fetch(url, {
+      headers: {
+        'apikey':        SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + req.user.raw_token,
+        'Accept':        'application/json'
+      }
+    });
+    if (!r.ok) {
+      const body = await r.text();
+      return res.status(403).json({ error: 'Profile lookup failed', detail: 'HTTP ' + r.status + ': ' + body.slice(0, 200) });
+    }
+    const rows = await r.json();
+    const p = Array.isArray(rows) ? rows[0] : null;
+    if (p && p.title === 'ae') {
+      return res.status(403).json({ error: 'Account executives cannot create clients' });
+    }
+    next();
+  } catch (err) {
+    return res.status(503).json({ error: 'AE check threw', detail: (err && err.message) || String(err) });
+  }
+}
+
 // -------- Helper: send a proxied response to the frontend ------
 async function proxyAndForward(res, path, opts) {
   try {
@@ -1834,7 +1868,7 @@ async function createActivaAdminClient({ id_credito, full_name, email, phone, ad
 // POST /api/activa-create-client — admin-only, never a cron path (no
 // requireAdminOrActivaCronKey here on purpose: this must always be a
 // real human admin, never automated).
-app.post('/api/activa-create-client', requireSupabaseAuth, requireOnixAdmin, async (req, res) => {
+app.post('/api/activa-create-client', requireSupabaseAuth, requireOnixAdmin, requireNotAE, async (req, res) => {
   const body = req.body || {};
   const id_credito = body.id_credito;
   const full_name  = (body.full_name || '').trim();
