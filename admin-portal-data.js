@@ -3441,6 +3441,20 @@
     return true;
   }
 
+  // "Name · #ID" for a loan/deposit — the bare reference number alone
+  // doesn't say whose loan it is at a glance in the compact month-grid
+  // pill (the day panel already shows the name via subtitle, but the
+  // pill itself only ever rendered title). The ID is kept, not replaced —
+  // the name is prepended so it's the first thing visible before any
+  // ellipsis truncation, since who it belongs to matters more at a
+  // glance than the reference number.
+  function loanRef(l) {
+    const id = l && (l.loan_id_display || (l.id ? String(l.id).slice(0, 8) : ''));
+    const name = l && l.profiles && up(l.profiles.full_name);
+    if (!id) return '';
+    return name ? name + ' · #' + id : '#' + id;
+  }
+
   async function loadCalendarData() {
     const c = OnixDB.client;
     const [eventsRes, bdayRes, loansRes, paymentsRes, nextDueRes, clientsRes, allLoansRes, originationsRes] = await Promise.all([
@@ -3505,7 +3519,7 @@
       const payout = isDeposit && l.balance != null ? fmt.money(l.balance) + ' · ' : '';
       calEvents.push({
         id: 'closing-' + l.id,
-        title: (isDeposit ? 'Deposit closing · ' : 'Loan closing · ') + payout + (l.loan_id_display || ''),
+        title: (isDeposit ? 'Deposit closing · ' : 'Loan closing · ') + payout + loanRef(l),
         subtitle: (l.profiles && up(l.profiles.full_name)) || '',
         amount: l.balance,
         type: isDeposit ? 'deposit_closing' : 'loan_closing',
@@ -3518,9 +3532,10 @@
       // deposits get paid interest by us, real loans pay us — flip the
       // wording so it's clear which direction the money moves.
       const isDeposit = !!(p.loans && p.loans.data_source === 'ous_pasiva');
+      const ref = p.loans ? loanRef(p.loans) : '';
       calEvents.push({
         id: 'payment-' + p.id,
-        title: fmt.money(p.amount_due) + (isDeposit ? ' interest due' : ' payment due'),
+        title: fmt.money(p.amount_due) + (isDeposit ? ' interest due' : ' payment due') + (ref ? ' · ' + ref : ''),
         subtitle: (p.loans && (p.loans.loan_id_display || (p.loans.profiles && up(p.loans.profiles.full_name)))) || '',
         amount: p.amount_due,
         type: isDeposit ? 'interest_due' : 'payment', date: p.due_date, source: 'payment', readOnly: true
@@ -3539,7 +3554,7 @@
       const amt = l.monthly_payment != null ? fmt.money(l.monthly_payment) + ' ' : '';
       calEvents.push({
         id: 'loan-next-due-' + l.id,
-        title: amt + (isDeposit ? 'interest due · ' : 'payment due · ') + (l.loan_id_display || ''),
+        title: amt + (isDeposit ? 'interest due · ' : 'payment due · ') + loanRef(l),
         subtitle: (l.profiles && up(l.profiles.full_name)) || '',
         amount: l.monthly_payment,
         type: isDeposit ? 'interest_due' : 'payment',
@@ -3558,7 +3573,7 @@
     (originationsRes.data || []).forEach(l => {
       calEvents.push({
         id: 'opened-' + l.id,
-        title: 'New deposit · ' + fmt.money(l.balance) + ' · ' + (l.loan_id_display || ''),
+        title: 'New deposit · ' + fmt.money(l.balance) + ' · ' + loanRef(l),
         subtitle: (l.profiles && up(l.profiles.full_name)) || '',
         amount: l.balance,
         type: 'deposit_opened',
