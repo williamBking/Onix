@@ -8,13 +8,33 @@
   'use strict';
 
   // ---------- helpers ----------
+  // Postgres date columns (maturity_date, next_due_date, due_date, …) arrive
+  // as bare 'YYYY-MM-DD'. `new Date('2026-08-15')` parses that as UTC
+  // midnight, which is the *previous day* once rendered in any timezone west
+  // of Greenwich — so a deposit maturing Aug 15 displayed as "Aug 14" for
+  // every US user. Parse date-only strings as local dates; anything with a
+  // time component still goes through the normal Date parser.
+  function parseLocalDate(v) {
+    if (v == null) return null;
+    if (v instanceof Date) return isNaN(v) ? null : v;
+    const s = String(v);
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    const d = new Date(s);
+    return isNaN(d) ? null : d;
+  }
+
   const fmt = {
     money: n => (n == null ? '—' : '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 })),
     pct:   n => (n == null ? '—' : Number(n).toFixed(1) + '%'),
-    date:  s => (s == null ? '—' : new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })),
+    date:  s => {
+      const d = parseLocalDate(s);
+      return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    },
     days:  s => {
-      if (!s) return '';
-      const diff = Math.ceil((new Date(s) - new Date()) / 86400000);
+      const d = parseLocalDate(s);
+      if (!d) return '';
+      const diff = Math.ceil((d - new Date()) / 86400000);
       if (diff < 0) return Math.abs(diff) + ' days overdue';
       if (diff === 0) return 'today';
       return 'in ' + diff + ' days';
@@ -251,6 +271,18 @@
   }
 
   // Override the inline showInvestmentDetail() with one that reads real data.
+  // Retitle a card in place, keeping the EN/ES toggle working. The detail
+  // view is reused for every holding, so a title swapped for one holding has
+  // to be swapped back for the next.
+  function setCardTitleText(el, en, es) {
+    if (!el) return;
+    el.setAttribute('data-en', en);
+    el.setAttribute('data-es', es);
+    const lang = (window.OnixLang && OnixLang.getLang && OnixLang.getLang())
+      || localStorage.getItem('onix-lang') || 'en';
+    el.textContent = lang === 'es' ? es : en;
+  }
+
   function wireInvestmentDetailModal(investments, distributions) {
     const map = new Map(investments.map(i => [i.id, i]));
     const allDist = distributions || [];
@@ -307,20 +339,52 @@
         ).join('');
       }
 
-      // Distribution history table (#det-distributions tbody)
+      // Distribution history table (#det-distributions tbody). Deposits never
+      // have distributions rows, so for those show the deposit's real
+      // interest schedule and retitle the card to match — otherwise every
+      // deposit holder just saw "No distributions yet."
       const distBody = document.getElementById('det-distributions');
       if (distBody) {
-        distBody.innerHTML = myDist.length
-          ? myDist.map(d => `
+        const distCard  = distBody.closest ? distBody.closest('.card') : null;
+        const distTitle = distCard ? distCard.querySelector('.card-title') : null;
+        const emptyRow  = (msg) =>
+          '<tr><td colspan="3" style="padding:14px 16px;color:var(--muted);font-size:.85rem;font-style:italic">' +
+          escapeHtml(msg) + '</td></tr>';
+
+        if (inv.venture_type === 'deposit') {
+          setCardTitleText(distTitle, 'Interest Schedule', 'Calendario de Intereses');
+          const schedule = buildDepositSchedule(inv);
+          const now = new Date();
+          distBody.innerHTML = schedule.length
+            ? schedule.map(s => {
+                const upcoming = s.date > now;
+                const kind = s.single ? 'Interest at maturity' : 'Interest';
+                return '<tr' + (upcoming ? ' style="opacity:.55"' : '') + '>' +
+                  '<td>' + escapeHtml(fmt.date(s.date.toISOString())) + '</td>' +
+                  '<td>' + escapeHtml(kind) +
+                    (upcoming ? ' <span style="font-size:.68rem;color:var(--light)">· upcoming</span>' : '') +
+                  '</td>' +
+                  '<td>' + escapeHtml(fmt.money(s.amount)) + '</td>' +
+                '</tr>';
+              }).join('') +
+              '<tr style="font-weight:700"><td>Total over term</td><td></td><td>' +
+                escapeHtml(fmt.money(schedule.reduce((s, r) => s + Number(r.amount || 0), 0))) +
+              '</td></tr>'
+            : emptyRow('No maturity date on file for this deposit yet, so a schedule can’t be shown.');
+        } else {
+          setCardTitleText(distTitle, 'Distribution History', 'Distribuciones');
+          distBody.innerHTML = myDist.length
+            ? myDist.map(d => `
             <tr>
               <td>${escapeHtml(fmt.date(d.paid_at))}</td>
               <td>${escapeHtml(distKindLabel(d.kind))}</td>
               <td>${escapeHtml(fmt.money(d.amount))}</td>
             </tr>`).join('') +
-            `<tr style="font-weight:700">
+              `<tr style="font-weight:700">
               <td>Total</td><td></td><td>${escapeHtml(fmt.money(totalDist))}</td>
             </tr>`
-          : '<tr><td colspan="3" style="padding:14px 16px;color:var(--muted);font-size:.85rem;font-style:italic">No distributions yet.</td></tr>';
+            : emptyRow('No distributions yet.');
+        }
       }
 
       const docs = document.getElementById('det-docs');
@@ -353,6 +417,172 @@
     };
   }
 
+  // Build a deposit's interest payment schedule from its own real terms
+  // (origination, maturity, rate, monthly payment). Deposits have no rows in
+  // the distributions table — nothing in the app records payouts yet — so the
+  // schedule the deposit was actually written on is the real information we
+  // can show. Returns [{ date, amount, single }] ascending.
+  function buildDepositSchedule(inv) {
+    const start = parseLocalDate(inv.start_date);
+    const end   = parseLocalDate(inv._maturity_date);
+    if (!start || !end || !(start < end)) return [];
+
+    const principal  = Number(inv._principal || inv.amount_invested || 0);
+    const annualRate = Number(inv.expected_return || 0);
+    const monthly    = Number(inv._monthly_payment || 0);
+
+    // No periodic payment on the record — interest is realised in a single
+    // payout at maturity ("single payment at end of term").
+    if (!(monthly > 0)) {
+      const years = (end - start) / (365.25 * 24 * 3600 * 1000);
+      const interest = principal * (annualRate / 100) * years;
+      return interest > 0 ? [{ date: end, amount: interest, single: true }] : [];
+    }
+
+    // Periodic interest. Anchor the day-of-month to the real next_due_date
+    // when the record has one so generated dates line up with the actual
+    // schedule instead of drifting off the origination day.
+    const anchorDay = (parseLocalDate(inv._next_due_date) || start).getDate();
+    const out = [];
+    let y = start.getFullYear();
+    let m = start.getMonth() + 1; // first payment one month after origination
+    for (let guard = 0; guard < 600; guard++) {
+      if (m > 11) { m -= 12; y += 1; }
+      const lastDom = new Date(y, m + 1, 0).getDate(); // clamp to short months
+      const d = new Date(y, m, Math.min(anchorDay, lastDom));
+      if (d > end) break;
+      out.push({ date: d, amount: monthly });
+      m += 1;
+    }
+    return out;
+  }
+
+  // Locate (or inject once, before the Documents card) the Performance card
+  // on the investment detail view.
+  function ensurePerformanceCard(view) {
+    let card = document.getElementById('det-performance');
+    if (!card) {
+      card = document.createElement('div');
+      card.id = 'det-performance';
+      card.className = 'card reveal visible';
+      const docsEl = document.getElementById('det-docs');
+      const docsCard = docsEl && docsEl.closest ? docsEl.closest('.card') : null;
+      if (docsCard && docsCard.parentElement) docsCard.parentElement.insertBefore(card, docsCard);
+      else view.appendChild(card);
+    }
+    card.classList.add('visible');
+    return card;
+  }
+
+  const perfStat = (label, val, sub) =>
+    '<div style="flex:1;min-width:120px"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:700;margin-bottom:6px">' +
+    escapeHtml(label) + '</div><div style="font-family:var(--serif);font-style:italic;font-size:1.35rem;font-weight:500">' + escapeHtml(val) + '</div>' +
+    (sub ? '<div style="font-size:.68rem;color:var(--light);margin-top:3px">' + escapeHtml(sub) + '</div>' : '') + '</div>';
+
+  // Performance panel for a DEPOSIT. Everything here comes off the deposit's
+  // own record — rate, monthly interest, origination and maturity dates —
+  // rather than the distributions table, which has no rows for anyone.
+  function renderDepositPerformance(inv) {
+    const view = document.getElementById('view-investment-detail');
+    if (!view) return;
+    const card = ensurePerformanceCard(view);
+
+    const principal  = Number(inv._principal || inv.amount_invested || 0);
+    const annualRate = inv.expected_return != null ? Number(inv.expected_return) : null;
+    const monthly    = Number(inv._monthly_payment || 0);
+    const start      = parseLocalDate(inv.start_date);
+    const maturity   = parseLocalDate(inv._maturity_date);
+    const now        = new Date();
+
+    const schedule = buildDepositSchedule(inv);
+    const elapsed  = schedule.filter(s => s.date <= now);
+    const upcoming = schedule.filter(s => s.date >  now);
+
+    // Interest accrued so far, straight-line on the stated annual rate. This
+    // is a calculation off the deposit's terms, not a record of money paid —
+    // labelled "est." and footnoted below for exactly that reason.
+    let accrued = null;
+    if (principal > 0 && annualRate != null && start && start < now) {
+      const cap = maturity && maturity < now ? maturity : now;
+      const yrs = (cap - start) / (365.25 * 24 * 3600 * 1000);
+      if (yrs > 0) accrued = principal * (annualRate / 100) * yrs;
+    }
+
+    // Term progress, purely from the two real dates.
+    let termPct = null, daysLeft = null;
+    if (start && maturity && maturity > start) {
+      termPct  = Math.max(0, Math.min(100, ((now - start) / (maturity - start)) * 100));
+      daysLeft = Math.ceil((maturity - now) / 86400000);
+    }
+
+    const nextDate = parseLocalDate(inv._next_due_date)
+                   || (upcoming.length ? upcoming[0].date : null);
+
+    card.innerHTML =
+      '<div class="card-title" data-en="Performance" data-es="Rendimiento">Performance</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:18px;margin-bottom:20px">' +
+        perfStat('Principal', fmt.money(principal)) +
+        perfStat('Interest Rate', annualRate != null ? fmt.pct(annualRate) : '—', 'per year') +
+        perfStat(monthly > 0 ? 'Monthly Interest' : 'Interest Payout',
+                 monthly > 0 ? fmt.money(monthly) : 'At maturity') +
+        perfStat('Interest Accrued (est.)', accrued != null ? fmt.money(accrued) : '—',
+                 accrued != null ? 'since ' + fmt.date(inv.start_date) : '') +
+        perfStat('Next Payment', nextDate ? fmt.date(nextDate.toISOString()) : '—',
+                 nextDate && monthly > 0 ? fmt.money(monthly) : '') +
+      '</div>' +
+      (termPct != null
+        ? '<div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:6px">' +
+            '<span style="color:var(--muted)">Term · ' + escapeHtml(fmt.date(inv.start_date)) +
+              ' → ' + escapeHtml(fmt.date(inv._maturity_date)) + '</span>' +
+            '<span style="color:var(--red);font-weight:700">' +
+              (daysLeft > 0 ? daysLeft.toLocaleString() + ' days left' : 'Matured') + '</span></div>' +
+          '<div class="progress-wrap" style="height:8px;margin-bottom:22px"><div class="progress-fill" style="width:' + termPct.toFixed(1) + '%"></div></div>'
+        : '') +
+      '<div style="font-size:.66rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:700;margin-bottom:10px">Interest Schedule</div>' +
+      (schedule.length
+        ? '<div style="height:200px;position:relative"><canvas id="det-cashflow-chart"></canvas></div>' +
+          '<div style="font-size:.68rem;color:var(--light);margin-top:10px;font-style:italic">' +
+            'Based on this deposit’s rate and term. ' +
+            escapeHtml(elapsed.length + ' of ' + schedule.length) + ' payment dates have passed.' +
+          '</div>'
+        : '<div style="font-size:.8rem;color:var(--muted);font-style:italic;padding:14px 0">' +
+            'This deposit doesn’t have a maturity date on file yet, so a schedule can’t be shown.</div>');
+
+    // Bars across the term: dates already passed in solid red, still-upcoming
+    // ones muted, so "where am I in this deposit" reads at a glance.
+    const canvas = document.getElementById('det-cashflow-chart');
+    if (canvas && schedule.length && typeof Chart !== 'undefined') {
+      try { const ex = Chart.getChart(canvas); if (ex) ex.destroy(); } catch (e) {}
+      const chart = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels: schedule.map(s => s.date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })),
+          datasets: [{
+            data: schedule.map(s => Number(s.amount || 0)),
+            backgroundColor: schedule.map(s => s.date <= now ? '#C0392B' : '#E8D5D2'),
+            borderWidth: 0, borderRadius: 2, maxBarThickness: 38
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: {
+              label: c => ' ' + fmt.money(c.parsed.y) +
+                (schedule[c.dataIndex] && schedule[c.dataIndex].date > now ? ' · upcoming' : '')
+            } }
+          },
+          scales: {
+            y: { grid: { color: '#f0f0f0' }, ticks: { color: '#888', font: { size: 10 },
+                 callback: v => '$' + (Math.abs(v) >= 1000 ? Math.round(v / 1000) + 'K' : Math.round(v)) } },
+            x: { grid: { display: false }, ticks: { color: '#888', font: { size: 10 }, maxRotation: 0, autoSkipPadding: 12 } }
+          }
+        }
+      });
+      enableClickToShowValue(chart);
+    }
+  }
+
   // Tier 2 "Performance" card for the investment detail view. Injected once
   // (before the Documents card) and refreshed on each open. All derived from
   // real data: amount invested, distribution history, start date, expected
@@ -360,6 +590,10 @@
   function renderInvestmentPerformance(inv, myDist, totals) {
     const view = document.getElementById('view-investment-detail');
     if (!view) return;
+    // Deposits have their own panel — the distribution-based metrics below
+    // are all zero for them (no distributions exist), which rendered an
+    // empty card for every deposit holder.
+    if (inv.venture_type === 'deposit') { renderDepositPerformance(inv); return; }
     const invested = Number(totals.invested || 0);
     const totalDist = Number(totals.totalDist || 0);
 
@@ -395,21 +629,8 @@
     }
 
     // Build / locate the card (insert before the Documents card)
-    let card = document.getElementById('det-performance');
-    if (!card) {
-      card = document.createElement('div');
-      card.id = 'det-performance';
-      card.className = 'card reveal visible';
-      const docsCard = (document.getElementById('det-docs') || {}).closest
-        ? document.getElementById('det-docs').closest('.card') : null;
-      if (docsCard && docsCard.parentElement) docsCard.parentElement.insertBefore(card, docsCard);
-      else view.appendChild(card);
-    }
-    card.classList.add('visible');
-
-    const stat = (label, val) =>
-      '<div style="flex:1;min-width:120px"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:700;margin-bottom:6px">' +
-      escapeHtml(label) + '</div><div style="font-family:var(--serif);font-style:italic;font-size:1.35rem;font-weight:500">' + escapeHtml(val) + '</div></div>';
+    const card = ensurePerformanceCard(view);
+    const stat = perfStat;
 
     card.innerHTML =
       '<div class="card-title" data-en="Performance" data-es="Rendimiento">Performance</div>' +
@@ -2556,7 +2777,14 @@
       status: loan.status === 'active' ? 'active' : (loan.status || 'active'),
       start_date: loan.origination_date || loan.created_at,
       investment_documents: loan.loan_documents || [],
-      _monthly_payment: loan.monthly_payment
+      _monthly_payment: loan.monthly_payment,
+      // Carried through for the deposit Performance panel + interest
+      // schedule. A deposit's real terms live on these columns; without
+      // them the detail view can only fall back to the (empty)
+      // distributions table and shows a client nothing at all.
+      _maturity_date: loan.maturity_date,
+      _next_due_date: loan.next_due_date,
+      _principal:     loan.principal_amount != null ? loan.principal_amount : loan.balance
     };
   }
 
