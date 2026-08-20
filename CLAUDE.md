@@ -71,11 +71,14 @@ automatically via `.github/workflows/validate-admin-bundle.yml` (required
 status check `validate-admin-bundle`, runs on the PR merge result) — but
 don't rely on CI to catch what local verification should already catch.
 
-## Project Status & History (as of late July 2026)
+## Project Status & History (as of late July 2026, see Aug 20 addendum below)
 
 Comprehensive handoff summary for a fresh session with no prior context.
 Every fact below was independently re-verified against the live codebase
-and Supabase project (not transcribed blindly) as of this writing.
+and Supabase project (not transcribed blindly) as of this writing. **This
+section is now three weeks stale — read the "Aug 20 2026 audit" addendum
+at the end of this file first**, it corrects several items below (notably
+the two "Known pending items" and the OUS Activa "Not yet built" list).
 
 **Before touching `admin-portal.html`, read "Editing admin-portal.html"
 above first** — it's current and unchanged; nothing below duplicates it.
@@ -177,29 +180,31 @@ project: `ckayfqplkpplgojdhjlu`.
 
 ### Known pending items / open threads
 
-- **PRs #106 (`ous-portal-integration`) and #107
-  (`rbac-comprehensive`)** — confirmed still open, both `mergeable:
-  CONFLICTING` with main. Neither has moved recently, and enough has
-  landed on main since (deposits/loans split, financial reports rework,
-  several chart fixes) that a fresh rebuild is likely more practical
-  than resolving conflicts. User still needs to decide: revive, rebuild
-  fresh, or close each.
+- **PRs #106 (`ous-portal-integration`) and #107 (`rbac-comprehensive`) —
+  RESOLVED, both closed without merging (confirmed via GitHub, Aug 20
+  2026).** #106 was closed by jwellsgranger on 2026-07-29 as "resolved
+  elsewhere" — the underlying problem was fixed by separate, already-
+  merged commits on main. #107 was also closed as "resolved elsewhere" —
+  comprehensive role-based permissions ended up implemented at the
+  database level via Postgres RLS policies/triggers instead of this PR's
+  JS-side approach; the codebase had also moved too far for a clean
+  merge. As of Aug 20 2026 there are 0 open PRs on the repo. Don't re-
+  raise "revive or close #106/#107" as an open question, it's done.
 - **Railway backend** (Express proxy to OUS Pasiva, `server.js`):
   fundamentals confirmed solid (real Supabase-JWT auth on every
   `/api/*` route including `/api/ous-capture`, no leaked secrets,
-  proper CORS allowlist, graceful degradation when OUS is down). Three
-  items still unverified/unaddressed: (1) confirm actual Railway env
-  vars match what `server.js` expects — no Railway CLI/API access
-  available in-session to check this directly, (2) check whether
-  Railway redeploys on every GitHub push instead of only backend-file
-  changes — health-snapshot data (`railway_status_snapshots` in
-  Supabase) shows the process restarts more often than a stable service
-  typically would, consistent with this hypothesis, (3) no rate
-  limiting on OUS API calls yet.
-- **`view-review`** in `admin-portal.html`'s decoded template —
-  confirmed still present and still dead/unreachable (same category as
-  two already-cleaned-up instances: the old Documents tab and the Edit
-  Raise modal). Not yet removed.
+  proper CORS allowlist, graceful degradation when OUS is down). Of the
+  three items previously flagged as unverified, two are now resolved —
+  see "Aug 20 2026 — Railway live verification" near the end of this
+  file for full detail: (1) env vars confirmed to match, (2) the
+  redeploy-on-every-push hypothesis is disproven (Railway correctly
+  skips deploys via watched-path filtering). (3) no rate limiting on OUS
+  API calls yet — still genuinely open, this one is a code fix, not a
+  Railway config question.
+- ~~**`view-review`** in `admin-portal.html`'s decoded template~~ —
+  **REMOVED, PR #174 (`d938557`, "Remove dead view-review section from
+  admin-portal.html").** Confirmed merged via git history (Aug 20 2026
+  audit). Don't re-flag this as pending.
 - **`profiles.admin_notes`** column — confirmed it still exists in the
   schema, now superseded by the dedicated `client_admin_notes` table
   (which has its own admin-only RLS and audit columns). The old column
@@ -354,16 +359,256 @@ rather than trusting this paragraph blindly next time either.)
 
 ### Not yet built
 
-- Admin UI for reviewing/verifying `ous_activa_client_matches`
-  (currently done directly via Supabase Table Editor + SQL Editor —
-  see the `verified_at` inconsistency above, a direct symptom of this)
-- "Create new client" admin action for genuinely new borrowers with no
-  existing profile match
+- ~~Admin UI for reviewing/verifying `ous_activa_client_matches`~~ —
+  **BUILT, PR #165 (`add-loan-match-review-tab`)**: new admin "Loan
+  Match Review" tab. **PR #166** added RFC auto-suggest for matches on
+  top of it. Confirmed merged via git history (Aug 20 2026 audit); not
+  re-verified live against `ous_activa_client_matches` data (no
+  Supabase access this session) — worth a quick live check that the
+  `verified_at`/`verified_by` inconsistency noted below has actually
+  stopped recurring now that there's a real UI instead of raw
+  Table Editor/SQL edits.
+- ~~"Create new client" admin action for genuinely new borrowers~~ —
+  **BUILT, PR #166 (`add-activa-create-client-endpoint`)**: "Create New
+  Client" action added to Loan Match Review (commit e6c693a, "Piece 2").
+  Same live-data caveat as above.
 - Integration of the other 2 documented OUS Activa endpoints
-  (`proximo-pagos`, `historico-pagos`) — not yet decided if/when these
-  are needed
+  (`proximo-pagos`, `historico-pagos`) — **still not decided/done for
+  Activa.** Note: PR #203 (`populate-loan-next-due-date`) did wire up
+  `proximo-pagos`, but that's OUS **Pasiva's** `proximo-pagos` endpoint
+  (populates `loans.next_due_date` on every Pasiva sync) — a different
+  API from Activa's. Don't conflate the two; Activa's `proximo-pagos`/
+  `historico-pagos` are unaddressed.
 
-## Session Handoff Notes
+## Aug 20 2026 audit — CLAUDE.md was 3 weeks stale, here's what changed
+
+This section replaces the old "Session Handoff Notes" below (which was
+about the chart-recursion session, PRs #124-158, and had already been
+folded into "Project Status & History" above). It exists because a plain
+audit request on 2026-08-20 found this file's "Project Status & History"
+section still describing the codebase as of PR #164, while the actual
+repo was 40 PRs further along (through #204, last merged 2026-08-11).
+
+**Important scope caveat**: everything in this section was verified
+against **git history and the public GitHub repo only** (commit
+messages, diffs, PR close reasons). Unlike most of "Project Status &
+History" above, none of it was re-checked against live Supabase, Railway,
+or the deployed site — this session had no DB/Railway access. Treat
+"confirmed via git" below as weaker than "confirmed live" elsewhere in
+this file, and re-verify against live data before relying on specifics.
+
+### Feature work shipped, PRs #165-204 (not previously documented)
+
+Grouped by area, each merged (verified via `git log`, not just branch
+existence):
+
+- **OUS Activa admin tooling**: Loan Match Review tab (#165), RFC
+  auto-match suggestions + Create New Client action (#166), fixed Activa
+  loan_type normalization to use the real `catalogos` lookup instead of
+  passing `segmento` through raw (#186). These directly resolve the old
+  "Not yet built" list in the OUS Activa section above — see the updated
+  bullets there.
+- **Calendar rework** (several iterative PRs, same area touched
+  repeatedly — #181, #182, #196, #197, #198, #203, #204): added a
+  monthly cashflow in/out summary, counted loan closings toward Cashflow
+  In, fixed Cashflow In to reflect full company cash movement (not just
+  a subset), switched to real interest instead of principal maturities,
+  added borrower/depositor names next to loan IDs, grouped same-day
+  events, populated `loans.next_due_date` from OUS **Pasiva's**
+  `proximo-pagos` on every sync, and added a confirmed-vs-pending
+  interest estimate. This area clearly went through several rounds of
+  "that's still not quite right" — if touching Calendar cashflow again,
+  read all of these diffs first rather than assuming the current state
+  matches any single one of these commit messages.
+- **Client portal, made more "real" / less scaffolded**: dashboard's two
+  charts now show real data (#191), Repayment Progress shows real OUS
+  payment counts (#188), deposit detail views show real
+  performance/schedule (#195), Payments tab folded into My Loan (#194),
+  Express Interest now a full modal with amount/contact/notes (#187),
+  Deposit option added to New Application (#177). Also removed things
+  that were fake/dead: the Distribution History table (#189), the fake
+  Quarterly Calls toggle and fake Two-Factor Auth toggle (#178, #192) —
+  replaced by a joke 2FA button for the team (#180, `2fa-totally-legit.png`,
+  not a real feature, don't treat it as one.
+- **Admin permissions**: account executives blocked from creating
+  clients (#200), a follow-up fix for the "Add Clients" permissions-
+  matrix checkmark on Team & Settings not reflecting that (#201). This
+  is the practical, incremental continuation of what PR #107
+  (`rbac-comprehensive`) was trying to do in one big JS-side PR before
+  it got closed as "resolved elsewhere" (see above) — RBAC here is being
+  built as small, targeted fixes against the RLS foundation, not as one
+  sweeping PR. Expect more of these to show up piecemeal.
+- **Admin portal cleanup/fixes**: removed dead `view-review` section
+  (#174, resolves the old pending item above), removed loan/deposit edit
+  UI from the admin View modal (#170), fixed the Missing Document filter
+  (freezing the page, not re-applying after re-clone, not filtering at
+  all — three separate PRs, #183/#184/#185, same feature area, same
+  pattern as Calendar above of multiple passes to get one thing right),
+  fixed Originations chart using sync date instead of real origination
+  date (#202), fixed Loan Type Breakdown to only ever show
+  Personal/Simple/Other (#199), client names rendered in ALL CAPS across
+  admin (#172), fixed signup/accept-invite placeholder branding (#167).
+- **Dashboard KPI rename**: "Portfolio LTV" → "Loan / Deposit Ratio"
+  (#190) — if grepping for the old name in future work, it won't be
+  there anymore.
+
+### GitHub state (verified 2026-08-20)
+
+- **0 open PRs, 204 closed.** Nothing is currently blocked on review.
+- Last merge to `main`: PR #204, 2026-08-11. No activity in the 9 days
+  before this audit.
+- **38 remote branches still exist**, most of them names matching
+  already-merged PR topics above (e.g. `origin/add-loan-match-review-tab`,
+  `origin/fix-calendar-cashflow-interest`). The branch-hygiene pass from
+  the previous session (99 branches deleted) has re-accumulated. Another
+  pass would be low-risk cleanup, not urgent.
+- One untracked local file was present in the working directory during
+  this audit: `Onix_Finance_Portal_PRD_branded.docx` (added 2026-08-19,
+  not committed, not otherwise referenced in git). Possibly related to
+  the known brandbook-audit gap noted elsewhere — confirm with the user
+  before assuming its purpose or deleting it.
+
+### Still genuinely open (carried forward, not resolved by the above)
+
+- **Railway access gap** — mostly closed, see "Aug 20 2026 — Railway
+  live verification" near the end of this file. Env vars and the
+  redeploy hypothesis are resolved; only rate limiting on OUS calls is
+  still open, and that's a code task, not something to re-check in the
+  Railway dashboard.
+- **Supabase free-tier usage limit** — new, found 2026-08-20: the
+  Supabase dashboard showed an "EXCEEDING USAGE LIMITS" badge on this
+  project (`ckayfqplkpplgojdhjlu`), which is on the FREE plan. A free
+  Supabase project that stays over its usage limit for too long can get
+  auto-paused, which would take the whole portal down, not just degrade
+  it. Not investigated further this session (why it's over limit, how
+  close to actual pause) — flagging this as genuinely urgent, more so
+  than the other items in this list, and worth Santi's direct attention
+  rather than waiting for a future session to get to it.
+- **"Leaked Password Protection"** in Supabase — status unknown this
+  session (no Supabase access); last confirmed disabled in the previous
+  audit. Re-verify before assuming either way.
+- **`profiles.admin_notes`** column — no evidence in git history that
+  it was dropped. Still presumed vestigial; still just a "worth
+  confirming/dropping later," not urgent.
+- **OUS Activa's `proximo-pagos`/`historico-pagos`** — still not
+  integrated (see corrected "Not yet built" bullet above; don't confuse
+  with Pasiva's `proximo-pagos`, which PR #203 did wire up).
+- **Loans-table duplication with the servicing dashboard** — unresolved,
+  status uncertain. The standalone `onix-servicing-dashboard` project has
+  its own separate `public.loans` table in its own separate Supabase
+  project, distinct from this repo's real loans table. That project is
+  currently paused and it's not settled whether/how it gets consolidated
+  with this repo — don't assume any direction here without checking with
+  Santi first. If reconciliation happens, it's tracked in the separate
+  "Onix Portal general" project, not here.
+- **Brandbook audit** — still not done; current styling still doesn't
+  match the brandbook. Known, pre-existing gap. Note: the actual
+  `Onix Brandbook.pdf` was located in the `onix-servicing-dashboard`
+  project folder — it exists and is findable, it just hasn't been used
+  yet.
+
+## Aug 20 2026 addendum — outside counsel loan audit & archived API manuals
+
+Added the same day as the audit above, from a later conversation (Cowork
+session, not verified against live Supabase/Railway/git — this is
+**relayed by Santi in chat**, not independently confirmed against any
+system).
+
+- **G. Ortega Law loan-file audit**: outside counsel (G. Ortega Law, PLLC)
+  audited 47 loan files (source: "Master Loan Audit Workbook," reporting
+  date 2026-05-15) and found a 30.9% aggregate documentation-completion
+  rate — Credit Approval Memo missing in 98% of files, KYC/CIP missing or
+  incomplete in 95%, insurance-naming-Onix-as-loss-payee missing in 66%,
+  post-closing insurance/financial-statement/KYC ticklers each missing in
+  ~77-79%. Only the audit's summary document has been seen so far; the
+  full per-loan checklist workbook has not been shared into a session yet
+  (Santi says the files are too large to attach directly). This audit is
+  a potential driver for a future loan-compliance-tracking feature, but
+  nothing is built or decided — blocked on getting the full workbook and
+  matching the 47 audited files to real loan records (matched by borrower
+  name/property in the audit vs. `id_credito`/loan UUID in the real
+  table — no shared key exists yet). Santi is handling the workbook
+  acquisition and file-matching himself — a future session should not
+  assume any of that is done without checking. **Do not treat this as
+  tied to the servicing-dashboard consolidation** — that project is
+  paused and it's unknown whether/when it happens; this audit stands on
+  its own regardless of that outcome.
+- **Not started**: no schema changes, no loan-matching, no UI work has
+  happened on any of this yet as of 2026-08-20. Don't build ahead of
+  where Santi actually is.
+- **OUS Activa/Pasiva API manuals**: the official manuals for both APIs
+  (documenting all endpoints including Activa's still-unintegrated
+  `proximo-pagos`/`historico-pagos`) were shared into a Cowork session on
+  2026-08-20, along with API credentials. Explicitly archived only, no
+  action taken — if a future session needs these, ask Santi to re-share
+  them; they were not committed to this repo (credentials should never
+  be committed here regardless — they belong only in Railway env vars).
+
+## Aug 20 2026 — Railway live verification
+
+Same day as the sections above, later still. Unlike the "Aug 20 2026
+addendum," this one **was** verified live — directly in the Railway
+dashboard via screen-share with Santi, not relayed secondhand. Resolves
+two of the three "Railway access gap" items that every prior session
+had to leave open for lack of access.
+
+- **Railway env vars — confirmed matching.** The `Onix` service
+  (Express app, domain `onix-production-50c3.up.railway.app`) has all
+  13 variables `server.js` actually reads via `process.env.*`:
+  `ACTIVA_SYNC_CRON_KEY`, `OUS_ACTIVA_API_URL`/`LOGIN`/`PASSWORD`,
+  `OUS_API_URL`/`LOGIN`/`PASSWORD`, `SUPABASE_ANON_KEY`/
+  `SERVICE_ROLE_KEY`/`URL`, `SYNC_CRON_KEY`. `PORT` isn't in the
+  Variables list, but that's expected — Railway auto-injects it, it's
+  never something you set manually. `ALLOWED_ORIGINS` also isn't set
+  explicitly, but `server.js` has a working fallback default
+  (`https://williambking.github.io,https://portal.onixfinance.com`)
+  that already matches production, so this isn't a gap either, just
+  implicit config. Nothing missing, nothing broken.
+- **Redeploy-on-every-push hypothesis — disproven.** Checked the
+  `Onix` service's Deployment history across roughly a dozen recent
+  merges. Frontend-only PRs (#199, #201, #202, and two direct-push
+  Calendar commits) all show **SKIPPED — "No changes to watched
+  files."** Backend-touching PRs (#200, #203) show **REMOVED**, meaning
+  they *did* trigger a real deploy at the time, which was later torn
+  down once superseded by the next real deploy (#204, currently
+  ACTIVE) — that's normal deployment lifecycle, not a bug. Railway is
+  correctly filtering by watched path; it is **not** redeploying on
+  every push regardless of what changed. The old hypothesis (built on
+  `railway_status_snapshots` showing frequent restarts) should be
+  considered wrong, or at least not explained by this mechanism —
+  see the next bullet for where those restart signals likely actually
+  come from.
+- **Identified a second, previously-undocumented Railway service:
+  `cozy-friendship`** (Railway's auto-generated name, also linked to
+  the `williamBking/Onix` GitHub repo). It's a **Cron Job**, not a
+  always-on service — runs once a day (~08:00 Central / 13:00 UTC,
+  ~2s per run). Its Custom Start Command is `npm run snapshot`, which
+  confirms it's running this repo's `railway-status-snapshot.js` — the
+  script that populates the `railway_status_snapshots` Supabase table
+  referenced elsewhere in this file. Its variables are
+  `ONIX_HEALTHZ_URL`, `OUS_PASSWORD`, `SUPABASE_SERVICE_KEY` (note:
+  different name than the `Onix` service's `SUPABASE_SERVICE_ROLE_KEY`
+  — same purpose, inconsistent naming, worth normalizing eventually but
+  not urgent), `SUPABASE_URL`. Mystery solved: this is not a rogue or
+  forgotten integration, it's the health-snapshot cron, just never
+  written down as its own service before. One real finding from this:
+  its own Deployment history shows **REMOVED for every recent merge**
+  (#201, #202, #203), no SKIPPED entries seen — unlike the `Onix`
+  service, it appears to rebuild on every single push regardless of
+  whether anything relevant changed. Low severity (it's a tiny
+  single-file script, ~2s to run), but wastes build minutes for no
+  reason, and given the Supabase free-tier usage-limit finding below,
+  worth tightening its watched paths eventually — not urgent enough to
+  interrupt other work for.
+- **New, unrelated but more urgent finding from the same session:**
+  Supabase's dashboard shows an "EXCEEDING USAGE LIMITS" badge on this
+  project (`ckayfqplkpplgojdhjlu`), which is on the FREE plan — see the
+  "Still genuinely open" list above. Not yet investigated further.
+- **Still open, unchanged**: rate limiting on OUS API calls — this is a
+  `server.js` code change, not a Railway configuration question, so it
+  can't be resolved by looking at the dashboard.
+
+## Session Handoff Notes (historical — chart-recursion session, folded up)
 
 Narrower and more time-sensitive than the sections above — this is what
 happened in the session that just ended, not yet folded into the durable
@@ -481,25 +726,24 @@ wants this project worked on:
   then explicitly call out *what* was changed from the literal request
   and *why*, and let the user confirm or override.
 
-### Unresolved open questions
+### Unresolved open questions (superseded, see below)
 
-- **Railway access gap — never answered.** During the Railway health
-  check, the user was asked: grant CLI/API access this session, or
-  check the dashboard themselves and relay findings back? No answer was
-  given before the conversation moved on. This is still open and blocks
-  fully verifying the three Railway items already listed above under
-  "Known pending items."
-- **The new third-party API integration was never described.** The user
-  said they'd share details once the CLAUDE.md comprehension check was
-  confirmed, then asked for this handoff instead. A new session's first
-  real task is almost certainly this — if the user doesn't immediately
-  provide the API details, ask for them rather than waiting.
+The two items previously here are stale as of the Aug 20 2026 audit:
+the "new third-party API" being teased turned out to be OUS Activa,
+which is now fully integrated (see "OUS Activa Integration" section
+above and the "Feature work shipped, PRs #165-204" list). The Railway
+access gap is genuinely still open — see "Still genuinely open" in the
+Aug 20 2026 audit section above for the current version of that item;
+don't treat this older paragraph as the live copy.
 
-### Next action for a new session
+### Next action for a new session (superseded, see Aug 20 2026 audit above)
 
-Expect the user to describe the new third-party API next (or ask them
-for it if they don't). Before writing any integration code: test its
-endpoints in Postman, get credentials/docs from the user's boss, and
-plan the Supabase schema with RLS from day one — per "Upcoming work"
-above. Separately, whenever convenient: resolve the Railway-access
-question above if it becomes relevant again.
+This paragraph described a session-specific expectation (the user
+describing a new API) that has since resolved. There is no single
+obvious "next action" queued as of Aug 20 2026 — 0 open PRs, last merge
+9 days ago. A new session should ask the user what they want worked on
+next, rather than assuming continuation of anything listed here. If
+nothing else is specified, the highest-value low-risk items are: (1)
+resolve the Railway access question if it becomes relevant, (2) another
+branch-hygiene pass (38 stale remote branches), (3) decide what to do
+with the untracked `Onix_Finance_Portal_PRD_branded.docx`.
