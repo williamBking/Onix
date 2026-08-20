@@ -104,6 +104,15 @@ const SYNC_CRON_KEY             = process.env.SYNC_CRON_KEY || '';
 // two sync routes, not both.
 const ACTIVA_SYNC_CRON_KEY      = process.env.ACTIVA_SYNC_CRON_KEY || '';
 
+// Minimum gap, in ms, enforced between consecutive outbound calls to each
+// OUS API — see createThrottle() near callOUS()/callOUSActiva() below.
+// Kept separate per API (like every other piece of OUS state in this
+// file) since Pasiva and Activa are treated as independent systems even
+// though they share a vendor. 500ms is a conservative starting point, not
+// a number OUS gave us — nothing in the docs specifies an actual limit.
+const OUS_MIN_REQUEST_INTERVAL_MS        = Number(process.env.OUS_MIN_REQUEST_INTERVAL_MS)        || 500;
+const OUS_ACTIVA_MIN_REQUEST_INTERVAL_MS = Number(process.env.OUS_ACTIVA_MIN_REQUEST_INTERVAL_MS)  || 500;
+
 const PORT = Number(process.env.PORT) || 3000;
 
 // Comma-separated allowlist. Empty entries are ignored. The defaults
@@ -417,7 +426,76 @@ function rawHttpRequest(urlStr, { method = 'GET', headers = {}, body = null, tim
   });
 }
 
-async function callOUS(path, { method = 'GET', body = null } = {}) {
+// ---------------------------------------------------------------
+// Outbound rate limiting — OUS Pasiva / OUS Activa
+// ---------------------------------------------------------------
+// Nothing throttled outbound OUS calls before this: not the periodic
+// sync loops, not the admin-triggered passthrough endpoints
+// (/api/catalogos etc.), not /api/ous-capture's Promise.all of 3
+// simultaneous calls. createThrottle() serializes every real network
+// call made through one throttled function into a single queue and
+// enforces a minimum gap between them, so a burst (several admins
+// clicking around, or a Promise.all) turns into evenly-spaced requests
+// instead of a spike. A queued call that throws doesn't block the ones
+// behind it.
+//
+// loginToOUS()/loginToOUSActiva() (the actual OUS_LOGIN/PASSWORD POST) are
+// also NOT wrapped by this throttle, deliberately, not by oversight:
+//   - Boot login (startAuthLoop) fires once at process start.
+//   - Sync-preflight login (runOUSSync/runOUSActivaSync) fires at most
+//     once per 15-minute cron cycle, before any queued call.
+//   - Reactive 401 relogin is called from inside callOUSRequest() /
+//     callOUSActivaRequest() themselves, so it already runs one-at-a-time
+//     as a side effect of those functions being serialized by this
+//     throttle — a burst of expired-token calls can no longer trigger
+//     multiple simultaneous logins the way it could before this change;
+//     only the one queued call that hits the 401 re-logs in, and every
+//     call behind it in the queue reuses the fresh token.
+// Throttling login directly would just add latency to the very call
+// that's trying to unblock the queue, for no real benefit — and login is
+// already deliberately minimized elsewhere (see the file header: OUS
+// asked us to stop creating a fresh session every 55 minutes, so we only
+// ever log in reactively on a 401, not on a timer).
+//
+// Deliberately wraps only callOUS()/callOUSActiva() — /diagnose and
+// /diagnose-data build their own requests directly (via fetch/
+// rawHttpRequest, including to non-OUS hosts) specifically so they can
+// fire many requests in parallel and compare results; they never call
+// these functions, so they're naturally unaffected without any
+// special-case code here.
+function createThrottle(minIntervalMs) {
+  let queue = Promise.resolve();
+  let lastStartedAt = 0;
+
+  return function throttled(fn) {
+    const run = async () => {
+      const wait = Math.max(0, lastStartedAt + minIntervalMs - Date.now());
+      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+      lastStartedAt = Date.now();
+      return fn();
+    };
+    const result = queue.then(run, run);
+    // Keep the queue alive even after a failed call, but don't let that
+    // failure surface anywhere except the caller who made this request.
+    queue = result.then(() => {}, () => {});
+    return result;
+  };
+}
+
+// NOTE: OUS_MIN_REQUEST_INTERVAL_MS's 500ms default (see Config section
+// above) is a conservative default we picked in the absence of any
+// documented rate limit from OUS — not a number OUS actually gave us.
+// Adjust via env var if a real limit ever surfaces.
+const throttleOUS       = createThrottle(OUS_MIN_REQUEST_INTERVAL_MS);
+// Same caveat as throttleOUS above: OUS_ACTIVA_MIN_REQUEST_INTERVAL_MS's
+// 500ms default is our own conservative guess, not an OUS-confirmed limit.
+const throttleOUSActiva = createThrottle(OUS_ACTIVA_MIN_REQUEST_INTERVAL_MS);
+
+async function callOUS(path, opts) {
+  return throttleOUS(() => callOUSRequest(path, opts));
+}
+
+async function callOUSRequest(path, { method = 'GET', body = null } = {}) {
   if (!state.token) {
     const err = new Error('OUS proxy is not logged in yet');
     err.code = 'NOT_LOGGED_IN';
@@ -474,7 +552,11 @@ async function callOUS(path, { method = 'GET', body = null } = {}) {
 // pure low-level HTTP helper with no session state of its own, so it's
 // shared as-is between both — the thing being kept independent here is
 // the token/session, not this kind of stateless plumbing.
-async function callOUSActiva(path, { method = 'GET', body = null } = {}) {
+async function callOUSActiva(path, opts) {
+  return throttleOUSActiva(() => callOUSActivaRequest(path, opts));
+}
+
+async function callOUSActivaRequest(path, { method = 'GET', body = null } = {}) {
   if (!stateActiva.token) {
     const err = new Error('OUS Activa proxy is not logged in yet');
     err.code = 'NOT_LOGGED_IN';
