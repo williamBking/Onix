@@ -2716,6 +2716,65 @@
     return Object.values(buckets);
   }
 
+  // Earliest calendar month across `items`, keyed off `dateField` (falling
+  // back to `fallbackField` when that's null) — null if no item has either.
+  // Used to find where a chart's real data actually starts, instead of
+  // always rendering a fixed trailing window that pads with meaningless
+  // leading zero months.
+  function earliestMonth(items, dateField, fallbackField) {
+    let earliest = null;
+    items.forEach(item => {
+      const raw = item[dateField] || (fallbackField && item[fallbackField]);
+      if (!raw) return;
+      const d = new Date(raw);
+      if (isNaN(d)) return;
+      const m = new Date(d.getFullYear(), d.getMonth(), 1);
+      if (!earliest || m < earliest) earliest = m;
+    });
+    return earliest;
+  }
+
+  // Month labels from `start` (a Date; day-of-month ignored) through `now`,
+  // inclusive. Adds a "'YY" suffix once the range crosses a calendar year —
+  // plain 'Mon' labels (as lastNMonthLabels() uses for its fixed <=12-month
+  // windows) would otherwise repeat ambiguously, e.g. two "Jan" ticks, once
+  // a chart's window is allowed to span multiple years.
+  function monthLabelsFrom(start, now) {
+    const labels = [];
+    const d = new Date(start.getFullYear(), start.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth(), 1);
+    const spansYears = start.getFullYear() !== end.getFullYear();
+    while (d <= end) {
+      const label = d.toLocaleString('en-US', { month: 'short' });
+      labels.push(spansYears ? label + " '" + String(d.getFullYear()).slice(2) : label);
+      d.setMonth(d.getMonth() + 1);
+    }
+    return labels;
+  }
+
+  // Sum `field` on items grouped by calendar month of `dateField` (falling
+  // back to `fallbackField` when that's null), for every month from `start`
+  // through `now` inclusive — a dynamic-width counterpart to sumByMonth()'s
+  // fixed trailing-N-month window.
+  function sumByMonthFrom(items, start, dateField, fallbackField, field, now) {
+    const buckets = {};
+    const d = new Date(start.getFullYear(), start.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth(), 1);
+    while (d <= end) {
+      buckets[d.getFullYear() + '-' + d.getMonth()] = 0;
+      d.setMonth(d.getMonth() + 1);
+    }
+    items.forEach(item => {
+      const raw = item[dateField] || (fallbackField && item[fallbackField]);
+      if (!raw) return;
+      const dt = new Date(raw);
+      if (isNaN(dt)) return;
+      const key = dt.getFullYear() + '-' + dt.getMonth();
+      if (key in buckets) buckets[key] += Number(item[field] || 0);
+    });
+    return Object.values(buckets);
+  }
+
   // Update a Chart.js instance's labels + first dataset data in place.
   // Mutates the existing arrays rather than replacing them — Chart.js's
   // option-scope resolver proxies wrap these objects, and wholesale
@@ -2870,17 +2929,55 @@
     // balances (the real deposit book) plus any true deposit-type
     // investments. This chart previously only looked at investments, so it
     // stayed flat at zero even though Total Deposits showed $40M+.
+    //
+    // Bucketed by origination_date (loans) / start_date (investments) — the
+    // real date the deposit/position started — not created_at (the
+    // Supabase row-insert/sync timestamp). Same class of fix as origChart's
+    // origination_date switch above (PR #202's Originations-chart fix,
+    // never applied here). created_at is used only as a fallback when the
+    // real date is missing (confirmed live elsewhere in this file — see the
+    // Calendar cashflow query's `.not('origination_date', 'is', null)` on
+    // ous_pasiva loans — that some do lack it), so a real dollar never goes
+    // missing from the running total just because its start date wasn't
+    // synced; it's bucketed by when the row appeared instead.
     const depositLoans = loans.filter(l => l.status === 'active' && l.data_source === 'ous_pasiva');
     const depositInvestments = investments.filter(i => (i.venture_type || '').toLowerCase() === 'deposit');
-    const loanMonthly = sumByMonth(depositLoans, 'created_at', 'balance', 12);
-    const invMonthly = sumByMonth(depositInvestments, 'created_at', 'amount_invested', 12);
+
+    // Start the x-axis at the earliest real month instead of a fixed
+    // trailing-12-month window, which padded the chart with meaningless
+    // leading zero months before the portfolio existed. If real data spans
+    // less than 12 months, the chart just renders fewer points — correct,
+    // there's nothing before that to show. If it spans more than 12, the
+    // window extends to cover the full history rather than capping at 12:
+    // capping would silently contradict "start at the real earliest month"
+    // once that month is more than 12 months back, and this chart's whole
+    // purpose is portfolio growth since inception (unlike revChart in
+    // updateReportsCharts, which is intentionally a fixed recent-months
+    // view). DEPOSIT_CHART_MAX_MONTHS is a sanity cap only — it guards
+    // against a corrupted/garbage origination_date or start_date (e.g. a
+    // stray year-1900 value) blowing the axis out to thousands of empty
+    // months; not expected to ever trigger on real data.
+    const DEPOSIT_CHART_MAX_MONTHS = 120;
+    const now = new Date();
+    const earliestLoanMonth = earliestMonth(depositLoans, 'origination_date', 'created_at');
+    const earliestInvMonth = earliestMonth(depositInvestments, 'start_date', 'created_at');
+    let start = [earliestLoanMonth, earliestInvMonth].filter(Boolean).sort((a, b) => a - b)[0];
+    // No dated real data at all (empty book) — anchor on the current month
+    // rather than rendering an axis with nothing to start from.
+    if (!start) start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const oldestAllowed = new Date(now.getFullYear(), now.getMonth() - (DEPOSIT_CHART_MAX_MONTHS - 1), 1);
+    if (start < oldestAllowed) start = oldestAllowed;
+
+    const depositLabels = monthLabelsFrom(start, now);
+    const loanMonthly = sumByMonthFrom(depositLoans, start, 'origination_date', 'created_at', 'balance', now);
+    const invMonthly = sumByMonthFrom(depositInvestments, start, 'start_date', 'created_at', 'amount_invested', now);
     const monthly = loanMonthly.map((v, i) => v + (invMonthly[i] || 0));
     let cumulative = 0;
     const depositVals = monthly.map(v => {
       cumulative += v;
       return parseFloat((cumulative / 1e6).toFixed(2));
     });
-    setChartData(depositChart, labels12, depositVals);
+    setChartData(depositChart, depositLabels, depositVals);
     enableClickToShowValue(depositChart);
 
     return { orig: origChart, loanType: loanTypeChart, deposit: depositChart };
