@@ -38,6 +38,15 @@
       if (diff < 0) return Math.abs(diff) + ' days overdue';
       if (diff === 0) return 'today';
       return 'in ' + diff + ' days';
+    },
+    // A due date already in the past for a still-active loan/deposit
+    // (server.js's proximo-pagos sync no longer blanks these — see
+    // PR #208) reads as delinquent, not as a future date. Same diff
+    // math/threshold as fmt.days above, just as a boolean.
+    isOverdue: s => {
+      const d = parseLocalDate(s);
+      if (!d) return false;
+      return Math.ceil((d - new Date()) / 86400000) < 0;
     }
   };
 
@@ -474,10 +483,12 @@
     return card;
   }
 
-  const perfStat = (label, val, sub) =>
+  // accent is optional — when set (e.g. var(--red) for an overdue date) it
+  // colors both the value and the sub line instead of the normal muted look.
+  const perfStat = (label, val, sub, accent) =>
     '<div style="flex:1;min-width:120px"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:700;margin-bottom:6px">' +
-    escapeHtml(label) + '</div><div style="font-family:var(--serif);font-style:italic;font-size:1.35rem;font-weight:500">' + escapeHtml(val) + '</div>' +
-    (sub ? '<div style="font-size:.68rem;color:var(--light);margin-top:3px">' + escapeHtml(sub) + '</div>' : '') + '</div>';
+    escapeHtml(label) + '</div><div style="font-family:var(--serif);font-style:italic;font-size:1.35rem;font-weight:500' + (accent ? ';color:' + accent : '') + '">' + escapeHtml(val) + '</div>' +
+    (sub ? '<div style="font-size:.68rem;color:' + (accent || 'var(--light)') + ';margin-top:3px' + (accent ? ';font-weight:700' : '') + '">' + escapeHtml(sub) + '</div>' : '') + '</div>';
 
   // Performance panel for a DEPOSIT. Everything here comes off the deposit's
   // own record — rate, monthly interest, origination and maturity dates —
@@ -517,6 +528,12 @@
 
     const nextDate = parseLocalDate(inv._next_due_date)
                    || (upcoming.length ? upcoming[0].date : null);
+    // A real next_due_date already in the past (server.js's proximo-pagos
+    // sync no longer blanks these, PR #208) is a genuinely overdue payment,
+    // not an upcoming one — flag it instead of just showing a stale date
+    // under a forward-looking label. Doesn't apply to the schedule-derived
+    // fallback (upcoming[0].date), which is future by construction.
+    const nextOverdue = inv._next_due_date && fmt.isOverdue(inv._next_due_date);
 
     card.innerHTML =
       '<div class="card-title" data-en="Performance" data-es="Rendimiento">Performance</div>' +
@@ -527,8 +544,10 @@
                  monthly > 0 ? fmt.money(monthly) : 'At maturity') +
         perfStat('Interest Accrued (est.)', accrued != null ? fmt.money(accrued) : '—',
                  accrued != null ? 'since ' + fmt.date(inv.start_date) : '') +
-        perfStat('Next Payment', nextDate ? fmt.date(nextDate.toISOString()) : '—',
-                 nextDate && monthly > 0 ? fmt.money(monthly) : '') +
+        perfStat('Next Payment',
+                 nextDate ? fmt.date(nextDate.toISOString()) : '—',
+                 nextOverdue ? fmt.days(nextDate.toISOString()) : (nextDate && monthly > 0 ? fmt.money(monthly) : ''),
+                 nextOverdue ? 'var(--red)' : null) +
       '</div>' +
       (termPct != null
         ? '<div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:6px">' +
@@ -879,10 +898,17 @@
     // KPIs — update EVERY matching cell on the page (Dashboard + Lending view both have these labels)
     setKpi('Outstanding Loan',    loan ? fmt.money(loan.balance) : '—',
                                   loan ? (loan.loan_id_display || '') : 'No active loan');
-    setKpi('Next Payment Due',    loan ? fmt.date(loan.next_due_date) : '—',
-                                  loan ? { html: fmt.money(loan.monthly_payment) + ' · <span>' + fmt.days(loan.next_due_date) + '</span>' } : 'No active loan');
-    setKpi('Next Due',            loan ? fmt.date(loan.next_due_date) : '—',
-                                  loan ? { html: fmt.money(loan.monthly_payment) + ' · <span>' + fmt.days(loan.next_due_date) + '</span>' } : 'No active loan');
+    // Overdue (server.js's proximo-pagos sync no longer blanks a past due
+    // date for a still-active loan, PR #208) gets the same red emphasis as
+    // everywhere else next_due_date is shown to the client.
+    const loanOverdue = loan && fmt.isOverdue(loan.next_due_date);
+    const nextDueSub  = loan
+      ? { html: fmt.money(loan.monthly_payment) + ' · <span' +
+                (loanOverdue ? ' style="color:var(--red);font-weight:700"' : '') +
+                '>' + fmt.days(loan.next_due_date) + '</span>' }
+      : 'No active loan';
+    setKpi('Next Payment Due',    loan ? fmt.date(loan.next_due_date) : '—', nextDueSub);
+    setKpi('Next Due',            loan ? fmt.date(loan.next_due_date) : '—', nextDueSub);
     setKpi('Outstanding Balance', loan ? fmt.money(loan.balance)          : '—');
     setKpi('Interest Rate',       loan ? fmt.pct(loan.interest_rate)      : '—');
     setKpi('Monthly Payment',     loan ? fmt.money(loan.monthly_payment)  : '—');
@@ -2004,7 +2030,7 @@
       upTbody.innerHTML = upcoming.length
         ? upcoming.map(p => `
             <tr>
-              <td>${fmt.date(p.due_date)}</td>
+              <td>${fmt.date(p.due_date)}${fmt.isOverdue(p.due_date) ? ' <span class="badge badge-red">Overdue</span>' : ''}</td>
               <td style="font-weight:600">${fmt.money(p.amount_due)}</td>
               <td>${fmt.money(p.principal)}</td>
               <td>${fmt.money(p.interest)}</td>
@@ -2100,9 +2126,13 @@
           read: (now - paid) > 14 * 86400000
         });
       } else if (due && (due - now) < 7 * 86400000 && (due - now) > -2 * 86400000) {
+        const overdue = due < now;
         items.push({
           ts: due,
-          msg: (isDeposit ? '<b>Interest Earned</b> ' : '<b>Loan payment due</b> ') + fmt.money(p.amount_due) + ' · ' + fmt.date(due),
+          msg: (overdue
+                 ? (isDeposit ? '<b>Interest overdue</b> ' : '<b>Payment overdue</b> ')
+                 : (isDeposit ? '<b>Interest Earned</b> ' : '<b>Loan payment due</b> ')) +
+               fmt.money(p.amount_due) + ' · ' + fmt.date(due),
           read: false
         });
       }
@@ -2154,12 +2184,20 @@
         // the reverse of a genuine loan payment (money owed by the client)
         // — same distinction as the admin calendar's Interest/Payment Due.
         const isDeposit = !!(p.loans && p.loans.data_source === 'ous_pasiva');
+        // A due date already in the past reads as delinquent, not upcoming
+        // (server.js's proximo-pagos sync no longer blanks these, PR #208)
+        // — an unpaid deposit due date labeled "Interest Earned" would
+        // otherwise look like good news instead of a missed payment.
+        const overdue = fmt.isOverdue(p.due_date);
         events.push({
           date: new Date(p.due_date),
-          title: isDeposit ? 'Interest Earned' : 'Loan Payment Due',
-          sub: fmt.money(p.amount_due) + (p.loans && p.loans.loan_id_display ? ' · ' + p.loans.loan_id_display : ''),
-          accent: isDeposit ? 'var(--success)' : 'var(--red)',
-          bg: isDeposit ? 'var(--bg)' : 'var(--red-light)'
+          title: overdue
+            ? (isDeposit ? 'Interest Overdue' : 'Payment Overdue')
+            : (isDeposit ? 'Interest Earned' : 'Loan Payment Due'),
+          sub: (overdue ? fmt.days(p.due_date) + ' · ' : '') +
+               fmt.money(p.amount_due) + (p.loans && p.loans.loan_id_display ? ' · ' + p.loans.loan_id_display : ''),
+          accent: overdue ? 'var(--red)' : (isDeposit ? 'var(--success)' : 'var(--red)'),
+          bg: overdue ? 'var(--red-light)' : (isDeposit ? 'var(--bg)' : 'var(--red-light)')
         });
       }
     });
