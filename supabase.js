@@ -203,22 +203,18 @@ async function getPendingClients() {
   return data || []
 }
 
-async function markClientMet(userId, notes) {
-  const payload = { status: 'met' }
-  if (notes != null) payload.admin_notes = notes
+async function markClientMet(userId) {
   const { error } = await _supabase
     .from('profiles')
-    .update(payload)
+    .update({ status: 'met' })
     .eq('id', userId)
   return !error
 }
 
-async function approveClient(userId, notes) {
-  const payload = { status: 'active' }
-  if (notes != null) payload.admin_notes = notes
+async function approveClient(userId) {
   const { error } = await _supabase
     .from('profiles')
-    .update(payload)
+    .update({ status: 'active' })
     .eq('id', userId)
   return !error
 }
