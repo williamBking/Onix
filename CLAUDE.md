@@ -487,12 +487,33 @@ existence):
 - **"Leaked Password Protection"** in Supabase — status unknown this
   session (no Supabase access); last confirmed disabled in the previous
   audit. Re-verify before assuming either way.
-- **`profiles.admin_notes`** column — no evidence in git history that
-  it was dropped. Still presumed vestigial; still just a "worth
-  confirming/dropping later," not urgent.
+- **`profiles.admin_notes`** column — the one live reference (a dead,
+  unreachable `notes` parameter in `supabase.js`'s `markClientMet`/
+  `approveClient`, confirmed via full-repo grep including a proper
+  decode of `admin-portal.html`'s bundler blob — every real call site
+  only ever passed `userId`) was removed and merged: PR #210
+  (`remove-dead-admin-notes-plumbing`, commit `7f61de4`, merged
+  `e448d79`, 2026-08-28). The column itself has **not** been dropped
+  yet — that step was interrupted mid-task. Fully unblocked now;
+  dropping it is the clean remaining step. Branch
+  `drop-profiles-admin-notes-column` is sitting ready off `origin/main`
+  with no commits, for whoever picks this up next.
 - **OUS Activa's `proximo-pagos`/`historico-pagos`** — still not
   integrated (see corrected "Not yet built" bullet above; don't confuse
   with Pasiva's `proximo-pagos`, which PR #203 did wire up).
+- **OUS Activa sync outage, port 7575** — confirmed live:
+  `ous_activa_sync_log` shows 766 consecutive failed syncs with
+  `connect ETIMEDOUT 54.165.232.64:7575` on the login call, running
+  continuously from 2026-08-20 19:07 UTC through 2026-08-28 16:22 UTC
+  (still failing as of this writing). OUS Pasiva, same host, port 7070,
+  synced clean the entire time (838/838 `ok=true` over the same
+  window) — confirmed isolated to OUS's Activa endpoint, not a shared-
+  infrastructure or our-side problem; env vars, rate limiting, and
+  retry logic were each individually ruled out earlier, and a TCP-level
+  connect timeout on the login call happens before any of our own
+  throttle logic would even run. Santi's decision (2026-08-28):
+  deprioritize — work on the rest of the project first, revisit
+  escalating to the OUS Activa vendor contact later, no fixed date.
 - **Loans-table duplication with the servicing dashboard** — unresolved,
   status uncertain. The standalone `onix-servicing-dashboard` project has
   its own separate `public.loans` table in its own separate Supabase
@@ -607,6 +628,80 @@ had to leave open for lack of access.
 - **Still open, unchanged**: rate limiting on OUS API calls — this is a
   `server.js` code change, not a Railway configuration question, so it
   can't be resolved by looking at the dashboard.
+
+## Aug 28 2026 — next_due_date fix and Activa match audit trail closed
+
+### `loans.next_due_date` gap — investigated, mostly by design, one real bug found and fixed
+
+Confirmed live: only 96 of 252 active loans have `next_due_date`
+populated (184 `ous_pasiva` / 92 populated, 68 `ous_activa` / 4
+populated). Most of that gap is working as designed, not a bug:
+
+- OUS Pasiva's `proximo-pagos` sync only looks 90 days ahead
+  (`dias: 90`, same window as `por-vencer`) — a single-payment/balloon
+  loan's only due date is its maturity date, so it correctly has no
+  `next_due_date` yet if maturity is further out than that.
+- OUS Activa's sync never writes `next_due_date` at all —
+  `upsertActivaLoan()`'s payload omits the field entirely, since only
+  Pasiva's `proximo-pagos` was ever wired up (see "Not yet built" in
+  the OUS Activa Integration section above; not duplicated here). The
+  4 populated Activa rows are leftover manual edits via the admin Edit
+  Loan form's `next_due_date` field, not sync writes — confirmed by
+  their values not matching what an automated Activa sync would ever
+  produce.
+
+A real bug **was** found and fixed: `server.js`'s `proximo-pagos`
+grouping loop dropped any due date already in the past (`d < today`),
+so a still-active loan whose earliest scheduled date had already
+passed — genuinely overdue — showed `next_due_date = null` instead of
+the true overdue date, hiding delinquency instead of just lacking
+future data. Fixed in PR #208 (`fix-overdue-next-due-date`, commit
+`ac56b6b`, merged `2efddbd`, 2026-08-28): now keeps the earliest date
+regardless of whether it's before today, only skipping rows with no
+date at all.
+
+Follow-up, same day: the client portal had no overdue framing for the
+newly-surfaced past dates — a client would just see a plain past date
+under a forward-looking label ("Next Payment", "Interest Earned",
+"Upcoming"). Fixed in PR #209 (`fix-client-portal-overdue-display`,
+commit `5718e76`, merged `66c27ee`, 2026-08-28): adds a shared
+`fmt.isOverdue()` helper and applies red "X days overdue" framing
+across the deposit detail stat, Dashboard Upcoming sidebar, Upcoming
+Payments table (reusing the existing `.badge.badge-red` pattern), the
+notifications bell, and the My Loan/Dashboard KPI — display-only,
+`days_delinquent` and `server.js` untouched by this second PR.
+
+### `ous_activa_client_matches` verified_at/verified_by inconsistency — closed, not a bug
+
+Re-raised and re-investigated: 6 rows have `verified_at` set with
+`verified_by` null (confirmed live, unchanged from the original Aug 20
+finding above — still exactly the Hagemeister-family rows), 8 rows
+have both null, 64 rows have both set correctly. Traced both current
+write paths — the "Verify Match" UI button (`admin-portal-data.js`, a
+single atomic `.update()` setting `matched_profile_id`/`verified`/
+`verified_by`/`verified_at` together) and the "Create New Client" RPC
+(`activa_admin_create_client()`, a single atomic `UPDATE` inside a
+Postgres function that rolls back the whole transaction, including the
+profile insert, if the match is already claimed) — confirmed neither
+can produce a `verified_at`-without-`verified_by` split. This is dead,
+historical data from a one-time manual/batch-seeding pass that
+predates the real Verify Match UI (PR #165/166), not a live bug. No
+fix needed; don't re-raise this as an open question in a future
+session.
+
+### Process note: a `git reset --hard` destroyed an uncommitted CLAUDE.md edit
+
+During this session's work, `git reset --hard origin/main` was run to
+fast-forward a branch while `git status` showed an uncommitted, never-
+staged local edit to this exact file (`CLAUDE.md`). The reset silently
+discarded it — no `git stash`, no commit, no reflog entry, since
+unstaged working-tree changes aren't git objects. Not recoverable: not
+in git, not in VS Code's local file history, no relevant Time Machine
+snapshot. **Before any `git reset --hard` (or other command that
+discards uncommitted work), run `git stash -u` first whenever `git
+status` shows anything uncommitted** — this is already the stated
+safety protocol; this incident is the reason to actually follow it
+every time, not just when the change looks obviously important.
 
 ## Session Handoff Notes (historical — chart-recursion session, folded up)
 
