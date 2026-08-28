@@ -1256,16 +1256,20 @@ async function runOUSSync() {
   for (const r of pvRows) if (r && r.id_credito) pvByCredito[String(r.id_credito)] = r;
 
   // 3b. Group proximo-pagos rows by id_credito, keeping only the earliest
-  //     upcoming (today-or-later) due date — a credit can have several
-  //     scheduled payment rows. fecha_vencimiento is used first because the
-  //     name matches what next_due_date means ("vencimiento" = due);
-  //     fecha_movimiento is a fallback for rows missing it. Not verified
-  //     against a live payload which field OUS actually intends here.
+  //     due date — a credit can have several scheduled payment rows.
+  //     fecha_vencimiento is used first because the name matches what
+  //     next_due_date means ("vencimiento" = due); fecha_movimiento is a
+  //     fallback for rows missing it. Not verified against a live payload
+  //     which field OUS actually intends here.
+  //     Deliberately NOT excluding dates before today: a still-active loan
+  //     whose earliest scheduled date has already passed is delinquent, not
+  //     "no next due date" — blanking it here hid overdue loans instead of
+  //     just lacking future data. Only a missing date is skipped.
   const nextDueByCredito = {};
   for (const r of ppRows) {
     if (!r || !r.id_credito) continue;
     const d = r.fecha_vencimiento || r.fecha_movimiento || null;
-    if (!d || d < today) continue;
+    if (!d) continue;
     const key = String(r.id_credito);
     if (!nextDueByCredito[key] || d < nextDueByCredito[key]) nextDueByCredito[key] = d;
   }
